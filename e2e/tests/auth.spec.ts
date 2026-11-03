@@ -38,7 +38,7 @@ test.describe("auth (logged out)", () => {
 
 test("session cookie is HttpOnly + SameSite=Lax and hidden from JS", async ({ page, context }) => {
   await openDashboard(page);
-  const session = (await context.cookies()).find((c) => c.name.endsWith("_session"));
+  const session = (await context.cookies()).find((c) => c.name === "nventra_session");
   expect(session, "session cookie present").toBeTruthy();
   expect(session!.httpOnly).toBe(true);
   expect(session!.sameSite).toBe("Lax");

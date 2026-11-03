@@ -386,6 +386,22 @@ docker compose up -d --build
 docker exec nventra-pos-backend npx ts-node prisma/seed.ts   # optional: demo data + login; upsert-based, safe to re-run
 ```
 
+### Upgrading an install from before the Nventra rename
+
+The Postgres user and database are now `nventra` / `nventra_pos` (previously
+`nodedr` / `nodedr_restaurant`), and the login cookie is `nventra_session`
+(it used the old `nodedr_` prefix before). Postgres only creates its user and database on
+an empty volume, so an existing install must recreate the volume. This deletes
+the old database: take a backup first if it holds anything you need.
+
+```bash
+docker compose down -v          # removes the old Postgres volume
+./install.sh --demo             # or: docker compose up -d --build, then seed
+```
+
+Everyone has to sign in again once, because cookies from before the rename are
+no longer read.
+
 ### Local dev (no Docker for the apps)
 
 Requires Node 22+, pnpm, and a local Postgres (or just run the `postgres`
