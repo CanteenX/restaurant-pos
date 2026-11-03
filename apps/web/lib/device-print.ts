@@ -69,7 +69,7 @@ export function chooseBtPrinter(): Promise<BtPrinter | null> {
 /** Sends ESC/POS data (base64 from the server) to the chosen Bluetooth printer. */
 export async function printEscposOnDevice(chunks: string[]): Promise<void> {
   const np = nativePrinter();
-  if (!np) throw new Error("Bluetooth printing works in the OrderRestro app on a phone.");
+  if (!np) throw new Error("Bluetooth printing works in the Nventra POS app on a phone.");
   let printer = savedBtPrinter();
   if (!printer) {
     printer = await chooseBtPrinter();

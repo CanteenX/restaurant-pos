@@ -101,10 +101,10 @@ services:
       ports:
         - container: "3000"
           description:
-            en_US: Nodedr OrderRestro web interface
+            en_US: Nventra POS web interface
           protocol: tcp
 
-  # In-app "Update now" (Settings > Updates): pulls the newer OrderRestro
+  # In-app "Update now" (Settings > Updates): pulls the newer Nventra POS
   # images above and recreates those two containers (nothing else). Needs the
   # Docker socket to do that; data in /DATA/AppData is untouched. The updater
   # image is generic (it only manages the containers named below), so the
@@ -125,7 +125,7 @@ services:
       volumes:
         - container: /var/run/docker.sock
           description:
-            en_US: Docker socket, used only by the in-app "Update now" button to move the two OrderRestro containers to a newer version.
+            en_US: Docker socket, used only by the in-app "Update now" button to move the two Nventra POS containers to a newer version.
 
 networks:
   nodedr-restaurant-pos:
@@ -137,22 +137,22 @@ x-casaos:
     - amd64
     - arm64
   main: web
-  author: Nodedr Infotech Private Limited
-  developer: Raktim94
+  author: Nventra
+  developer: CanteenX
   category: Finance
-  icon: https://cdn.jsdelivr.net/gh/Raktim94/nodedr-restaurant-pos@master/casaos/icon.png
-  thumbnail: https://cdn.jsdelivr.net/gh/Raktim94/nodedr-restaurant-pos@master/casaos/thumbnail.png
+  icon: https://cdn.jsdelivr.net/gh/CanteenX/restaurant-pos@master/casaos/icon.png
+  thumbnail: https://cdn.jsdelivr.net/gh/CanteenX/restaurant-pos@master/casaos/thumbnail.png
   screenshot_link:
-    - https://cdn.jsdelivr.net/gh/Raktim94/nodedr-restaurant-pos@master/casaos/screenshot-1.png
-    - https://cdn.jsdelivr.net/gh/Raktim94/nodedr-restaurant-pos@master/casaos/screenshot-2.png
-    - https://cdn.jsdelivr.net/gh/Raktim94/nodedr-restaurant-pos@master/casaos/screenshot-3.png
+    - https://cdn.jsdelivr.net/gh/CanteenX/restaurant-pos@master/casaos/screenshot-1.png
+    - https://cdn.jsdelivr.net/gh/CanteenX/restaurant-pos@master/casaos/screenshot-2.png
+    - https://cdn.jsdelivr.net/gh/CanteenX/restaurant-pos@master/casaos/screenshot-3.png
   title:
-    en_US: Nodedr OrderRestro
+    en_US: Nventra POS
   tagline:
     en_US: Offline-first restaurant management — POS, kitchen display, tables, and reservations
   description:
     en_US: |
-      Nodedr OrderRestro is a free, open-source restaurant management system:
+      Nventra POS (a fork of Nodedr OrderRestro) is a free, open-source restaurant management system:
       point-of-sale ordering, a live kitchen display (KDS) split by station,
       table/floor management with QR-code table ordering, reservations and a
       waitlist, inventory with automatic ingredient deduction, customer CRM
@@ -302,7 +302,7 @@ x-casaos:
       Initial CasaOS/ZimaOS release: POS ordering, kitchen display, table
       management with QR ordering, reservations, inventory, customer
       loyalty/CRM, and billing.
-  website: "https://orderrestro.nodedr.com/"
-  repo: "https://github.com/Raktim94/nodedr-restaurant-pos"
-  support: "https://orderrestro.nodedr.com/contact"
-  docs: "https://github.com/Raktim94/nodedr-restaurant-pos#readme"
+  website: "https://github.com/CanteenX/restaurant-pos"
+  repo: "https://github.com/CanteenX/restaurant-pos"
+  support: "https://github.com/CanteenX/restaurant-pos/issues"
+  docs: "https://github.com/CanteenX/restaurant-pos#readme"
