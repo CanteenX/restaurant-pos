@@ -287,6 +287,8 @@ OrderRestro has a REST API (`/api/v1`, docs at `/api/docs`), API keys, webhooks 
 
 Everything lives in your Postgres volume. Use **Settings → Backup** for scheduled backups, and test a restore before you need one.
 
+Every backup and download carries a `SHA256SUMS` file. Check a downloaded copy with `sha256sum -c SHA256SUMS`. A restore checks it first and refuses a corrupt or modified backup without touching your data.
+
 Questions or bugs: [open an issue](https://github.com/Raktim94/nodedr-restaurant-pos/issues).
 
 ---
