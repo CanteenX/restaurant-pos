@@ -2,6 +2,8 @@ import {
   ForbiddenException,
   BadRequestException,
   ConflictException,
+  HttpException,
+  HttpStatus,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -17,7 +19,9 @@ import {
   type SessionUser,
 } from '@nventra/types';
 import * as bcrypt from 'bcrypt';
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { FailureLockout } from './failure-lockout';
 import { TwoFactorService } from './two-factor.service';
 import {
   effectivePermissions,
@@ -25,12 +29,38 @@ import {
   type PermissionSource,
 } from './effective-permissions';
 
+// PIN brute-force limits (see pinLogin). A 4-digit PIN has 10,000 values, so
+// guessing is capped per account AND per client address, not just by the
+// route throttle.
+export const PIN_MAX_FAILURES = 5;
+export const PIN_IP_MAX_FAILURES = 20;
+const PIN_LOCK_MS = 15 * 60_000;
+const PIN_FAILED = 'Incorrect PIN or PIN login not available for this user';
+
+// A real bcrypt hash (same cost as stored PINs) so an unknown user spends the
+// same time as a wrong PIN. Built once, lazily, so module load stays fast.
+let dummyPinHash: Promise<string> | null = null;
+function getDummyPinHash() {
+  dummyPinHash ??= bcrypt.hash('not-a-real-pin', 12);
+  return dummyPinHash;
+}
+
 @Injectable()
 export class AuthService {
+  private readonly pinUserLock = new FailureLockout(
+    PIN_MAX_FAILURES,
+    PIN_LOCK_MS,
+  );
+  private readonly pinIpLock = new FailureLockout(
+    PIN_IP_MAX_FAILURES,
+    PIN_LOCK_MS,
+  );
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly twoFactor: TwoFactorService,
+    private readonly audit: AuditService,
   ) {}
 
   private toSessionUser(user: {
@@ -256,28 +286,88 @@ export class AuthService {
     return restaurant !== null;
   }
 
-  async pinLogin(dto: PinLoginDto) {
-    const user = await this.prisma.user.findUnique({
+  /**
+   * Quick-switch login on a shared terminal. Threat: someone at (or on the
+   * network of) the terminal guessing a colleague's 4-8 digit PIN. Defences:
+   * per-user lock after PIN_MAX_FAILURES (423), per-IP lock after
+   * PIN_IP_MAX_FAILURES across all users (429), one generic error for every
+   * failure (unknown, inactive, no PIN, wrong PIN), a real bcrypt compare on
+   * every path, and an audit row per attempt. The PIN is never logged.
+   */
+  async pinLogin(dto: PinLoginDto, ip = 'unknown') {
+    const userKey = `u:${dto.userId}`;
+    const ipKey = `ip:${ip}`;
+    const ipWait = this.pinIpLock.lockedFor(ipKey);
+    if (ipWait) {
+      throw new HttpException(
+        `Too many incorrect PINs from this device. Try again in ${Math.ceil(ipWait / 60)} minutes.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    const userWait = this.pinUserLock.lockedFor(userKey);
+    if (userWait) {
+      throw new HttpException(
+        `Too many incorrect PINs. PIN login is locked for ${Math.ceil(userWait / 60)} minutes — sign in with your password.`,
+        HttpStatus.LOCKED,
+      );
+    }
+
+    const found = await this.prisma.user.findUnique({
       where: { id: dto.userId },
       include: permissionInclude,
     });
+    const user = found?.isActive && found.pinHash ? found : null;
+    const valid = await bcrypt.compare(
+      dto.pin,
+      user?.pinHash ?? (await getDummyPinHash()),
+    );
 
-    if (!user || !user.isActive || !user.pinHash) {
-      throw new UnauthorizedException('PIN login not available for this user');
+    if (!user || !valid) {
+      await this.recordPinFailure(userKey, ipKey, ip, user?.id ?? null);
+      throw new UnauthorizedException(PIN_FAILED);
     }
-    // A 4-8 digit PIN must not be a way around the second factor.
+    this.pinUserLock.reset(userKey);
+
+    // A 4-8 digit PIN must not be a way around the second factor. Checked
+    // after the PIN so a stranger cannot probe who uses two-factor.
     if (user.twoFactorEnabled) {
       throw new UnauthorizedException(
         'PIN login is off for accounts with two-factor authentication — sign in with your password',
       );
     }
 
-    const valid = await bcrypt.compare(dto.pin, user.pinHash);
-    if (!valid) {
-      throw new UnauthorizedException('Incorrect PIN');
-    }
-
+    await this.audit.record({
+      userId: user.id,
+      action: 'auth.pin_login.success',
+      entity: 'User',
+      entityId: user.id,
+      metadata: { ip },
+    });
     return this.issueSession(user);
+  }
+
+  private async recordPinFailure(
+    userKey: string,
+    ipKey: string,
+    ip: string,
+    userId: string | null,
+  ) {
+    const userLocked = this.pinUserLock.fail(userKey);
+    const ipLocked = this.pinIpLock.fail(ipKey);
+    // An unknown ID has no user row to point at (AuditLog.userId is a FK).
+    const base = { userId, entity: 'User', entityId: userId };
+    await this.audit.record({
+      ...base,
+      action: 'auth.pin_login.failure',
+      metadata: { ip, knownUser: userId !== null },
+    });
+    if (userLocked || ipLocked) {
+      await this.audit.record({
+        ...base,
+        action: 'auth.pin_login.locked',
+        metadata: { ip, scope: userLocked ? 'user' : 'ip' },
+      });
+    }
   }
 
   private async issueSession(
