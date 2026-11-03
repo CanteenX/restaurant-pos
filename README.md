@@ -407,17 +407,15 @@ container:
 
 The Postgres user and database are now `nventra` / `nventra_pos` (previously
 the upstream names), and the login cookie is `nventra_session` (it used the
-upstream prefix before). Postgres only creates its user and database on
-an empty volume, so an existing install must recreate the volume. This deletes
-the old database: take a backup first if it holds anything you need.
-
-```bash
-docker compose down -v          # removes the old Postgres volume
-./install.sh --demo             # or: docker compose up -d --build, then seed
-```
+upstream prefix before). Postgres only creates its user and database on an
+empty volume, so the backend container renames the old ones in place the first
+time it starts on an existing volume. Your data stays where it is: just update
+and start as usual (`git pull && ./install.sh`, `apt upgrade`, or the CasaOS
+update). There is no need to delete the volume.
 
 Everyone has to sign in again once, because cookies from before the rename are
-no longer read.
+no longer read. Details, and what to do if the rename reports a problem, are
+in [docs/UPGRADING.md](docs/UPGRADING.md).
 
 ### Local dev (no Docker for the apps)
 
