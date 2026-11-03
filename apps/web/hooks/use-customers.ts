@@ -150,3 +150,44 @@ export function useCustomerRewards(branchId: string | null, id: string | null) {
     enabled: !!branchId && !!id,
   });
 }
+
+export interface ReferralRow {
+  id: string;
+  code: string;
+  status: string;
+  createdAt: string;
+  rewardedAt: string | null;
+  referrerPoints: number | null;
+  referredPoints: number | null;
+  referrer: { id: string; name: string | null };
+  referred: { id: string; name: string | null };
+}
+
+export interface CustomerReferrals {
+  made: ReferralRow[];
+  usedCode: ReferralRow | null;
+}
+
+export function useCustomerReferrals(branchId: string | null, customerId: string | null) {
+  return useQuery({
+    queryKey: ["customers", branchId, "referrals", customerId],
+    queryFn: () =>
+      api.get<CustomerReferrals>(`/referrals/customer/${customerId}?branchId=${branchId}`),
+    enabled: !!branchId && !!customerId,
+  });
+}
+
+export function useApplyReferralCode(branchId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (dto: { customerId: string; code: string }) =>
+      api.post<{ applied: true; referrerName: string | null }>(
+        `/referrals/apply?branchId=${branchId}`,
+        dto,
+      ),
+    onSuccess: (_d, { customerId }) => {
+      queryClient.invalidateQueries({ queryKey: ["customers", branchId, "referrals", customerId] });
+      queryClient.invalidateQueries({ queryKey: ["customers", branchId, "rewards", customerId] });
+    },
+  });
+}
