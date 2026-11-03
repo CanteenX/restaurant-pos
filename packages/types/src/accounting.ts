@@ -18,3 +18,43 @@ export const cashClosingSchema = z.object({
   note: z.string().max(300).optional(),
 });
 export type CashClosingDto = z.infer<typeof cashClosingSchema>;
+
+// Ledger names used in the owner's Tally books (Tally export, #41).
+const ledgerName = z.string().trim().min(1).max(100);
+export const TALLY_LEDGER_DEFAULTS = {
+  sales: "Sales",
+  cgstOutput: "CGST Output",
+  sgstOutput: "SGST Output",
+  igstOutput: "IGST Output",
+  roundOff: "Round Off",
+  cash: "Cash",
+  card: "Card Receipts",
+  upi: "UPI Receipts",
+  wallet: "Wallet Receipts",
+  discount: "Discount Allowed",
+  serviceCharge: "Service Charge",
+  partyDefault: "Cash Sales Party",
+} as const;
+export type TallyLedgerKey = keyof typeof TALLY_LEDGER_DEFAULTS;
+export const tallyMappingSchema = z
+  .object({
+    sales: ledgerName,
+    cgstOutput: ledgerName,
+    sgstOutput: ledgerName,
+    igstOutput: ledgerName,
+    roundOff: ledgerName,
+    cash: ledgerName,
+    card: ledgerName,
+    upi: ledgerName,
+    wallet: ledgerName,
+    discount: ledgerName,
+    serviceCharge: ledgerName,
+    partyDefault: ledgerName,
+  })
+  .partial()
+  .strict()
+  .refine(
+    (m) => !Object.values(m).some((v) => /[<>&]/.test(v ?? "")),
+    "Ledger names cannot contain < > or &",
+  );
+export type TallyMappingDto = z.infer<typeof tallyMappingSchema>;
