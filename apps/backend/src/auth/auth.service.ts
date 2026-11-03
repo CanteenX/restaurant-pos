@@ -22,6 +22,7 @@ import * as bcrypt from 'bcrypt';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { FailureLockout } from './failure-lockout';
+import { DUMMY_PASSWORD_HASH } from './dummy-hash';
 import { TwoFactorService } from './two-factor.service';
 import {
   effectivePermissions,
@@ -36,14 +37,6 @@ export const PIN_MAX_FAILURES = 5;
 export const PIN_IP_MAX_FAILURES = 20;
 const PIN_LOCK_MS = 15 * 60_000;
 const PIN_FAILED = 'Incorrect PIN or PIN login not available for this user';
-
-// A real bcrypt hash (same cost as stored PINs) so an unknown user spends the
-// same time as a wrong PIN. Built once, lazily, so module load stays fast.
-let dummyPinHash: Promise<string> | null = null;
-function getDummyPinHash() {
-  dummyPinHash ??= bcrypt.hash('not-a-real-pin', 12);
-  return dummyPinHash;
-}
 
 @Injectable()
 export class AuthService {
@@ -144,26 +137,15 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const include = permissionInclude;
     const id = dto.email.trim();
-    let user: Awaited<ReturnType<typeof this.findLoginCandidate>> = null;
     // An email address, or a phone number as the login ID (delivery riders).
-    // Every failure gives the same message so nothing reveals which IDs exist.
-    if (id.includes('@')) {
-      const u = await this.prisma.user.findFirst({
-        where: { email: id, isActive: true },
-        include,
-      });
-      if (u && (await bcrypt.compare(dto.password, u.passwordHash))) user = u;
-    } else {
-      user = await this.findLoginCandidate(id, dto.password);
-    }
+    // Every failure gives the same message and runs bcrypt at least once (on
+    // the dummy hash if no account matches), so neither the text nor the
+    // response time reveals which IDs exist.
+    const user = id.includes('@')
+      ? await this.findEmailCandidate(id, dto.password)
+      : await this.findLoginCandidate(id, dto.password);
     if (!user) {
-      // Spend comparable time when the ID is unknown, so timing does not reveal it.
-      await bcrypt.compare(
-        dto.password,
-        '$2b$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidi',
-      );
       throw new UnauthorizedException('Invalid login ID or password');
     }
 
@@ -176,18 +158,38 @@ export class AuthService {
     return this.issueSession(user);
   }
 
+  /** Email login: exactly one bcrypt compare, real hash or dummy. */
+  private async findEmailCandidate(email: string, password: string) {
+    const u = await this.prisma.user.findFirst({
+      where: { email, isActive: true },
+      include: permissionInclude,
+    });
+    const ok = await bcrypt.compare(
+      password,
+      u?.passwordHash ?? DUMMY_PASSWORD_HASH,
+    );
+    return u && ok ? u : null;
+  }
+
   /** Phone-number login: compare real digits, then the password, against every active match. */
   private async findLoginCandidate(id: string, password: string) {
     const tail = id.replace(/\D/g, '').slice(-10);
-    if (tail.length < 6) return null;
-    const candidates = await this.prisma.user.findMany({
-      where: { isActive: true, phone: { endsWith: tail.slice(-6) } },
-      include: permissionInclude,
-      take: 10,
-    });
-    for (const u of candidates) {
-      if ((u.phone ?? '').replace(/\D/g, '').slice(-10) !== tail) continue;
+    const candidates =
+      tail.length < 6
+        ? []
+        : await this.prisma.user.findMany({
+            where: { isActive: true, phone: { endsWith: tail.slice(-6) } },
+            include: permissionInclude,
+            take: 10,
+          });
+    const matches = candidates.filter(
+      (u) => (u.phone ?? '').replace(/\D/g, '').slice(-10) === tail,
+    );
+    for (const u of matches) {
       if (await bcrypt.compare(password, u.passwordHash)) return u;
+    }
+    if (matches.length === 0) {
+      await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
     }
     return null;
   }
@@ -327,7 +329,7 @@ export class AuthService {
         : null;
     const valid = await bcrypt.compare(
       dto.pin,
-      user?.pinHash ?? (await getDummyPinHash()),
+      user?.pinHash ?? DUMMY_PASSWORD_HASH,
     );
 
     if (!user || !valid) {
