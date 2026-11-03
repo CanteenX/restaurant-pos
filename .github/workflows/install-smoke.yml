@@ -4,17 +4,11 @@ name: Install smoke test
 # checks the app actually comes up. Catches a broken quickstart script, a
 # broken Dockerfile or a failing migration before a user hits it.
 
+# Nventra: manual-only. Automatic triggers removed to protect the org's
+# 2,000 Actions minutes/month and because this job targets upstream
+# (NodeDR) release infrastructure. Re-enable deliberately after the rebrand.
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "17 4 * * 1"
-  push:
-    branches: [master]
-    paths:
-      - "scripts/quickstart.*"
-      - "install.sh"
-      - "docker-compose.yml"
-      - ".github/workflows/install-smoke.yml"
+  workflow_dispatch: {}
 
 permissions:
   contents: read
