@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-click installer for Nventra POS (a fork of Nventra POS).
+# One-click installer for Nventra POS (a fork of Nodedr OrderRestro).
 #
 # Run this from the repo root after cloning:
 #   ./install.sh

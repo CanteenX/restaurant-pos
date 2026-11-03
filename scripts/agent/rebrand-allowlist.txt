@@ -32,6 +32,8 @@ apps/backend/src/modules/verifactu/verifactu.domain.spec.ts  # same
 apps/web/hooks/use-branch.tsx                        # localStorage key; renaming resets saved branch
 apps/web/hooks/use-notification-mute.ts              # localStorage key; renaming resets mute setting
 apps/web/lib/i18n/context.tsx                        # localStorage key; renaming resets language
+e2e/tests/i18n-hindi.spec.ts                         # clears the legacy locale key above
+e2e/tests/pin-switch.spec.ts                         # reads the legacy branch key above
 
 # --- Attribution documents that name the upstream marks on purpose ---
 TRADEMARK_POLICY.md           # states the upstream marks are not licensed to us

@@ -69,5 +69,13 @@ links=$(git grep -n -i "COMMERCIAL-LICENSE" -- . ':!scripts/agent/check-rebrand.
 [ -n "$links" ] && bad "links to COMMERCIAL-LICENSE.md remain:
 $links"
 
+# 6. Nventra is the fork, never the upstream: a blind find/replace can turn
+#    "fork of Nodedr OrderRestro" into "fork of Nventra POS". TRADEMARK_POLICY.md
+#    is exempt: it tells third parties how they may describe a fork of us.
+selffork=$(git grep -n -i -I -E "(fork of|forked from) (the )?\\[?Nventra" -- . \
+  ':!scripts/agent/check-rebrand.sh' ':!TRADEMARK_POLICY.md' || true)
+[ -n "$selffork" ] && bad "self-referential fork claim (upstream is Nodedr OrderRestro):
+$selffork"
+
 [ "$fail" = 0 ] && echo "rebrand check: OK"
 exit "$fail"
