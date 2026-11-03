@@ -383,7 +383,7 @@ git clone https://github.com/Raktim94/nodedr-restaurant-pos.git
 cd nodedr-restaurant-pos
 cp .env.example .env        # edit JWT_SECRET / POSTGRES_PASSWORD for anything beyond local dev
 docker compose up -d --build
-docker exec nodedr-restaurant-backend npx ts-node prisma/seed.ts   # optional: demo data + login; upsert-based, safe to re-run
+docker exec nventra-pos-backend npx ts-node prisma/seed.ts   # optional: demo data + login; upsert-based, safe to re-run
 ```
 
 ### Local dev (no Docker for the apps)
@@ -395,7 +395,7 @@ service from Docker Compose).
 pnpm install
 docker compose up -d postgres
 cp apps/backend/.env.example apps/backend/.env   # point DATABASE_URL at your Postgres
-pnpm --filter @nodedr-restaurant/types build
+pnpm --filter @nventra/types build
 cd apps/backend && npx prisma migrate dev && npx ts-node prisma/seed.ts && cd ../..
 pnpm dev   # runs backend (:4001) and web (:1995) together via Turborepo
 ```
@@ -429,7 +429,7 @@ docker compose up -d --build
 ```bash
 git pull
 pnpm install
-pnpm --filter @nodedr-restaurant/types build
+pnpm --filter @nventra/types build
 cd apps/backend && npx prisma migrate dev && cd ../..
 pnpm dev
 ```

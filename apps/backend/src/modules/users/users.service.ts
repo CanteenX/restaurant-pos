@@ -9,7 +9,7 @@ import type {
   DepartmentDto,
   SetPermissionOverridesDto,
   UpdateStaffDto,
-} from '@nodedr-restaurant/types';
+} from '@nventra/types';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { AuditService } from '../../audit/audit.service';

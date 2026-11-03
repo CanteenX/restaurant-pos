@@ -17,7 +17,7 @@ const crypto = require('node:crypto');
 
 const SOCKET = process.env.DOCKER_SOCKET || '/var/run/docker.sock';
 const TOKEN = process.env.UPDATER_TOKEN || '';
-const TARGETS = (process.env.TARGET_CONTAINERS || 'nodedr-restaurant-backend,nodedr-restaurant-web').split(',').map((s) => s.trim()).filter(Boolean);
+const TARGETS = (process.env.TARGET_CONTAINERS || 'nventra-pos-backend,nventra-pos-web').split(',').map((s) => s.trim()).filter(Boolean);
 const PORT = Number(process.env.PORT || 8080);
 const VERSION_RE = /^\d+\.\d+\.\d+$/;
 

@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: nodedr-orderrestro-postgres
+    container_name: nventra-pos-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: nodedr
@@ -17,8 +17,8 @@ services:
       timeout: 5s
       retries: 10
   backend:
-    image: ghcr.io/raktim94/nodedr-restaurant-pos-backend:@VERSION@
-    container_name: nodedr-orderrestro-backend
+    image: ghcr.io/canteenx/nventra-pos-backend:@VERSION@
+    container_name: nventra-pos-backend
     restart: unless-stopped
     environment:
       DATABASE_URL: "postgresql://nodedr:${POSTGRES_PASSWORD}@postgres:5432/nodedr_restaurant"
@@ -44,8 +44,8 @@ services:
       - 'c 189:* rmw'
       - 'c 180:* rmw'
   web:
-    image: ghcr.io/raktim94/nodedr-restaurant-pos-web:@VERSION@
-    container_name: nodedr-orderrestro-web
+    image: ghcr.io/canteenx/nventra-pos-web:@VERSION@
+    container_name: nventra-pos-web
     restart: unless-stopped
     ports:
       - "${HOST_PORT:-1995}:3000"

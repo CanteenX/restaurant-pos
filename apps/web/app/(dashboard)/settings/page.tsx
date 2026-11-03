@@ -9,7 +9,7 @@ import {
   TAX_REGIMES,
   type TaxMode,
   type TaxRegime,
-} from "@nodedr-restaurant/types";
+} from "@nventra/types";
 import { KioskCard } from "@/components/settings/kiosk-card";
 import { MobileAppCard } from "@/components/settings/mobile-app-card";
 import { PrinterDiagnosticsCard } from "@/components/settings/printer-diagnostics-card";

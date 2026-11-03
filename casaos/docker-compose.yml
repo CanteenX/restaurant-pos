@@ -3,8 +3,8 @@ name: nodedr-restaurant-pos
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: nodedr-restaurant-pos-postgres
-    hostname: nodedr-restaurant-pos-postgres
+    container_name: nventra-pos-postgres
+    hostname: nventra-pos-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: nodedr
@@ -23,12 +23,12 @@ services:
       - nodedr-restaurant-pos
 
   backend:
-    image: ghcr.io/raktim94/nodedr-restaurant-pos-backend:1.20.0
-    container_name: nodedr-restaurant-pos-backend
-    hostname: nodedr-restaurant-pos-backend
+    image: ghcr.io/canteenx/nventra-pos-backend:1.20.0
+    container_name: nventra-pos-backend
+    hostname: nventra-pos-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgresql://nodedr:please-change-this-password@nodedr-restaurant-pos-postgres:5432/nodedr_restaurant"
+      DATABASE_URL: "postgresql://nodedr:please-change-this-password@nventra-pos-postgres:5432/nodedr_restaurant"
       # No JWT_SECRET here on purpose — the app generates a real random one
       # itself on first boot and persists it to the /data/state volume
       # below (see apps/backend/src/main.ts's resolveJwtSecret()). A
@@ -48,7 +48,7 @@ services:
       # PCs (Settings > Server Sync). Empty = sync server off.
       SYNC_API_KEY: ""
       # In-app "Update now" button (Settings > Updates) -> the updater below.
-      UPDATER_URL: "http://nodedr-restaurant-pos-updater:8080"
+      UPDATER_URL: "http://nventra-pos-updater:8080"
       UPDATER_TOKEN: "nodedr-restaurant-updater"
     volumes:
       - type: bind
@@ -85,9 +85,9 @@ services:
             en_US: Auto-generated login security key. Created automatically on first launch — leave it alone.
 
   web:
-    image: ghcr.io/raktim94/nodedr-restaurant-pos-web:1.20.0
-    container_name: nodedr-restaurant-pos-web
-    hostname: nodedr-restaurant-pos-web
+    image: ghcr.io/canteenx/nventra-pos-web:1.20.0
+    container_name: nventra-pos-web
+    hostname: nventra-pos-web
     restart: unless-stopped
     ports:
       - target: 3000
@@ -110,13 +110,13 @@ services:
   # image is generic (it only manages the containers named below), so the
   # one published for NodeDR POS is reused.
   updater:
-    image: ghcr.io/raktim94/nodedr-pos-updater:1.5.1
-    container_name: nodedr-restaurant-pos-updater
-    hostname: nodedr-restaurant-pos-updater
+    image: ghcr.io/canteenx/nventra-pos-updater:latest
+    container_name: nventra-pos-updater
+    hostname: nventra-pos-updater
     restart: unless-stopped
     environment:
       UPDATER_TOKEN: "nodedr-restaurant-updater"
-      TARGET_CONTAINERS: "nodedr-restaurant-pos-backend,nodedr-restaurant-pos-web"
+      TARGET_CONTAINERS: "nventra-pos-backend,nventra-pos-web"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:

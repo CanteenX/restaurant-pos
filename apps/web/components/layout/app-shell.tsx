@@ -1,6 +1,6 @@
 "use client";
 
-import type { SessionUser } from "@nodedr-restaurant/types";
+import type { SessionUser } from "@nventra/types";
 import { Menu } from "lucide-react";
 import { useState } from "react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
