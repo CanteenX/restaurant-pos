@@ -1,7 +1,7 @@
 "use client";
 
 import type { SessionUser } from "@nventra/types";
-import { LogOut, Moon, Server, Sun, Trash2 } from "lucide-react";
+import { LogOut, Moon, Server, Sun, Trash2, UserRoundCog } from "lucide-react";
 import { useState } from "react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
@@ -61,6 +61,10 @@ export function UserMenu({ user }: { user?: SessionUser }) {
             <p className="text-xs font-normal text-muted-foreground">{user?.roleName}</p>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => router.push("/switch-user")}>
+            <UserRoundCog className="h-4 w-4" />
+            Switch user
+          </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => logout.mutate(undefined, { onSuccess: () => router.push("/login") })}
           >

@@ -1,10 +1,18 @@
 "use client";
 
 import { clearOfflineCache } from "@/lib/offline-cache";
-import { permissionSatisfied, type LoginDto, type RegisterDto, type SessionUser } from "@nventra/types";
+import {
+  permissionSatisfied,
+  type LoginDto,
+  type PinLoginDto,
+  type RegisterDto,
+  type SessionUser,
+} from "@nventra/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { savedPushToken, savePushToken } from "@/lib/native";
 import { api } from "@/lib/api";
+import { forgetBranchChoice } from "@/hooks/use-branch";
+import { rememberDeviceUser } from "@/lib/pin-keypad";
 
 export function useCurrentUser() {
   return useQuery({
@@ -23,6 +31,27 @@ export function useLogin() {
       // user): drop it so branches and the rest load fresh for this account.
       queryClient.removeQueries({ predicate: (q) => q.queryKey[0] !== "auth" });
       queryClient.setQueryData(["auth", "me"], data);
+      rememberDeviceUser(data.user);
+    },
+  });
+}
+
+/**
+ * Shared-till quick switch: sign in as another staff member with their PIN.
+ * The server replaces the session cookie; on success everything the previous
+ * user had loaded (queries, offline snapshot, chosen branch) is dropped so the
+ * new user never sees it.
+ */
+export function usePinLogin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (dto: PinLoginDto) => api.post<{ user: SessionUser }>("/auth/pin-login", dto),
+    onSuccess: (data) => {
+      queryClient.clear();
+      clearOfflineCache();
+      forgetBranchChoice();
+      queryClient.setQueryData(["auth", "me"], data);
+      rememberDeviceUser(data.user);
     },
   });
 }
