@@ -30,17 +30,13 @@ document's `version` as `if_version` (required on existing documents).
 Collections and fields (keep exactly these names):
 - `tracker` / `status`: `{phase, headline, agents, claude_usage,
   actions_minutes, updated_at}` (strings; `updated_at` ISO UTC).
-- `board` / `i<issue number>`: `{num, title, lane, model, phase, state, pr,
-  note, updated_at}` where `state` is one of `planned`, `in_progress`,
-  `review` (labels review/changes/approved), `blocked`, `done` (closed).
-  `pr` = open/merged PR number or null; `note` ≤ 80 chars. Update only rows
-  whose state/pr changed; create rows for new issues.
+- `tracker` / `board`: one document `{synced_at, counts, rows: {i<N>: {num, title, lane, model, phase, state, pr, note, updated_at}}}`, rebuilt hourly by the tracker-sync agent (`node scripts/agent/tracker-sync.mjs`). The planner does not write it.
 - `needs` / `<short-id>`: `{order, open, issue, text}` — one per thing only
   the maintainer can do. Set `open: false` when resolved; never delete.
 - `log` / `<YYYY-MM-DD>` (today, UTC): `{date, done: [..], next: [..],
   blocked: [..], budgets}` — one line per item, link-free plain text with
   issue/PR numbers. Create today's doc; never rewrite older days.
-Use `batch` (≤ 50 writes per call) for board rows.
+
 
 ## 4. Durable mirror
 Also post the same daily summary as a comment on GitHub issue #2
