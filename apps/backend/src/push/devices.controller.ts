@@ -1,4 +1,13 @@
-import { Body, Controller, Delete, Get, Param, Post, UseGuards, UsePipes } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  UseGuards,
+  UsePipes,
+} from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -42,16 +51,31 @@ export class DevicesController {
     // A phone belongs to whoever signed in last on it.
     await this.prisma.deviceToken.upsert({
       where: { token: body.token },
-      create: { userId: user.id, token: body.token, platform: body.platform, appVersion: body.appVersion },
-      update: { userId: user.id, platform: body.platform, appVersion: body.appVersion, lastSeenAt: new Date() },
+      create: {
+        userId: user.id,
+        token: body.token,
+        platform: body.platform,
+        appVersion: body.appVersion,
+      },
+      update: {
+        userId: user.id,
+        platform: body.platform,
+        appVersion: body.appVersion,
+        lastSeenAt: new Date(),
+      },
     });
     return { ok: true };
   }
 
   @UseGuards(JwtAuthGuard)
   @Delete('devices/:token')
-  async unregister(@CurrentUser() user: { id: string }, @Param('token') token: string) {
-    await this.prisma.deviceToken.deleteMany({ where: { token, userId: user.id } });
+  async unregister(
+    @CurrentUser() user: { id: string },
+    @Param('token') token: string,
+  ) {
+    await this.prisma.deviceToken.deleteMany({
+      where: { token, userId: user.id },
+    });
     return { ok: true };
   }
 }

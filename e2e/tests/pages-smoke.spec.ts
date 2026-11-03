@@ -15,6 +15,11 @@ test("all staff pages render without console errors", async ({ page }) => {
   page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
   page.on("console", (m) => m.type() === "error" && errors.push(`console: ${m.text()}`));
 
+  // The delivery map loads OSM tiles; answer with a blank PNG so the smoke run
+  // does not depend on (or hit) the public tile server.
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64");
+  await page.route("https://tile.openstreetmap.org/**", (r) => r.fulfill({ contentType: "image/png", body: png }));
+
   await openDashboard(page);
   for (const path of PAGES) {
     await page.goto(path);
