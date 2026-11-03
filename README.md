@@ -386,6 +386,22 @@ docker compose up -d --build
 docker exec nventra-pos-backend npx ts-node prisma/seed.ts   # optional: demo data + login; upsert-based, safe to re-run
 ```
 
+### Client IPs (reverse proxy, Cloudflare)
+
+Login is rate-limited per client address. The web container (port 1995) is
+the only published port; it hands the backend the address it resolved, and
+the backend trusts that one hop (`TRUST_PROXY=1`, the default; leave it).
+`WEB_TRUST_PROXY` in `.env` says how many proxies sit in front of the web
+container:
+
+- `0` (default): devices connect directly (LAN). Each gets its own bucket and
+  a forged `X-Forwarded-For` header is ignored.
+- `1`: *all* traffic comes through one Cloudflare Tunnel or reverse proxy
+  (nginx, Caddy, Traefik) that appends the client to `X-Forwarded-For`.
+  Without it every visitor shares the proxy's bucket; with it while devices
+  can still reach port 1995 directly, those devices can pick their address.
+- `2`: two such proxies in a row (e.g. Cloudflare then nginx). Maximum 5.
+
 ### Upgrading an install from before the Nventra rename
 
 The Postgres user and database are now `nventra` / `nventra_pos` (previously

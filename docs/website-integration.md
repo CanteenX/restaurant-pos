@@ -78,7 +78,7 @@ services:
 COOKIE_SECURE=true                      # staff logins over https://api.example.com
 FRONTEND_ORIGIN=https://api.example.com # the origin the dashboard is served from
 JWT_SECRET=<openssl rand -hex 32>
-# TRUST_PROXY=                           # leave unset (see below)
+WEB_TRUST_PROXY=1                       # only if ALL traffic uses the tunnel (see below)
 ```
 
 - **Public base URL** for the website: `https://api.example.com` (no port).
@@ -90,19 +90,20 @@ JWT_SECRET=<openssl rand -hex 32>
   inside the LAN), or you keep `COOKIE_SECURE=false` and not use the tunnel for
   the dashboard. The Integration API uses Bearer keys, not cookies, so it is
   unaffected, and there is no CSRF exposure on it.
-- **Proxy headers.** The backend ignores `X-Forwarded-*` unless `TRUST_PROXY`
-  is a number of hops (never `true`; anything else stops the backend from
-  starting). Measured behaviour of the web container: its `/api` proxy passes an
-  incoming `X-Forwarded-For` through **unchanged** and adds nothing, and the
-  backend's direct peer is the web container. So with `TRUST_PROXY=1` the
-  backend takes the right-most `X-Forwarded-For` entry, which Cloudflare sets to
-  the visitor's address (a value a visitor sends is placed to its left and
-  ignored). Cloudflare appending rather than replacing the header is its
-  documented behaviour and was not tested here. Set `TRUST_PROXY=1` only if
-  *all* traffic arrives through the tunnel: a LAN client reaching the web
-  container directly could send its own `X-Forwarded-For` and choose the
-  address the per-IP limiter sees. It is left unset by default so LAN-only
-  installs are unchanged. Integration limits are per API key and never depend
+- **Proxy headers.** The web container is the only published port, and it
+  rewrites `X-Forwarded-For` on every request to one client address before
+  proxying `/api` to the backend; the backend trusts exactly that one hop
+  (`TRUST_PROXY=1`, the compose default, never `true`). Which address the web
+  container picks is set by `WEB_TRUST_PROXY`: `0` (default) uses the
+  connecting address, so on a LAN each device gets its own login-throttle
+  bucket and a sent `X-Forwarded-For` is ignored. Behind the tunnel the
+  connecting address is `cloudflared`, so set `WEB_TRUST_PROXY=1`: the web
+  container then takes the right-most `X-Forwarded-For` entry, which
+  Cloudflare sets to the visitor (a value a visitor sends sits to its left and
+  is ignored; Cloudflare appending rather than replacing is its documented
+  behaviour and was not tested here). Use it only if *all* traffic arrives
+  through the tunnel: a LAN client reaching port 1995 directly could then
+  choose its own address. Integration limits are per API key and never depend
   on it.
 - **CORS.** Not needed: the website's backend calls the API server-to-server,
   and the dashboard is same-origin. `CORS_ORIGIN` / `FRONTEND_ORIGIN` accept a

@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { AppModule } from './app.module';
 import { uploadsDir } from './common/upload/image-upload.config';
+import { applyTrustProxy } from './common/trust-proxy';
 
 // Known example/placeholder secrets that appear verbatim in this repo's own
 // .env.example, docker-compose.yml, and the CasaOS/ZimaOS app-store
@@ -108,18 +109,13 @@ async function bootstrap() {
     }),
   );
   // Forwarded headers (X-Forwarded-For/-Proto) are ignored unless the operator
-  // says how many proxy hops sit in front of this process. A number only —
-  // never `true`, which would let any client spoof its address.
-  const trustProxy = process.env.TRUST_PROXY;
-  if (trustProxy !== undefined && trustProxy !== '') {
-    const hops = Number(trustProxy);
-    if (!Number.isInteger(hops) || hops < 0 || hops > 5) {
-      console.error(
-        'Refusing to start: TRUST_PROXY must be a whole number of proxy hops (0-5), not "true" or an address list.',
-      );
-      process.exit(1);
-    }
-    app.set('trust proxy', hops);
+  // says how many proxy hops sit in front of this process (compose: 1, the web
+  // container). See common/trust-proxy.ts.
+  try {
+    applyTrustProxy(app, process.env.TRUST_PROXY);
+  } catch (e) {
+    console.error(`Refusing to start: ${(e as Error).message}`);
+    process.exit(1);
   }
   // Same 100kb as Express's default, stated so it is a decision, not an accident.
   app.useBodyParser('json', { limit: process.env.BODY_LIMIT ?? '100kb' });

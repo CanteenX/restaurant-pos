@@ -47,6 +47,10 @@ ENV NODE_ENV=production
 COPY --from=builder /repo/apps/web/public ./apps/web/public
 COPY --from=builder /repo/apps/web/.next/standalone ./
 COPY --from=builder /repo/apps/web/.next/static ./apps/web/.next/static
+# Rewrites X-Forwarded-For to the resolved client address before Next proxies
+# /api to the backend (apps/web/lib/client-ip.mjs, WEB_TRUST_PROXY).
+COPY --from=builder /repo/apps/web/client-ip-preload.mjs ./apps/web/client-ip-preload.mjs
+COPY --from=builder /repo/apps/web/lib/client-ip.mjs ./apps/web/lib/client-ip.mjs
 
 EXPOSE 3000
-CMD ["node", "apps/web/server.js"]
+CMD ["node", "--import", "./apps/web/client-ip-preload.mjs", "apps/web/server.js"]
