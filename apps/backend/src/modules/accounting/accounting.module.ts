@@ -6,6 +6,7 @@ import { AccountingController } from './accounting.controller';
 import { AccountingService } from './accounting.service';
 import { LedgerController } from './ledger.controller';
 import { LedgerService } from './ledger.service';
+import { TallyMappingService } from './tally-mapping.service';
 
 @Module({
   imports: [AuditModule],
@@ -13,6 +14,7 @@ import { LedgerService } from './ledger.service';
   providers: [
     AccountingService,
     LedgerService,
+    TallyMappingService,
     BranchAccessService,
     BranchTimeService,
   ],
