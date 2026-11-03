@@ -62,26 +62,18 @@ export class StandaloneService {
         where: { branchId },
         orderBy: { sortOrder: 'asc' },
         include: {
-          tables: {
-            orderBy: { number: 'asc' },
-            select: { id: true, number: true, name: true, capacity: true },
-          },
+          tables: { orderBy: { number: 'asc' }, select: { id: true, number: true, name: true, capacity: true } },
         },
       }),
       // Items that must have options chosen cannot be sold from the phone yet.
       this.prisma.menuItemModifierGroup.findMany({
         where: { modifierGroup: { branchId } },
-        select: {
-          menuItemId: true,
-          modifierGroup: { select: { isRequired: true, minSelect: true } },
-        },
+        select: { menuItemId: true, modifierGroup: { select: { isRequired: true, minSelect: true } } },
       }),
     ]);
     const needsOptions = new Set(
       groupLinks
-        .filter(
-          (l) => l.modifierGroup.isRequired || l.modifierGroup.minSelect > 0,
-        )
+        .filter((l) => l.modifierGroup.isRequired || l.modifierGroup.minSelect > 0)
         .map((l) => l.menuItemId),
     );
     const r = branch.restaurant;
@@ -141,12 +133,9 @@ export class StandaloneService {
     const results: OfflineSaleResult[] = [];
     for (const sale of body.sales) {
       try {
-        results.push(
-          await this.recordSale(user, branchId, sale, body.deviceName),
-        );
+        results.push(await this.recordSale(user, branchId, sale, body.deviceName));
       } catch (err) {
-        const reason =
-          err instanceof Error ? err.message : 'Could not record this sale';
+        const reason = err instanceof Error ? err.message : 'Could not record this sale';
         this.logger.warn(`Offline sale ${sale.id} refused: ${reason}`);
         results.push({ id: sale.id, status: 'refused', reason });
       }
@@ -165,31 +154,19 @@ export class StandaloneService {
       select: { id: true, orderNumber: true, status: true },
     });
     if (existing && existing.status === 'PAID') {
-      return {
-        id: sale.id,
-        status: 'duplicate',
-        orderId: existing.id,
-        orderNumber: existing.orderNumber,
-      };
+      return { id: sale.id, status: 'duplicate', orderId: existing.id, orderNumber: existing.orderNumber };
     }
     if (existing) {
       // An earlier attempt left an unfinished order: do not settle it twice.
-      throw new Error(
-        'An earlier attempt of this sale did not finish; it needs a look in Orders.',
-      );
+      throw new Error('An earlier attempt of this sale did not finish; it needs a look in Orders.');
     }
 
     // Merge repeated lines of the same dish so each can be matched to its price.
-    const lines = new Map<
-      string,
-      { menuItemId: string; quantity: number; unitPrice: number }
-    >();
+    const lines = new Map<string, { menuItemId: string; quantity: number; unitPrice: number }>();
     for (const l of sale.items) {
       const prev = lines.get(l.menuItemId);
       if (prev && prev.unitPrice !== l.unitPrice) {
-        throw new Error(
-          'The same dish was sold at two different prices in one sale.',
-        );
+        throw new Error('The same dish was sold at two different prices in one sale.');
       }
       lines.set(l.menuItemId, {
         menuItemId: l.menuItemId,
@@ -218,11 +195,8 @@ export class StandaloneService {
           quantity: m.quantity,
           modifierIds: [],
         })),
-      },
-      {
-        clientRequestId: sale.id,
-        historical: { createdAt: new Date(sale.soldAt) },
-      },
+      } as never,
+      { clientRequestId: sale.id, historical: { createdAt: new Date(sale.soldAt) } },
     );
 
     try {
@@ -235,26 +209,19 @@ export class StandaloneService {
           payments: sale.payments,
           discountPercent: sale.discountPercent,
           discountFlat: sale.discountFlat,
-          discountReason:
-            sale.discountPercent || sale.discountFlat
-              ? 'Offline sale discount'
-              : undefined,
+          discountReason: sale.discountPercent || sale.discountFlat ? 'Offline sale discount' : undefined,
           requestId: sale.id,
-        },
+        } as never,
         mayExceedDiscountCap(user),
       );
     } catch (err) {
-      const reason =
-        err instanceof Error ? err.message : 'Payment could not be recorded';
+      const reason = err instanceof Error ? err.message : 'Payment could not be recorded';
       await this.prisma.order.updateMany({
         where: { id: order.id, status: 'OPEN' },
         data: {
           status: 'CANCELLED',
           cancelledAt: new Date(),
-          cancelReason: `Offline sale could not be settled: ${reason}`.slice(
-            0,
-            250,
-          ),
+          cancelReason: `Offline sale could not be settled: ${reason}`.slice(0, 250),
         },
       });
       throw new Error(reason);
@@ -263,12 +230,7 @@ export class StandaloneService {
       where: { id: order.id },
       select: { id: true, orderNumber: true },
     });
-    return {
-      id: sale.id,
-      status: 'created',
-      orderId: done.id,
-      orderNumber: done.orderNumber,
-    };
+    return { id: sale.id, status: 'created', orderId: done.id, orderNumber: done.orderNumber };
   }
 
   /**
@@ -289,19 +251,11 @@ export class StandaloneService {
       const sold = lines.find((l) => l.menuItemId === item.menuItemId);
       const raw = sold ? sold.unitPrice : Number(item.unitPriceSnapshot);
       const rate = Number(item.taxRateSnapshot);
-      const effective = toEffectiveInclusiveUnitPrice(
-        raw,
-        rate,
-        branch.taxMode,
-      );
+      const effective = toEffectiveInclusiveUnitPrice(raw, rate, branch.taxMode);
       return {
         item,
         raw,
-        line: priceLine({
-          quantity: item.quantity,
-          unitPriceInclusive: effective,
-          taxRatePercent: rate,
-        }),
+        line: priceLine({ quantity: item.quantity, unitPriceInclusive: effective, taxRatePercent: rate }),
       };
     });
     const totals = computeOrderTotals(priced.map((p) => p.line));
@@ -309,19 +263,12 @@ export class StandaloneService {
       ...priced.map((p) =>
         this.prisma.orderItem.update({
           where: { id: p.item.id },
-          data: {
-            unitPriceSnapshot: round2(p.raw),
-            lineTotal: p.line.lineTotal,
-          },
+          data: { unitPriceSnapshot: round2(p.raw), lineTotal: p.line.lineTotal },
         }),
       ),
       this.prisma.order.update({
         where: { id: orderId },
-        data: {
-          subtotal: totals.subtotal,
-          taxAmount: totals.taxAmount,
-          totalAmount: totals.subtotal,
-        },
+        data: { subtotal: totals.subtotal, taxAmount: totals.taxAmount, totalAmount: totals.subtotal },
       }),
     ]);
   }
