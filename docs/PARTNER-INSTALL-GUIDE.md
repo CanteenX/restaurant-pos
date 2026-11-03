@@ -8,8 +8,8 @@ repository supports today. Commands assume a terminal on the host machine.
 
 - **Host:** one always-on machine on the restaurant's LAN (a small PC, mini PC
   or server). Any 64-bit Linux, macOS or Windows 10/11 machine that can run
-  Docker works. Exact CPU/RAM/disk sizing is not yet published; size the host
-  during a pilot and record the result in this guide.
+  Docker works. Size the host for the number of tills and devices: it must run Docker
+  and have enough free disk for the database and backups.
 - **Network:** every till, tablet and KDS screen must reach the host on the
   same network. The app listens on **port 1995** by default
   (`HOST_PORT` in `.env` changes it). Give the host a fixed LAN IP or DHCP
@@ -138,4 +138,4 @@ passwords and percent-encoding, are in [`docs/email.md`](email.md).
 - [ ] Test order printed on each printer
 - [ ] Test email sent (if SMTP is configured)
 - [ ] One backup taken and one restore tested
-- [ ] Support contact given to the restaurant (the support runbook is tracked separately in issue #35)
+- [ ] Support contact given to the restaurant
