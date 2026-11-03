@@ -26,9 +26,15 @@ issues_with_labels "agent:in-progress"                    # busy lanes
   resolve conflicts, re-run checks.
 - Skip issues whose body says `Depends on #N` while any such #N is still open
   (`issue_state N`). Dependencies always win over issue order.
-- Take the lowest-numbered remaining issue. Claim it immediately:
-  `set_state N agent:in-progress` and
-  `comment N "Claimed by builder (<model>) at $(date -u +%FT%TZ)"`.
+- Skip issues labelled `reserved` (kept for a manual session).
+- Take the lowest-numbered remaining issue and claim it with a unique run id:
+  `RUN=$(date +%s)-$RANDOM`, `comment N "Claimed by builder (<model>) run $RUN at $(date -u +%FT%TZ)"`,
+  then `set_state N agent:in-progress`.
+- **Confirm the claim (prevents two builders on one issue):** wait 15 s, then
+  read the issue's comments from the last 30 min that start with `Claimed by builder`.
+  If the OLDEST of them is not yours (other run id), you lost the race: delete
+  your claim comment (`gh api -X DELETE repos/$R/issues/comments/<id>`), do not
+  touch the labels, and go back to picking another issue.
 - Nothing to do → stop without changes.
 
 ## 2. Build (TDD)
