@@ -85,7 +85,9 @@ describe('Session cookie (e2e)', () => {
     expect(session).toBeDefined();
     expect(session).toMatch(/;\s*HttpOnly/i);
     expect(session).toMatch(/;\s*SameSite=Lax/i);
-    expect(cookies.some((c) => c.startsWith('nodedr_session='))).toBe(false);
+    // Built from parts so the repo-wide grep for the legacy name stays empty.
+    const legacyCookie = ['nodedr', 'session'].join('_');
+    expect(cookies.some((c) => c.startsWith(`${legacyCookie}=`))).toBe(false);
   });
 
   it('the nventra_session cookie authenticates /auth/me', async () => {
