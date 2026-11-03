@@ -12,9 +12,12 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import {
   SESSION_COOKIE,
+  isPastMaxLifetime,
   needsRefresh,
   sessionCookieOptions,
   sessionIdleSeconds,
+  sessionMaxSeconds,
+  sessionStartedAt,
   type SessionPayload,
 } from './session';
 
@@ -27,6 +30,7 @@ const cookieExtractor = (req: {
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   private readonly idleSeconds: number;
+  private readonly maxSeconds: number;
 
   constructor(
     config: ConfigService,
@@ -40,12 +44,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       passReqToCallback: true,
     });
     this.idleSeconds = sessionIdleSeconds(config);
+    this.maxSeconds = sessionMaxSeconds(config);
   }
 
   async validate(
     req: Pick<Request, 'res'>,
     payload: SessionPayload,
   ): Promise<SessionUser> {
+    const now = Math.floor(Date.now() / 1000);
+    if (isPastMaxLifetime(payload, now, this.maxSeconds)) {
+      throw new UnauthorizedException('Session expired, sign in again');
+    }
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
       include: permissionInclude,
@@ -56,7 +65,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Session no longer valid');
     }
 
-    await this.slideSession(req, payload.exp, user.id, user.tokenVersion);
+    await this.slideSession(req, payload, now, user.tokenVersion);
 
     return {
       id: user.id,
@@ -68,20 +77,31 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     };
   }
 
-  /** Re-issue the cookie once past half the idle window (sliding expiry). */
+  /**
+   * Re-issue the cookie once past half the idle window (sliding expiry).
+   * The renewed token keeps the original sign-in time and never runs past
+   * the absolute cap.
+   */
   private async slideSession(
     req: Pick<Request, 'res'>,
-    exp: number | undefined,
-    userId: string,
+    payload: SessionPayload,
+    now: number,
     tokenVersion: number,
   ) {
-    const now = Math.floor(Date.now() / 1000);
-    if (!req.res || !needsRefresh(exp, now, this.idleSeconds)) return;
-    const token = await this.jwt.signAsync({ sub: userId, tv: tokenVersion });
+    if (!req.res || !needsRefresh(payload.exp, now, this.idleSeconds)) return;
+    const authTime = sessionStartedAt(payload) ?? now;
+    const expiresIn = Math.min(
+      this.idleSeconds,
+      authTime + this.maxSeconds - now,
+    );
+    const token = await this.jwt.signAsync(
+      { sub: payload.sub, tv: tokenVersion, auth_time: authTime },
+      { expiresIn },
+    );
     req.res.cookie(
       SESSION_COOKIE,
       token,
-      sessionCookieOptions(this.idleSeconds * 1000),
+      sessionCookieOptions(expiresIn * 1000),
     );
   }
 }

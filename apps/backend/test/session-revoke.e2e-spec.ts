@@ -212,4 +212,41 @@ describe('Session revoke and idle expiry (e2e)', () => {
       .expect(200);
     expect(sessionCookie(res2)).toBeUndefined();
   });
+
+  it('a session past the absolute cap is rejected even with a valid exp', async () => {
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { id: staffId },
+    });
+    const nowS = Math.floor(Date.now() / 1000);
+    const stale = jwt.sign(
+      { sub: staffId, tv: user.tokenVersion, auth_time: nowS - 13 * 3600 },
+      { expiresIn: 300 },
+    );
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/auth/me')
+      .set('Cookie', `nventra_session=${stale}`)
+      .expect(401);
+    expect(sessionCookie(res)).toBeUndefined();
+
+    const inside = jwt.sign(
+      { sub: staffId, tv: user.tokenVersion, auth_time: nowS - 2 * 3600 },
+      { expiresIn: 300 },
+    );
+    const res2 = await request(app.getHttpServer())
+      .get('/api/v1/auth/me')
+      .set('Cookie', `nventra_session=${inside}`)
+      .expect(200);
+    expect(sessionCookie(res2)).toMatch(/Max-Age=3600/);
+  });
+
+  it('login stamps auth_time and the renewed token keeps it', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: staffEmail, password })
+      .expect(201);
+    const raw = sessionCookie(res)!.split(';')[0].split('=')[1];
+    const claims = jwt.decode<{ auth_time?: number; iat?: number }>(raw);
+    expect(typeof claims.auth_time).toBe('number');
+    expect(Math.abs(claims.auth_time! - claims.iat!)).toBeLessThanOrEqual(1);
+  });
 });

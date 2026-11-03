@@ -377,6 +377,7 @@ export class AuthService {
     const token = await this.jwt.signAsync({
       sub: user.id,
       tv: user.tokenVersion,
+      auth_time: Math.floor(Date.now() / 1000),
     });
     return { token, user: sessionUser };
   }

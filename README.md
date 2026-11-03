@@ -106,7 +106,8 @@ nothing about it is tied to a specific machine or network:
   "Unauthorized" even though login appears to succeed.
 
 **Sessions.** A login stays valid while it is used and signs out after
-`SESSION_IDLE_MINUTES` (default 60) of inactivity. `POST
+`SESSION_IDLE_MINUTES` (default 60) of inactivity, and never lasts longer
+than `SESSION_MAX_HOURS` (default 12) after sign-in, however active. `POST
 /api/v1/auth/sessions/revoke` signs the caller out of every device, and
 `POST /api/v1/auth/sessions/revoke/:userId` (needs `users.manage`) does the
 same for a staff member; a password reset or 2FA reset by an admin, and

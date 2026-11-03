@@ -235,7 +235,11 @@ describe('AuthService session tokens', () => {
   it('embeds the user tokenVersion as `tv` in the JWT', async () => {
     const { svc, jwt } = setup(makeUser({ tokenVersion: 7 }));
     const out = await svc.pinLogin({ userId: 'u1', pin: PIN }, '10.7.7.7');
-    expect(jwt.signAsync).toHaveBeenCalledWith({ sub: 'u1', tv: 7 });
+    expect(jwt.signAsync).toHaveBeenCalledWith({
+      sub: 'u1',
+      tv: 7,
+      auth_time: expect.any(Number) as number,
+    });
     expect(out.token).toBe('token-1');
   });
 });

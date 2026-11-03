@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import {
   OnGatewayConnection,
@@ -11,6 +12,11 @@ import {
 } from '@nestjs/websockets';
 import { displayJoinSchema, displayPublishSchema } from '@nventra/types';
 import type { Server, Socket } from 'socket.io';
+import {
+  isPastMaxLifetime,
+  sessionMaxSeconds,
+  type SessionPayload,
+} from '../auth/session';
 import { BranchAccessService } from '../common/services/branch-access.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -45,6 +51,7 @@ export class RealtimeGateway
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
     private readonly branchAccess: BranchAccessService,
+    private readonly config: ConfigService,
   ) {}
 
   // Every other realtime event (KOT contents, table/order status, customer
@@ -62,7 +69,10 @@ export class RealtimeGateway
       const token = this.extractSessionCookie(client);
       if (!token) throw new Error('No session cookie');
 
-      const payload = this.jwt.verify<{ sub: string; tv?: number }>(token);
+      const payload = this.jwt.verify<SessionPayload>(token);
+      const now = Math.floor(Date.now() / 1000);
+      if (isPastMaxLifetime(payload, now, sessionMaxSeconds(this.config)))
+        throw new Error('Session expired');
       const user = await this.prisma.user.findUnique({
         where: { id: payload.sub },
       });

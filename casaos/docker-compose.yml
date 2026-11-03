@@ -38,6 +38,7 @@ services:
       # a broken install out of the box — this way nobody ever has to
       # touch it and it still works correctly.
       SESSION_IDLE_MINUTES: "60"
+      SESSION_MAX_HOURS: "12"
       PORT: "4000"
       CORS_ORIGIN: "http://localhost:1995"
       COOKIE_SECURE: "false"
