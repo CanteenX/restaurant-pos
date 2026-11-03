@@ -21,6 +21,7 @@ import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { BackupService } from './backup.service';
+import { CHECKSUM_FILE, DB_FILE, UPLOADS_FILE } from './backup-integrity';
 
 // Backups span the whole instance (every restaurant sharing this
 // database), so visibility is restricted well above the usual
@@ -77,17 +78,17 @@ export class BackupController {
     return this.backupService.restore(user, id, body as never);
   }
 
-  // Streams a single zip built server-side from the backup's two S3
-  // objects (whichever exist) — new beyond zulivio, which never built a
-  // local-download path. See BackupService.prepareDownload() for the
-  // VERIFIED-only check and its own audit call.
+  // Streams a single zip built server-side from the backup's S3 objects
+  // (whichever exist) plus SHA256SUMS — new beyond zulivio, which never
+  // built a local-download path. See BackupService.prepareDownload() for
+  // the VERIFIED-only + checksum checks and its own audit call.
   // Local backup: dump the database + uploads right now and stream them as
   // a zip to the browser, so an owner can keep a copy on their own machine
   // with no S3 bucket configured. Declared before ':id/download' routes.
   @Auth('backup.manage')
   @Get('export')
   async exportLocal(@CurrentUser() user: SessionUser, @Res() res: Response) {
-    const { workDir, dbDumpPath, uploadsArchivePath } =
+    const { workDir, dbDumpPath, uploadsArchivePath, checksumsPath } =
       await this.backupService.prepareLocalExport(user);
 
     const filename = `orderrestro-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
@@ -102,10 +103,11 @@ export class BackupController {
     const archive = archiver('zip', { zlib: { level: 9 } });
     archive.on('error', (err) => res.destroy(err));
     archive.pipe(res);
-    archive.file(dbDumpPath, { name: 'db.dump' });
+    archive.file(dbDumpPath, { name: DB_FILE });
     if (uploadsArchivePath) {
-      archive.file(uploadsArchivePath, { name: 'uploads.tar.gz' });
+      archive.file(uploadsArchivePath, { name: UPLOADS_FILE });
     }
+    archive.file(checksumsPath, { name: CHECKSUM_FILE });
     await archive.finalize();
   }
 
@@ -116,7 +118,7 @@ export class BackupController {
     @Param('id') id: string,
     @Res() res: Response,
   ) {
-    const { record, config, s3 } = await this.backupService.prepareDownload(
+    const { record, objects } = await this.backupService.prepareDownload(
       user,
       id,
     );
@@ -128,23 +130,11 @@ export class BackupController {
     const archive = archiver('zip', { zlib: { level: 9 } });
     archive.on('error', (err) => res.destroy(err));
     archive.pipe(res);
-
-    if (record.s3KeyDb) {
-      const dbStream = await this.backupService.fetchObjectStream(
-        s3,
-        config.bucket,
-        record.s3KeyDb,
-      );
-      archive.append(dbStream, { name: 'db.dump' });
+    archive.append(objects.db, { name: DB_FILE });
+    if (objects.uploads) {
+      archive.append(objects.uploads, { name: UPLOADS_FILE });
     }
-    if (record.s3KeyUploads) {
-      const uploadsStream = await this.backupService.fetchObjectStream(
-        s3,
-        config.bucket,
-        record.s3KeyUploads,
-      );
-      archive.append(uploadsStream, { name: 'uploads.tar.gz' });
-    }
+    archive.append(objects.checksums, { name: CHECKSUM_FILE });
 
     await archive.finalize();
   }
