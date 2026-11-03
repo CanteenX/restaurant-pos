@@ -17,8 +17,14 @@
 - Count PRs merged / reviewed / failed in the last 24h.
 
 ## 3. Write the daily log
-Update the progress tracker (the "Nventra POS — Build Log" doc; if you cannot
-reach it, update the pinned GitHub issue titled `📊 Build log`):
+Update the progress tracker, a Claude Doc: "Nventra POS — Build Log"
+(https://claude.ai/artifact/PiJqqHQuXHZ6JPhzopEZbP, doc id
+`b7ed8a63-25c9-44f4-b147-da2ec7665542`) via the Claude Docs connector: add a
+row at the top of the Daily log table and refresh Status / Needs you / Done /
+In progress / Planned. Edit only those sections; keep human edits. If the
+connector is unavailable, write the same content as a comment on the pinned
+GitHub issue titled `📊 Build log` instead. Always do the GitHub comment too —
+it is the durable record. Sections to cover:
 - **Done (last 24h):** merged PRs with one line each.
 - **In progress:** issue → PR → current state.
 - **Up next:** next 5 issues per lane.
