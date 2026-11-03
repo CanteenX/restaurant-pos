@@ -377,9 +377,7 @@ export class OrdersService {
           guestName: dto.guestName,
           notes: dto.notes,
           clientRequestId: options.clientRequestId,
-          ...(options.historical
-            ? { createdAt: options.historical.createdAt }
-            : {}),
+          ...(options.historical ? { createdAt: options.historical.createdAt } : {}),
           integrationKeyId: options.integrationKeyId,
           clientRequestHash: options.clientRequestHash,
           externalSource: options.externalSource,

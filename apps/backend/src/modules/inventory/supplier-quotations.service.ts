@@ -3,7 +3,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { QuotationStatus, SupplierQuotationDto } from '@nventra/types';
+import type {
+  QuotationStatus,
+  SupplierQuotationDto,
+} from '@nventra/types';
 import { PrismaService } from '../../prisma/prisma.service';
 
 const NEXT_STATUS: Record<QuotationStatus, QuotationStatus[]> = {

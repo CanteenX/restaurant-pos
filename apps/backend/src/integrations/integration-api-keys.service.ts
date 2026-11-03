@@ -4,7 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { CreateIntegrationApiKeyDto, SessionUser } from '@nventra/types';
+import type {
+  CreateIntegrationApiKeyDto,
+  SessionUser,
+} from '@nventra/types';
 import { PrismaService } from '../prisma/prisma.service';
 import { BranchAccessService } from '../common/services/branch-access.service';
 
