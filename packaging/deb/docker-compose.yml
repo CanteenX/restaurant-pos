@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: nventra
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?missing POSTGRES_PASSWORD in /etc/nodedr-orderrestro/nodedr-orderrestro.env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?missing POSTGRES_PASSWORD in /etc/nventra-pos/nventra-pos.env}
       POSTGRES_DB: nventra_pos
     expose:
       - "5432"

@@ -1,0 +1,38 @@
+Name:           @PKG@
+Version:        @VERSION@
+Release:        1
+Summary:        @SHORTDESC@
+License:        AGPL-3.0-or-later
+URL:            @HOMEPAGE@
+BuildArch:      @RPMARCH@
+Requires:       systemd, curl
+# Docker Engine + Compose plugin come from docker-ce or the distribution; the installer script sets them up.
+AutoReqProv:    no
+
+%description
+@RPMDESC@
+
+%install
+mkdir -p %{buildroot}/usr/lib/@PKG@/scripts %{buildroot}/usr/share/@PKG@ %{buildroot}/usr/lib/systemd/system %{buildroot}/usr/share/doc/@PKG@
+install -m 0644 @STAGE@/docker-compose.yml %{buildroot}/usr/lib/@PKG@/docker-compose.yml
+install -m 0755 @STAGE@/preflight.sh %{buildroot}/usr/lib/@PKG@/preflight.sh
+install -m 0755 @STAGE@/postinst @STAGE@/prerm @STAGE@/postrm %{buildroot}/usr/lib/@PKG@/scripts/
+install -m 0644 @STAGE@/@PKG@.env.example %{buildroot}/usr/share/@PKG@/@PKG@.env.example
+install -m 0644 @STAGE@/@PKG@.service %{buildroot}/usr/lib/systemd/system/@PKG@.service
+install -m 0644 @STAGE@/LICENSE %{buildroot}/usr/share/doc/@PKG@/copyright
+
+%files
+/usr/lib/@PKG@
+/usr/share/@PKG@
+/usr/lib/systemd/system/@PKG@.service
+%doc /usr/share/doc/@PKG@/copyright
+
+# The shared deb maintainer scripts use the dpkg argument convention; map rpm's counts onto it.
+%post
+sh /usr/lib/@PKG@/scripts/postinst configure || true
+
+%preun
+if [ "$1" -eq 0 ]; then sh /usr/lib/@PKG@/scripts/prerm remove || true; fi
+
+%postun
+if [ "$1" -eq 0 ]; then sh /usr/lib/@PKG@/scripts/postrm remove || true; fi
