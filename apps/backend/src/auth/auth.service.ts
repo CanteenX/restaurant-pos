@@ -316,7 +316,14 @@ export class AuthService {
       where: { id: dto.userId },
       include: permissionInclude,
     });
-    const user = found?.isActive && found.pinHash ? found : null;
+    // A 4-8 digit PIN must not be a way around the second factor, so a
+    // two-factor account is treated exactly like one without a PIN: every
+    // attempt takes the generic failure path and reveals neither the PIN
+    // nor whether two-factor is on.
+    const user =
+      found?.isActive && found.pinHash && !found.twoFactorEnabled
+        ? found
+        : null;
     const valid = await bcrypt.compare(
       dto.pin,
       user?.pinHash ?? (await getDummyPinHash()),
@@ -327,14 +334,6 @@ export class AuthService {
       throw new UnauthorizedException(PIN_FAILED);
     }
     this.pinUserLock.reset(userKey);
-
-    // A 4-8 digit PIN must not be a way around the second factor. Checked
-    // after the PIN so a stranger cannot probe who uses two-factor.
-    if (user.twoFactorEnabled) {
-      throw new UnauthorizedException(
-        'PIN login is off for accounts with two-factor authentication — sign in with your password',
-      );
-    }
 
     await this.audit.record({
       userId: user.id,

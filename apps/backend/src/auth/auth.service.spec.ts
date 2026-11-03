@@ -193,14 +193,22 @@ describe('AuthService.pinLogin', () => {
     );
   });
 
-  it('only reveals the two-factor block once the PIN is right', async () => {
+  it('gives two-factor accounts the generic failure for right and wrong PINs', async () => {
     const u = makeUser({ twoFactorEnabled: true });
-    const bad = await attempt(setup(u).svc, '0000');
-    expect((bad.err as Error).message).not.toMatch(/two-factor/i);
-    const good = await attempt(setup(u).svc, PIN);
-    expect(good.status).toBe(401);
-    expect((good.err as Error).message).toMatch(/two-factor/i);
-    expect(good.ok).toBeUndefined();
+    for (const pin of ['0000', PIN]) {
+      const res = await attempt(setup(u).svc, pin);
+      expect(res.status).toBe(401);
+      expect((res.err as Error).message).toMatch(
+        /^Incorrect PIN or PIN login not available/,
+      );
+      expect(res.ok).toBeUndefined();
+    }
+  });
+
+  it('counts a correct PIN on a two-factor account as a failure', async () => {
+    const { svc } = setup(makeUser({ twoFactorEnabled: true }));
+    for (let i = 0; i < PIN_MAX_FAILURES; i++) await attempt(svc, PIN);
+    expect((await attempt(svc, PIN)).status).toBe(423);
   });
 });
 
