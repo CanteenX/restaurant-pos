@@ -3,9 +3,13 @@ import { JwtService } from '@nestjs/jwt';
 import {
   OnGatewayConnection,
   OnGatewayDisconnect,
+  ConnectedSocket,
+  MessageBody,
+  SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
+import { displayJoinSchema, displayPublishSchema } from '@nventra/types';
 import type { Server, Socket } from 'socket.io';
 import { BranchAccessService } from '../common/services/branch-access.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -69,6 +73,9 @@ export class RealtimeGateway
         throw new Error('Missing branchId');
       }
       await this.branchAccess.assertAccess(user.restaurantId, branchId);
+      // Remembered for the customer-display relay: its rooms are always built
+      // from this verified branch, never from anything the client sends later.
+      (client.data as { branchId?: string }).branchId = branchId;
 
       await client.join(this.branchRoom(branchId));
       // Every socket also joins a room keyed to its own authenticated user
@@ -104,6 +111,40 @@ export class RealtimeGateway
   emitToUsers(userIds: string[], event: string, payload: unknown) {
     if (userIds.length === 0) return;
     this.server.to(userIds.map((id) => this.userRoom(id))).emit(event, payload);
+  }
+
+  // Customer display pairing: a display (any device logged in to the same
+  // branch) joins the room for a till's code; the till publishes into it.
+  @SubscribeMessage('display.join')
+  async onDisplayJoin(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: unknown,
+  ) {
+    const parsed = displayJoinSchema.safeParse(body);
+    const branchId = (client.data as { branchId?: string } | undefined)
+      ?.branchId;
+    if (!parsed.success || !branchId) return { ok: false };
+    await client.join(this.displayRoom(branchId, parsed.data.code));
+    return { ok: true };
+  }
+
+  @SubscribeMessage('display.publish')
+  onDisplayPublish(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: unknown,
+  ) {
+    const parsed = displayPublishSchema.safeParse(body);
+    const branchId = (client.data as { branchId?: string } | undefined)
+      ?.branchId;
+    if (!parsed.success || !branchId) return { ok: false };
+    this.server
+      .to(this.displayRoom(branchId, parsed.data.code))
+      .emit('display.state', parsed.data.state);
+    return { ok: true };
+  }
+
+  private displayRoom(branchId: string, code: string) {
+    return `display:${branchId}:${code}`;
   }
 
   private branchRoom(branchId: string) {
