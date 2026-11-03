@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   Post,
+  Req,
   Res,
   UseGuards,
   UsePipes,
@@ -19,7 +20,7 @@ import {
   type SessionUser,
 } from '@nventra/types';
 import { Throttle } from '@nestjs/throttler';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
@@ -89,9 +90,15 @@ export class AuthController {
   @UsePipes(new ZodValidationPipe(pinLoginSchema))
   async pinLogin(
     @Body() body: unknown,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { token, user } = await this.authService.pinLogin(body as never);
+    // Same cookie as password login. The service also locks per user and
+    // per address on repeated failures (see AuthService.pinLogin).
+    const { token, user } = await this.authService.pinLogin(
+      body as never,
+      req.ip ?? 'unknown',
+    );
     this.setSessionCookie(res, token);
     return { user };
   }
