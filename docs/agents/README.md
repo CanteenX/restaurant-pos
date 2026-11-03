@@ -33,14 +33,18 @@ that, builder runs at an odd UTC hour stop immediately without doing work
 ## Live tracker (every role)
 Whenever you change an issue's `agent:*` state (claim, PR opened, review
 verdict, merge, blocked), also update its row on the tracker page with the
-ArtifactData tool (load it with ToolSearch `select:ArtifactData`):
-`get` collection `board` doc `i<N>` from https://claude.ai/artifact/UPwdzfrnLQB9qKV2L9PD8Y,
-then `update` it with `if_version` = that version and
-`{state, pr, note, updated_at}` — state is `in_progress` (claimed),
-`review` (PR open / changes / approved), `done` (merged), `blocked`; `note`
-≤ 80 chars of what happened. If ArtifactData is unavailable or fails, skip
-it (GitHub stays the source of truth); never retry in a loop. Only the
-planner writes `tracker/status`, `needs` and `log`.
+ArtifactData tool (load it with ToolSearch `select:ArtifactData`) on
+https://claude.ai/artifact/UPwdzfrnLQB9qKV2L9PD8Y: `get` collection
+`tracker` doc `board` (note its `version`), then `update` that doc with
+`if_version` = that version and only your row, nested:
+`{"rows": {"i<N>": {"state": …, "pr": …, "note": …, "updated_at": "<ISO UTC>"}}}`
+(nested objects merge, so other rows are untouched). State is `in_progress`
+(claimed), `review` (PR open / changes / approved), `done` (merged),
+`blocked`; `note` ≤ 80 chars. On a version conflict, get + update once more;
+if it fails again or ArtifactData is unavailable, skip it — the hourly
+tracker-sync agent rebuilds the whole board from GitHub anyway. Only the
+planner writes `tracker/status`, `needs` and `log`; only tracker-sync writes
+the whole `tracker/board`.
 
 ## Model routing (set on every issue by the planner)
 - `model:opus` — architecture, auth/security, money/payments, DB migrations,
