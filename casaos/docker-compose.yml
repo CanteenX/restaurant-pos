@@ -7,15 +7,15 @@ services:
     hostname: nventra-pos-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: nodedr
+      POSTGRES_USER: nventra
       POSTGRES_PASSWORD: "please-change-this-password"
-      POSTGRES_DB: nodedr_restaurant
+      POSTGRES_DB: nventra_pos
     volumes:
       - type: bind
         source: /DATA/AppData/$AppID/postgres
         target: /var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nodedr"]
+      test: ["CMD-SHELL", "pg_isready -U nventra -d nventra_pos"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -28,7 +28,7 @@ services:
     hostname: nventra-pos-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgresql://nodedr:please-change-this-password@nventra-pos-postgres:5432/nodedr_restaurant"
+      DATABASE_URL: "postgresql://nventra:please-change-this-password@nventra-pos-postgres:5432/nventra_pos"
       # No JWT_SECRET here on purpose — the app generates a real random one
       # itself on first boot and persists it to the /data/state volume
       # below (see apps/backend/src/main.ts's resolveJwtSecret()). A

@@ -152,7 +152,7 @@ async function bootstrap() {
       .setTitle('Nodedr OrderRestro API')
       .setDescription('REST API for the Nodedr OrderRestro management system')
       .setVersion('1.0')
-      .addCookieAuth('nodedr_session')
+      .addCookieAuth('nventra_session')
       .addBearerAuth({ type: 'http', scheme: 'bearer' }, 'integration-key')
       .build();
     const document = SwaggerModule.createDocument(app, config);
