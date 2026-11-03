@@ -126,7 +126,7 @@ gateway in `apps/backend/src/realtime/realtime.gateway.ts`).
    `FRONTEND_ORIGIN` (written to `CORS_ORIGIN` in `docker-compose.yml`). If the tablet
    opens the site under a different address (IP, tunnel or domain), set `FRONTEND_ORIGIN`
    in `.env` to that address and run `docker compose up -d backend`.
-3. Behind a tunnel or reverse proxy, set `WEB_TRUST_PROXY` (see `docs/KIOSK-AND-KDS.md`).
+3. Behind a tunnel or reverse proxy, set `WEB_TRUST_PROXY` (see `docs/website-integration.md`).
 4. Check `docker compose logs --tail=100 backend` for `realtime` or CORS errors.
 
 Setup details for kiosk and KDS tablets: `docs/KIOSK-AND-KDS.md`.
