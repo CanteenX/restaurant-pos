@@ -24,6 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useCreateReservation } from "@/hooks/use-reservations";
 import type { RestaurantTable } from "@/hooks/use-tables";
 import { ApiError } from "@/lib/api";
+import { parseDepositInput } from "@/lib/reservation-deposit";
 
 function defaultDateTimeLocal() {
   const d = new Date(Date.now() + 60 * 60 * 1000);
@@ -45,6 +46,7 @@ export function AddReservationDialog({
   const [reservedAt, setReservedAt] = useState(defaultDateTimeLocal());
   const [tableId, setTableId] = useState("");
   const [specialRequests, setSpecialRequests] = useState("");
+  const [deposit, setDeposit] = useState("");
 
   const createReservation = useCreateReservation(branchId);
 
@@ -55,10 +57,16 @@ export function AddReservationDialog({
     setReservedAt(defaultDateTimeLocal());
     setTableId("");
     setSpecialRequests("");
+    setDeposit("");
   };
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const parsedDeposit = parseDepositInput(deposit);
+    if (!parsedDeposit.ok) {
+      toast.error("Deposit must be a number of 0 or more");
+      return;
+    }
     createReservation.mutate(
       {
         customerName,
@@ -68,6 +76,7 @@ export function AddReservationDialog({
         durationMinutes: 90,
         tableId: tableId || undefined,
         specialRequests: specialRequests || undefined,
+        deposit: parsedDeposit.value,
       },
       {
         onSuccess: () => {
@@ -144,6 +153,19 @@ export function AddReservationDialog({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="r-deposit">Deposit (optional)</Label>
+            <Input
+              id="r-deposit"
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="0.01"
+              value={deposit}
+              onChange={(e) => setDeposit(e.target.value)}
+            />
           </div>
 
           <div className="flex flex-col gap-2">
