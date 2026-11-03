@@ -5,6 +5,13 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
+# Claude cloud VMs cannot build the Docker images (their network blocks the
+# GitHub-release download in apps/backend/Dockerfile), so run the stack from
+# source there instead. QA_MODE=docker forces the compose path.
+if [ -n "${CLAUDE_CODE_REMOTE:-}" ] && [ "${QA_MODE:-native}" != "docker" ] || [ "${QA_MODE:-}" = "native" ]; then
+  exec "$(dirname "${BASH_SOURCE[0]}")/qa-native.sh" "$@"
+fi
+
 # This script DELETES the compose volumes (database, uploads). Refuse to run
 # on a real machine unless explicitly allowed.
 if [ "${QA_ALLOW_RESET:-0}" != "1" ] && [ -z "${CLAUDE_CODE_REMOTE:-}" ]; then
