@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument -- supertest bodies are untyped by design */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access -- supertest bodies are untyped by design */
 // Tally ledger mapping API and permissions. Opt-in:
 //   TALLY_E2E=1 DATABASE_URL=... JWT_SECRET=x npx jest --config ./test/jest-e2e.json --runInBand tally-mapping
 import { INestApplication } from '@nestjs/common';
@@ -88,6 +88,33 @@ run('Tally ledger mapping (e2e)', () => {
     await cashier
       .put('/api/v1/accounting/tally-mapping')
       .send({ sales: 'X' })
+      .expect(403);
+  });
+
+  it('exports a Tally XML file for a date range', async () => {
+    const res = await owner
+      .get('/api/v1/accounting/tally-export')
+      .query({ branchId: BRANCH, from: '2026-01-01', to: '2026-12-31' })
+      .expect(200);
+    expect(res.headers['content-type']).toContain('application/xml');
+    expect(res.headers['content-disposition']).toContain(
+      'tally-2026-01-01_2026-12-31.xml',
+    );
+    expect(res.text).toContain('<TALLYREQUEST>Import Data</TALLYREQUEST>');
+    await owner
+      .get('/api/v1/accounting/tally-export')
+      .query({
+        branchId: BRANCH,
+        from: 'x"\r\nSet-Cookie: a=b',
+        to: '2026-12-31',
+      })
+      .expect(400);
+  });
+
+  it('denies the export without accounting.manage', async () => {
+    await cashier
+      .get('/api/v1/accounting/tally-export')
+      .query({ branchId: BRANCH, from: '2026-01-01', to: '2026-01-02' })
       .expect(403);
   });
 });

@@ -4,10 +4,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { CashClosingDto, ExpenseDto } from '@nventra/types';
-import { zonedRange } from '../../common/time';
+import { localDate, zonedRange } from '../../common/time';
 import { BranchTimeService } from '../../common/services/branch-time.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { expectedCash, gstSummary, round2 } from './accounting.calc';
+import type { TallyOrderInput, TallyRefundInput } from './tally-xml';
 
 const dayStart = (d: string) => new Date(`${d}T00:00:00.000Z`);
 const dayAfter = (d: string) => new Date(dayStart(d).getTime() + 86_400_000);
@@ -239,6 +240,88 @@ export class AccountingService {
       }));
     });
     return { from, to, orders: orders.length, ...gstSummary(lines) };
+  }
+
+  /** Paid orders and refunds in a range, shaped for the Tally generator. */
+  async tallyExportData(branchId: string, from: string, to: string) {
+    const tz = await this.time.tzForBranch(branchId);
+    const range = zonedRange(from, to, tz);
+    const [orders, refunds] = await Promise.all([
+      this.prisma.order.findMany({
+        where: { branchId, status: 'PAID', billedAt: range },
+        select: {
+          id: true,
+          orderNumber: true,
+          billedAt: true,
+          subtotal: true,
+          discountAmount: true,
+          loyaltyDiscountAmount: true,
+          totalAmount: true,
+          items: { select: { lineTotal: true, taxRateSnapshot: true } },
+          payments: { select: { id: true, method: true, amount: true } },
+        },
+      }),
+      this.prisma.refund.findMany({
+        where: { createdAt: range, order: { branchId } },
+        select: {
+          id: true,
+          amount: true,
+          method: true,
+          createdAt: true,
+          order: {
+            select: {
+              orderNumber: true,
+              subtotal: true,
+              discountAmount: true,
+              loyaltyDiscountAmount: true,
+              totalAmount: true,
+              items: { select: { lineTotal: true, taxRateSnapshot: true } },
+            },
+          },
+        },
+      }),
+    ]);
+    const taxOf = (o: (typeof refunds)[number]['order']) => {
+      const subtotal = Number(o.subtotal);
+      const charged =
+        subtotal - Number(o.discountAmount) - Number(o.loyaltyDiscountAmount);
+      const factor = subtotal > 0 ? Math.max(0, charged) / subtotal : 1;
+      return gstSummary(
+        o.items.map((i) => ({
+          lineTotal: Number(i.lineTotal),
+          taxRatePercent: Number(i.taxRateSnapshot),
+          factor,
+        })),
+      ).totalTax;
+    };
+    const orderInputs: TallyOrderInput[] = orders.map((o) => ({
+      id: o.id,
+      orderNumber: o.orderNumber,
+      date: localDate(o.billedAt ?? new Date(), tz),
+      subtotal: Number(o.subtotal),
+      discountAmount: Number(o.discountAmount),
+      loyaltyDiscountAmount: Number(o.loyaltyDiscountAmount),
+      totalAmount: Number(o.totalAmount),
+      items: o.items.map((i) => ({
+        lineTotal: Number(i.lineTotal),
+        taxRatePercent: Number(i.taxRateSnapshot),
+      })),
+      payments: o.payments.map((p) => ({
+        id: p.id,
+        method: p.method,
+        amount: Number(p.amount),
+      })),
+    }));
+    const refundInputs: TallyRefundInput[] = refunds.map((r) => ({
+      id: r.id,
+      orderNumber: r.order.orderNumber,
+      date: localDate(r.createdAt, tz),
+      amount: Number(r.amount),
+      method: r.method,
+      orderTax: taxOf(r.order),
+      orderTotal: Number(r.order.totalAmount),
+    }));
+    return { orders: orderInputs, refunds: refundInputs };
   }
 
   /** Cross-branch snapshot for the whole restaurant. */
