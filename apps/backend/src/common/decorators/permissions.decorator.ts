@@ -1,5 +1,5 @@
 import { SetMetadata } from '@nestjs/common';
-import type { PermissionKey } from '@nodedr-restaurant/types';
+import type { PermissionKey } from '@nventra/types';
 
 export const PERMISSIONS_KEY = 'requiredPermissions';
 

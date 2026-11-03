@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type { NotificationListQueryDto } from '@nodedr-restaurant/types';
+import type { NotificationListQueryDto } from '@nventra/types';
 import { PrismaService } from '../prisma/prisma.service';
 import { PushService } from '../push/push.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
@@ -96,7 +96,12 @@ export class NotificationsService {
     );
     this.push.sendToUsers(
       recipients.map((r) => r.id),
-      { title: payload.title, body: payload.body, path: this.pathFor(payload), data: { type: payload.type } },
+      {
+        title: payload.title,
+        body: payload.body,
+        path: this.pathFor(payload),
+        data: { type: payload.type },
+      },
     );
   }
 

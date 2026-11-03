@@ -107,7 +107,7 @@ fi
 # re-install without duplicating or clobbering anything.
 if [ "$load_demo" = true ]; then
   echo "Loading demo data (restaurant, menu, staff logins)..."
-  docker exec nodedr-restaurant-backend npx ts-node prisma/seed.ts
+  docker exec nventra-pos-backend npx ts-node prisma/seed.ts
 fi
 
 # --- 6. Done -----------------------------------------------------------------

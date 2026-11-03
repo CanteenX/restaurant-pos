@@ -15,7 +15,7 @@ import {
   TAX_REGIME_PRESETS,
   type TaxMode,
   type TaxRegime,
-} from '@nodedr-restaurant/types';
+} from '@nventra/types';
 import {
   CMD,
   EscposWriter,

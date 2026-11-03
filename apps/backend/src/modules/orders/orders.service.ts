@@ -19,7 +19,7 @@ import {
   type SessionUser,
   type UpdateOrderDto,
   type UpdateOrderItemDto,
-} from '@nodedr-restaurant/types';
+} from '@nventra/types';
 import { AuditService } from '../../audit/audit.service';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { GiftCardsService } from '../gift-cards/gift-cards.service';
@@ -43,7 +43,7 @@ import {
   settlePayments,
   type Bill,
 } from './settlement';
-import type { TaxMode } from '@nodedr-restaurant/types';
+import type { TaxMode } from '@nventra/types';
 import {
   adjustOnlinePrice,
   type OnlinePriceAdjust,
@@ -377,7 +377,9 @@ export class OrdersService {
           guestName: dto.guestName,
           notes: dto.notes,
           clientRequestId: options.clientRequestId,
-          ...(options.historical ? { createdAt: options.historical.createdAt } : {}),
+          ...(options.historical
+            ? { createdAt: options.historical.createdAt }
+            : {}),
           integrationKeyId: options.integrationKeyId,
           clientRequestHash: options.clientRequestHash,
           externalSource: options.externalSource,

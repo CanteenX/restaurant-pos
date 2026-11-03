@@ -20,7 +20,7 @@ import {
   modifierGroupSchema,
   setComboComponentsSchema,
   type SessionUser,
-} from '@nodedr-restaurant/types';
+} from '@nventra/types';
 import { Auth } from '../../common/decorators/auth.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -166,7 +166,11 @@ export class MenuController {
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
-    return this.menuService.bulkPriceChange(branchId, user.id, body as z.infer<typeof bulkPriceSchema>);
+    return this.menuService.bulkPriceChange(
+      branchId,
+      user.id,
+      body as z.infer<typeof bulkPriceSchema>,
+    );
   }
 
   @Auth('menu.manage')
