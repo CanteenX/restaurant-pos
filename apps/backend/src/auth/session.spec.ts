@@ -56,9 +56,15 @@ describe('sessionStartedAt / isPastMaxLifetime', () => {
   });
   it('is false inside the cap and true past it', () => {
     const now = 1_000_000;
-    expect(isPastMaxLifetime({ sub: 'u', auth_time: now - 3600 }, now, max)).toBe(false);
-    expect(isPastMaxLifetime({ sub: 'u', auth_time: now - 13 * 3600 }, now, max)).toBe(true);
-    expect(isPastMaxLifetime({ sub: 'u', iat: now - 13 * 3600 }, now, max)).toBe(true);
+    expect(
+      isPastMaxLifetime({ sub: 'u', auth_time: now - 3600 }, now, max),
+    ).toBe(false);
+    expect(
+      isPastMaxLifetime({ sub: 'u', auth_time: now - 13 * 3600 }, now, max),
+    ).toBe(true);
+    expect(
+      isPastMaxLifetime({ sub: 'u', iat: now - 13 * 3600 }, now, max),
+    ).toBe(true);
   });
   it('is false when the token carries no start time (exp still bounds it)', () => {
     expect(isPastMaxLifetime({ sub: 'u' }, 1_000_000, max)).toBe(false);
