@@ -16,3 +16,10 @@ export function parseIssueAmount(input: string): number | null {
   const rounded = Math.round((n + Number.EPSILON) * 100) / 100;
   return rounded > 0 ? rounded : null;
 }
+
+/** Why the Issue button is disabled for a non-empty amount, or null when blank/valid. */
+export function issueAmountHint(input: string): string | null {
+  if (!input.trim() || parseIssueAmount(input) !== null) return null;
+  const n = Number(input.trim());
+  return Number.isFinite(n) ? "Amount must be greater than 0." : "Enter the amount as a number.";
+}
