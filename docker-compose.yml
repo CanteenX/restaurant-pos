@@ -43,6 +43,11 @@ services:
       # Number of trusted proxy hops in front of the backend (empty = ignore
       # X-Forwarded-*). See docs/website-integration.md before setting it.
       TRUST_PROXY: "${TRUST_PROXY:-}"
+      # Outgoing email (receipts, reports, alerts). Both empty = email disabled.
+      # SMTP_URL is a URL: URL-encode the @ in a username (user%40gmail.com).
+      # See docs/email.md for the Gmail app-password setup.
+      SMTP_URL: "${SMTP_URL:-}"
+      SMTP_FROM: "${SMTP_FROM:-}"
       # Integration API (website) limits per API key, per minute.
       INTEGRATION_WRITE_LIMIT_PER_MIN: "${INTEGRATION_WRITE_LIMIT_PER_MIN:-30}"
       INTEGRATION_READ_LIMIT_PER_MIN: "${INTEGRATION_READ_LIMIT_PER_MIN:-300}"
