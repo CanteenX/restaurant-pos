@@ -1,3 +1,4 @@
+import type { TranslationKey } from "@/lib/i18n/context";
 import {
   CalendarClock,
   Clock,
@@ -22,7 +23,7 @@ import {
 } from "lucide-react";
 
 export interface NavItem {
-  labelKey: string;
+  labelKey: TranslationKey;
   href: string;
   icon: LucideIcon;
   permission?: string;

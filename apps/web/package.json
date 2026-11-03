@@ -10,7 +10,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
-    "test": "node --test --no-warnings lib/*.test.ts lib/i18n/*.test.ts"
+    "test": "node --test --no-warnings lib/*.test.ts lib/i18n/*.test.ts",
+    "i18n:audit": "node --no-warnings scripts/i18n-audit.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
