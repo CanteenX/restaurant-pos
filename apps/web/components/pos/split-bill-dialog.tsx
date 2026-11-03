@@ -11,6 +11,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { StatusNote, useStatusNote } from "@/components/ui/status-note";
+import { copyText } from "@/lib/copy-text";
 import { formatCurrency } from "@/lib/format";
 import { guestShares, unassignedLines, type Assignments } from "@/lib/split-bill";
 
@@ -41,6 +43,7 @@ export function SplitBillDialog({
 }) {
   const [guestText, setGuestText] = useState("2");
   const [assignments, setAssignments] = useState<Assignments>({});
+  const copyNote = useStatusNote();
   const guests = Math.min(12, Math.max(2, Math.floor(Number(guestText) || 2)));
 
   const shares = useMemo(
@@ -153,10 +156,14 @@ export function SplitBillDialog({
         <Button
           type="button"
           variant="outline"
-          onClick={() => void navigator.clipboard?.writeText(summary)}
+          onClick={async () => {
+            const ok = await copyText(summary);
+            copyNote.show(ok ? "success" : "error", ok ? "Summary copied" : "Could not copy. Select the amounts and copy them manually.");
+          }}
         >
           Copy per-guest summary
         </Button>
+        <StatusNote note={copyNote.note} onClear={copyNote.clear} />
       </DialogContent>
     </Dialog>
   );
