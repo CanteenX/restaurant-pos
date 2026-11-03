@@ -125,7 +125,7 @@ export function SplitBillDialog({
 
         {pending.length > 0 && (
           <p className="text-xs text-muted-foreground">
-            {t("pos.split.unassigned", { count: pending.length })}
+            {t(pending.length === 1 ? "pos.split.unassignedOne" : "pos.split.unassignedOther", { count: pending.length })}
           </p>
         )}
 
