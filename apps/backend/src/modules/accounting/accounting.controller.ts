@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -6,9 +7,11 @@ import {
   Param,
   Post,
   Query,
+  Res,
   UsePipes,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import {
   cashClosingSchema,
   expenseSchema,
@@ -22,6 +25,10 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { BranchAccessService } from '../../common/services/branch-access.service';
 import { AccountingService } from './accounting.service';
+import { TallyMappingService } from './tally-mapping.service';
+import { buildTallyXml } from './tally-xml';
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 @ApiTags('accounting')
 @Controller('v1/accounting')
@@ -29,6 +36,7 @@ export class AccountingController {
   constructor(
     private readonly accounting: AccountingService,
     private readonly branchAccess: BranchAccessService,
+    private readonly tallyMapping: TallyMappingService,
   ) {}
 
   private access(u: SessionUser, branchId: string) {
@@ -143,5 +151,32 @@ export class AccountingController {
     @Query('to') to: string,
   ) {
     return this.accounting.branchOverview(u.restaurantId, from, to);
+  }
+
+  /** TallyPrime voucher import file for a date range (sales, receipts, refunds). */
+  @Auth('accounting.manage')
+  @Get('tally-export')
+  async tallyExport(
+    @CurrentUser() u: SessionUser,
+    @Query('branchId') branchId: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Res() res: Response,
+  ) {
+    if (!DATE_RE.test(from ?? '') || !DATE_RE.test(to ?? '')) {
+      throw new BadRequestException('from and to must be YYYY-MM-DD');
+    }
+    await this.access(u, branchId);
+    const [data, mapping] = await Promise.all([
+      this.accounting.tallyExportData(branchId, from, to),
+      this.tallyMapping.get(u.restaurantId),
+    ]);
+    const { xml } = buildTallyXml({ ...data, mapping });
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="tally-${from}_${to}.xml"`,
+    );
+    res.send(xml);
   }
 }
