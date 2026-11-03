@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   StableWeightDetector,
+  formatNetWeight,
   SimulatedScale,
   linePriceForWeight,
   parseScaleFrame,
@@ -59,4 +60,9 @@ test("simulator emits frames the parser reads", () => {
   assert.equal(parseScaleFrame(s.readFrame())?.stable, false);
   assert.equal(parseScaleFrame(s.readFrame())?.stable, false);
   assert.equal(parseScaleFrame(s.readFrame())?.stable, true);
+});
+
+test("formatNetWeight renders kilograms with three decimals", () => {
+  assert.equal(formatNetWeight(1250), "1.250 kg");
+  assert.equal(formatNetWeight(50), "0.050 kg");
 });

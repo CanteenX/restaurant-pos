@@ -77,3 +77,8 @@ export class SimulatedScale implements ScaleAdapter {
     return `${stable ? "ST" : "US"},GS,${(this.grams / 1000).toFixed(3).padStart(8)}kg\r\n`;
   }
 }
+
+/** Cart label for a weighed line, e.g. "1.250 kg". */
+export function formatNetWeight(grams: number): string {
+  return `${(grams / 1000).toFixed(3)} kg`;
+}
