@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useState } from "react";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,11 @@ import {
 import { ApiError } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+const DeliveryMap = dynamic(() => import("@/components/delivery/delivery-map"), {
+  ssr: false,
+  loading: () => <Skeleton className="h-80" />,
+});
 
 const STATUS_LABEL: Record<DeliveryStatus, string> = {
   UNASSIGNED: "Needs driver",
@@ -213,7 +219,13 @@ function RidersPanel({ branchId }: { branchId: string | null }) {
       </h2>
       <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {drivers.map((d) => (
-          <li key={d.id} className="flex items-center justify-between gap-3 rounded-xl border border-border p-3 text-sm">
+          <li
+            key={d.id}
+            data-testid={`rider-${d.id}`}
+            data-lat={d.riderLat ?? undefined}
+            data-lng={d.riderLng ?? undefined}
+            className="flex items-center justify-between gap-3 rounded-xl border border-border p-3 text-sm"
+          >
             <div className="min-w-0">
               <p className="truncate font-medium text-foreground">
                 <span className={d.riderOnline ? "text-success" : "text-muted-foreground"} aria-hidden>
@@ -243,6 +255,23 @@ function RidersPanel({ branchId }: { branchId: string | null }) {
   );
 }
 
+function LiveMap({ branchId }: { branchId: string | null }) {
+  const { data: drivers } = useDrivers(branchId);
+  const { data: orders } = useDeliveries(branchId, false);
+  return (
+    <section aria-labelledby="map-h" className="flex flex-col gap-2">
+      <h2 id="map-h" className="text-sm font-medium text-foreground">
+        Live map
+      </h2>
+      <DeliveryMap drivers={drivers ?? []} orders={orders ?? []} />
+      <p className="text-xs text-muted-foreground">
+        Pins: <span className="text-[#dc2626]">needs driver</span> · <span className="text-[#d97706]">assigned</span> ·{" "}
+        <span className="text-[#2563eb]">out for delivery</span>. Rider markers move as they share their location.
+      </p>
+    </section>
+  );
+}
+
 export default function DeliveryPage() {
   const { branchId } = useBranch();
   const [tab, setTab] = useState<"active" | "history" | "zones">("active");
@@ -254,6 +283,7 @@ export default function DeliveryPage() {
         <h1 className="text-[32px] font-semibold tracking-tight text-foreground">Delivery</h1>
         <p className="text-sm text-muted-foreground">Assign drivers, track deliveries, and manage zones</p>
       </div>
+      <LiveMap branchId={branchId} />
       <RidersPanel branchId={branchId} />
       <div className="flex gap-2">
         {(["active", "history", "zones"] as const).map((t) => (

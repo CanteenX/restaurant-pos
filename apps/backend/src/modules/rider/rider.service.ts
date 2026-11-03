@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RealtimeGateway } from '../../realtime/realtime.gateway';
 import { DeliveryService } from '../delivery/delivery.service';
 
 const ACTIVE = ['ASSIGNED', 'PICKED_UP'] as const;
@@ -81,6 +82,7 @@ export class RiderService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly delivery: DeliveryService,
+    private readonly realtime: RealtimeGateway,
   ) {}
 
   private async branchOf(userId: string) {
@@ -150,11 +152,38 @@ export class RiderService {
 
   async setLocation(userId: string, lat: number, lng: number) {
     // Only an on-duty rider shares a position.
+    const at = new Date();
     const r = await this.prisma.user.updateMany({
       where: { id: userId, riderOnline: true },
-      data: { riderLat: lat, riderLng: lng, riderLocationAt: new Date() },
+      data: { riderLat: lat, riderLng: lng, riderLocationAt: at },
     });
-    return { saved: r.count === 1 };
+    if (r.count !== 1) return { saved: false };
+    // Dispatchers' live map: one lightweight push per branch the rider works in.
+    const branches = await this.prisma.userBranch.findMany({
+      where: { userId },
+      select: { branchId: true },
+    });
+    const payload = { id: userId, lat, lng, at: at.toISOString() };
+    for (const b of branches) {
+      // Rider GPS is permission-gated: only dispatchers, never the whole branch room.
+      const dispatchers = await this.prisma.user.findMany({
+        where: {
+          isActive: true,
+          branches: { some: { branchId: b.branchId } },
+          role: {
+            permissions: { some: { permission: { key: 'delivery.manage' } } },
+          },
+        },
+        select: { id: true },
+      });
+      if (dispatchers.length)
+        this.realtime.emitToUsers(
+          dispatchers.map((d) => d.id),
+          'rider.location',
+          payload,
+        );
+    }
+    return { saved: true };
   }
 
   async deliveries(userId: string) {
