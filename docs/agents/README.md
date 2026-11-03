@@ -14,6 +14,22 @@ the work. Any agent can crash or be skipped; the next run picks up from labels.
 | Fixer + merger | merger.md | Haiku 5.5 | hourly |
 | Planner + tracker | planner.md | Opus 5.5 | daily 03:30 UTC |
 
+## Cloud session facts (verified 3 Nov 2026)
+- GitHub GraphQL is blocked: `gh issue …`/`gh pr …` fail. Use
+  `source scripts/agent/gh-rest.sh` (REST via `gh api`) or the GitHub MCP
+  tools. `GH_TOKEN` is provided; the identity is the maintainer's (Deep1012).
+- Docker is installed but not running: call `ensure_docker` (from
+  gh-rest.sh) before any `docker`/`install.sh`/`qa.sh`.
+- Chrome for Testing is at `$CHROME_PATH`; npm and Docker Hub are reachable;
+  ghcr.io is not.
+- Progress is published to the tracker page through the ArtifactData tool
+  (planner only). Claude Docs is not available in cloud sessions.
+
+## Pacing
+Runs at hourly cadence until 2026-11-05 08:00 UTC (cloud credit). After
+that, builder runs at an odd UTC hour stop immediately without doing work
+(effective every 2 hours), to stay inside the weekly plan limit.
+
 ## Model routing (set on every issue by the planner)
 - `model:opus` — architecture, auth/security, money/payments, DB migrations,
   cross-cutting refactors (rebrand), anything `risk:high` or `size:L`.
