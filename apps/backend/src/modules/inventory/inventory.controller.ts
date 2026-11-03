@@ -105,7 +105,11 @@ export class InventoryController {
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
-    return this.inventoryService.createIngredient(branchId, body as never);
+    return this.inventoryService.createIngredient(
+      branchId,
+      body as never,
+      user.id,
+    );
   }
 
   @Auth('inventory.manage')
@@ -117,7 +121,12 @@ export class InventoryController {
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
-    return this.inventoryService.updateIngredient(branchId, id, body as never);
+    return this.inventoryService.updateIngredient(
+      branchId,
+      id,
+      body as never,
+      user.id,
+    );
   }
 
   @Auth('inventory.manage')
@@ -128,7 +137,7 @@ export class InventoryController {
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
-    return this.inventoryService.deleteIngredient(branchId, id);
+    return this.inventoryService.deleteIngredient(branchId, id, user.id);
   }
 
   @Auth('inventory.manage')
