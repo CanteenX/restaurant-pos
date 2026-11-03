@@ -34,6 +34,13 @@ export class PaymentGatewayController {
     private readonly branchAccess: BranchAccessService,
   ) {}
 
+  /** Connected gateways the till can offer (e.g. "Pay by UPI QR"). */
+  @Auth('bills.print')
+  @Get('available')
+  available(@CurrentUser() user: SessionUser) {
+    return this.svc.available(user.restaurantId);
+  }
+
   @Auth('bills.print')
   @Post('orders/:orderId/attempts')
   async create(

@@ -12,6 +12,8 @@ import { QueryError } from "@/components/ui/query-error";
 import { PaymentMethodButtons } from "@/components/pos/payment-method-buttons";
 import { CustomerPicker } from "@/components/pos/customer-picker";
 import { SplitBillDialog } from "@/components/pos/split-bill-dialog";
+import { GatewayUpiQr } from "@/components/pos/gateway-upi-qr";
+import { useAvailableGateways } from "@/hooks/use-payment-gateway";
 import type { Customer } from "@/hooks/use-customers";
 import { lookupGiftCard } from "@/hooks/use-gift-cards";
 import { CancelOrderDialog, useCanCancelOrders } from "@/components/orders/cancel-order-dialog";
@@ -213,8 +215,11 @@ export function CheckoutPanel({
   const upiAmount = plan.valid ? plan.applied : remainingDue;
   const upiVpa = settings?.restaurant.upiVpa;
   const upiName = settings?.restaurant.upiPayeeName || settings?.restaurant.name;
+  // A connected gateway (Razorpay) replaces the static QR with a dynamic one.
+  const { data: gateways } = useAvailableGateways(method === "UPI");
+  const gateway = gateways?.[0] ?? null;
   const upiUri =
-    method !== "UPI" || !upiVpa || !(upiAmount > 0)
+    method !== "UPI" || gateway || !upiVpa || !(upiAmount > 0)
       ? null
       : buildUpiUri({
           vpa: upiVpa,
@@ -691,7 +696,15 @@ export function CheckoutPanel({
 
           {method === "UPI" && remainingDue > 0 && (
             <div className="flex flex-col items-center gap-2 rounded-xl border border-border bg-white p-4">
-              {upiUri ? (
+              {gateway ? (
+                <GatewayUpiQr
+                  gateway={gateway}
+                  branchId={branchId}
+                  orderId={order.id}
+                  amount={upiAmount}
+                  isPartial={upiAmount < remainingDue}
+                />
+              ) : upiUri ? (
                 <>
                   <QRCodeSVG value={upiUri} size={176} level="M" marginSize={1} />
                   <p className="text-xs font-medium text-[#17251d]">

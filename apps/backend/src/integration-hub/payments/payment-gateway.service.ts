@@ -73,6 +73,27 @@ export class PaymentGatewayService {
     }
   }
 
+  /**
+   * Gateways the till may offer: enabled, with saved keys, and a connection
+   * test that passed. Names only - nothing about the credentials.
+   */
+  async available(restaurantId: string) {
+    const rows = await this.prisma.integrationConnection.findMany({
+      where: {
+        restaurantId,
+        enabled: true,
+        status: 'CONNECTED',
+        credentialsEnc: { not: null },
+      },
+      select: { provider: true },
+      orderBy: { provider: 'asc' },
+    });
+    return rows
+      .map((r) => getProvider(r.provider))
+      .filter(isPaymentGateway)
+      .map((p) => ({ key: p.key, name: p.name }));
+  }
+
   view(a: GatewayPayment) {
     return {
       id: a.id,

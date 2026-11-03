@@ -12,6 +12,7 @@ Code: `apps/backend/src/integration-hub/payments/`
 |---|---|
 | `payment-gateway.ts` | The `PaymentGateway` interface, `GatewayError`, money helpers, status rules |
 | `mock-gateway.ts` | Deterministic in-memory gateway for tests and demos |
+| `../providers/razorpay.provider.ts` | Razorpay adapter: dynamic UPI QR (QR Codes API) |
 | `payment-gateway.service.ts` | Attempts, webhooks/polling, settlement into the order |
 | `payment-gateway.controller.ts` | REST endpoints |
 
@@ -112,8 +113,47 @@ All under `/api/v1/payment-gateway`; staff endpoints need `bills.print`
 |---|---|---|
 | POST | `/orders/:orderId/attempts?branchId=` | `{ provider, method?, idempotencyKey, amount? }` (`createGatewayPaymentSchema`) |
 | GET | `/attempts/:id` | Attempt view |
+| GET | `/available` | Connected gateways the till may offer: `[{ key, name }]` (enabled, keys saved, last test passed) |
 | POST | `/attempts/:id/refresh` | Poll the gateway, settle if it succeeded |
 | POST | `/webhook/:restaurantId/:provider` | Public; adapter-verified signature |
+
+## Razorpay (dynamic UPI QR)
+
+`razorpay` is a real adapter, connected under Settings → Integrations with
+the **Key ID** and **Key secret** (encrypted at rest; never returned or
+logged). Use test-mode keys (`rzp_test_…`) to try it without moving money.
+
+- **Create:** `POST /v1/payments/qr_codes` with `type: upi_qr`,
+  `usage: single_use`, `fixed_amount: true`, `payment_amount` in paise and
+  `close_by` 15 minutes out; `notes` carry `attempt_id` and
+  `idempotency_key`. The QR's `image_content` (a `upi://` link) becomes the
+  `UPI_INTENT` action the till draws. Only `method: UPI` is accepted.
+  Razorpay's QR API has no idempotency key; the service makes exactly one
+  create call per attempt, and attempts are idempotent per key.
+- **Status:** `GET /v1/payments/qr_codes/:id`. Money received → `SUCCEEDED`
+  with the amount actually received (a short/over payment is then flagged by
+  the service, never settled); closed unpaid → `EXPIRED`; else `PENDING`.
+- **Errors:** HTTP 400/422 → `INVALID_REQUEST`, 401/403 → `AUTH`, 404 →
+  `NOT_FOUND`, 429/5xx/transport → `NETWORK` (retryable), anything else
+  `UNKNOWN`. Razorpay's error text is never kept.
+- **Not yet:** webhooks (every Razorpay webhook is `INVALID_SIGNATURE` until
+  signature verification lands) and refunds (refused; refund from the
+  Razorpay dashboard). Until webhooks land, the till polls
+  `/attempts/:id/refresh` every 3 s while the QR is shown.
+- **Till:** when a gateway is available, choosing UPI at checkout offers
+  "Show Razorpay UPI QR"; the QR shows the server-locked amount and the bill
+  closes by itself once paid. With no connected gateway the till keeps the
+  static UPI QR from Settings → Restaurant.
+- **Mock server:** `apps/backend/test/razorpay-mock-server.ts`
+  (`pnpm exec ts-node test/razorpay-mock-server.ts`, port 4010) implements
+  the endpoints above plus `POST /__mock/qr_codes/:id/pay`. Point the backend
+  at it with `RAZORPAY_API_BASE=http://127.0.0.1:4010`; that variable is
+  **ignored when `NODE_ENV=production`**. `scripts/agent/qa-native.sh`
+  starts it for browser QA.
+
+Tests: `src/integration-hub/providers/razorpay.provider.spec.ts` (unit,
+scripted HTTP layer), `test/razorpay-upi.e2e-spec.ts` (HTTP + Postgres +
+mock server), `e2e/tests/upi-qr.spec.ts` (browser).
 
 ## Mock gateway
 
