@@ -1,7 +1,8 @@
 "use client";
 
-import { Mail, Phone } from "lucide-react";
+import { ChevronDown, Mail, Phone } from "lucide-react";
 import { useState } from "react";
+import { SupplierPerformancePanel } from "@/components/inventory/supplier-performance-panel";
 import { AddSupplierDialog } from "@/components/inventory/add-supplier-dialog";
 import { InventoryTabs } from "@/components/inventory/inventory-tabs";
 import { Card } from "@/components/ui/card";
@@ -13,6 +14,7 @@ import { useSuppliers } from "@/hooks/use-inventory";
 export default function SuppliersPage() {
   const { branchId } = useBranch();
   const [search, setSearch] = useState("");
+  const [openId, setOpenId] = useState<string | null>(null);
   const { data: suppliers, isLoading } = useSuppliers(branchId);
 
   const filtered = suppliers?.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()));
@@ -47,27 +49,40 @@ export default function SuppliersPage() {
           </div>
         ) : filtered && filtered.length > 0 ? (
           filtered.map((s) => (
-            <div key={s.id} className="flex items-center justify-between gap-4 px-4 py-3">
-              <div className="flex flex-col">
-                <span className="text-sm font-medium text-foreground">{s.name}</span>
-                <span className="text-xs text-muted-foreground">
-                  {s.contactName || "No contact person on file"}
-                </span>
-              </div>
-              <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                {s.phone && (
-                  <span className="flex items-center gap-1">
-                    <Phone className="h-3.5 w-3.5" />
-                    {s.phone}
+            <div key={s.id} className="flex flex-col">
+              <button
+                type="button"
+                aria-expanded={openId === s.id}
+                aria-label={`Performance for ${s.name}`}
+                onClick={() => setOpenId(openId === s.id ? null : s.id)}
+                className="flex min-h-11 items-center justify-between gap-4 px-4 py-3 text-left"
+              >
+                <div className="flex flex-col">
+                  <span className="text-sm font-medium text-foreground">{s.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {s.contactName || "No contact person on file"}
                   </span>
-                )}
-                {s.email && (
-                  <span className="flex items-center gap-1">
-                    <Mail className="h-3.5 w-3.5" />
-                    {s.email}
-                  </span>
-                )}
-              </div>
+                </div>
+                <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                  {s.phone && (
+                    <span className="flex items-center gap-1">
+                      <Phone className="h-3.5 w-3.5" />
+                      {s.phone}
+                    </span>
+                  )}
+                  {s.email && (
+                    <span className="flex items-center gap-1">
+                      <Mail className="h-3.5 w-3.5" />
+                      {s.email}
+                    </span>
+                  )}
+                  <ChevronDown
+                    className={`h-4 w-4 transition-transform ${openId === s.id ? "rotate-180" : ""}`}
+                    aria-hidden
+                  />
+                </div>
+              </button>
+              {openId === s.id && <SupplierPerformancePanel branchId={branchId} supplierId={s.id} />}
             </div>
           ))
         ) : (
