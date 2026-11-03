@@ -254,7 +254,7 @@ public class NativePrinterPlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("Nothing to print.")
             return
         }
-        let name = call.getString("name") ?? "OrderRestro"
+        let name = call.getString("name") ?? "Nventra POS"
         DispatchQueue.main.async {
             let info = UIPrintInfo(dictionary: nil)
             info.outputType = .general

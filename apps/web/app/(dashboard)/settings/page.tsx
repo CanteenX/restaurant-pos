@@ -331,7 +331,7 @@ function GeneralSettingsForm({
                 </button>
               )}
               <p className="text-xs text-muted-foreground">
-                Shows in the app sidebar and login screen instead of the OrderRestro mark.
+                Shows in the app sidebar and login screen instead of the Nventra POS mark.
                 Square, at least 256×256px, PNG with a transparent background works best.
               </p>
             </div>
@@ -693,17 +693,26 @@ function GeneralSettingsForm({
       </Card>
 
       <p className="text-xs text-muted-foreground">
-        Nodedr OrderRestro is free software under the GNU AGPL-3.0. The source code of the version
-        you are using is available to every user of this service at{" "}
+        Nventra POS is free software under the GNU AGPL-3.0. The source code of the version you are
+        using is available to every user of this service at{" "}
+        <a
+          className="underline"
+          href="https://github.com/CanteenX/restaurant-pos"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          github.com/CanteenX/restaurant-pos
+        </a>
+        . It is a fork of{" "}
         <a
           className="underline"
           href="https://github.com/Raktim94/nodedr-restaurant-pos"
           target="_blank"
           rel="noopener noreferrer"
         >
-          github.com/Raktim94/nodedr-restaurant-pos
-        </a>
-        .
+          Nodedr OrderRestro
+        </a>{" "}
+        by Nodedr Infotech Private Limited.
       </p>
     </div>
   );

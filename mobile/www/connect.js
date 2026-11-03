@@ -81,7 +81,7 @@
       var l = res[0], o = res[1];
       var reachable = (l && l.ok) || (o && o.ok);
       if (!reachable) {
-        say('bad', "Couldn't reach an OrderRestro server at " + [localUrl, onlineUrl].filter(Boolean).join(' or ') + '. Check the address, and that this phone is on the restaurant WiFi (or the server has an https address).');
+        say('bad', "Couldn't reach a Nventra POS server at " + [localUrl, onlineUrl].filter(Boolean).join(' or ') + '. Check the address, and that this phone is on the restaurant WiFi (or the server has an https address).');
         return;
       }
       var seen = res.filter(function (x) { return x && x.ok; });

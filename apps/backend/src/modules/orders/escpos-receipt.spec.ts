@@ -304,7 +304,7 @@ describe('VERI*FACTU QR on the receipt', () => {
       restaurantName: 'Casa Ñandú',
       currency: 'EUR',
       branch,
-      order: { ...o, verifactu } as never,
+      order: { ...o, verifactu },
       profile: resolveProfile({ paperWidthMm: 80 }),
       ...fmt,
     });
@@ -383,5 +383,11 @@ describe('test slip', () => {
     expect(text).toContain('12345678901234567890123456789012');
     expect(text).toContain('58 mm - 32 columns - CP858');
     expect(text).toContain('áéíóú ñ ü ¿? ¡! € £');
+  });
+
+  it('is headed with the Nventra POS product name', () => {
+    const { text } = readJob(buildTestSlip(resolveProfile()));
+    expect(text).toContain('Nventra POS');
+    expect(text).not.toMatch(/nodedr|orderrestro/i);
   });
 });
