@@ -45,6 +45,25 @@ function lastVerdict(prNumber) {
   } catch { return ""; }
 }
 
+// Last ~25 agent events (claims, PRs opened, review verdicts, fixer notes,
+// merges) from issue/PR comments and merged PRs, newest first.
+const AGENT_LINE = /^(Claimed by builder|REVIEW: (APPROVED|CHANGES)|Fixer:|needs builder|needs opus review|PR opened)/;
+function recentActivity() {
+  const out = [];
+  try {
+    const since = new Date(Date.now() - 48 * 3600e3).toISOString();
+    const cs = gh(`repos/${REPO}/issues/comments?sort=created&direction=desc&since=${since}&per_page=100`);
+    for (const c of cs) {
+      const first = String(c.body || "").split("\n")[0].trim();
+      if (!AGENT_LINE.test(first)) continue;
+      out.push({ at: c.created_at, issue: Number(String(c.issue_url).split("/").pop()), text: first.slice(0, 110) });
+    }
+    const merged = gh(`repos/${REPO}/pulls?state=closed&sort=updated&direction=desc&per_page=30`).filter((p) => p.merged_at && p.merged_at > since);
+    for (const p of merged) out.push({ at: p.merged_at, issue: p.number, text: `Merged PR #${p.number}: ${p.title}`.slice(0, 110) });
+  } catch { /* activity is best-effort */ }
+  return out.sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 25);
+}
+
 function main() {
   let current = {};
   if (process.argv[2]) {
@@ -89,7 +108,13 @@ function main() {
     };
     counts[state] += 1;
   }
-  process.stdout.write(JSON.stringify({ synced_at: now, counts, rows }));
+  const activity = recentActivity();
+  // An issue an agent claimed or touched after the label sync is still "now".
+  for (const a of activity) {
+    const row = rows[`i${a.issue}`];
+    if (row && row.state === "planned" && /^Claimed by builder/.test(a.text)) { row.state = "in_progress"; row.note = "builder working"; counts.planned -= 1; counts.in_progress += 1; }
+  }
+  process.stdout.write(JSON.stringify({ synced_at: now, counts, rows, activity }));
   process.stderr.write(`synced ${issues.length} issues: ${JSON.stringify(counts)}\n`);
 }
 
