@@ -18,10 +18,12 @@ comment, re-verify, push once, comment `Addressed review: <summary>` and
 source scripts/agent/gh-rest.sh
 issues_with_labels "agent:ready,model:<YOUR_MODEL>"      # number, title, labels
 issues_with_labels "agent:in-progress"                    # busy lanes
-issues_with_labels "lane:foundation"                      # foundation gate
 ```
-- Skip issues whose lane already has an `agent:in-progress` issue.
-- If any `lane:foundation` issue is open and yours is not foundation, stop.
+- Lanes run in PARALLEL (see README). Skip issues whose lane already has TWO
+  `agent:in-progress` issues, or one that edits the same files as yours.
+- Prefer an eligible `lane:foundation` issue, then the lowest number.
+- Before opening/updating your PR: `git fetch origin && git rebase origin/staging`,
+  resolve conflicts, re-run checks.
 - Skip issues whose body says `Depends on #N` while any such #N is still open
   (`issue_state N`). Dependencies always win over issue order.
 - Take the lowest-numbered remaining issue. Claim it immediately:
