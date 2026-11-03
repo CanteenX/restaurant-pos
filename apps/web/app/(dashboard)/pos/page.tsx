@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { StatusNote, useNoteToast } from "@/components/ui/status-note";
 import { publishDisplay } from "@/lib/customer-display";
+import { PairDisplayButton } from "@/components/pos/pair-display-button";
 import { BranchNotice } from "@/components/layout/branch-notice";
 import { CartPanel, type DeliveryDetails, type PosOrderType } from "@/components/pos/cart-panel";
 import { cartLineKey, portionText, type CartLine, type Portion } from "@/components/pos/cart-line";
@@ -266,6 +267,7 @@ function PosPageInner() {
           <MonitorSmartphone className="h-3.5 w-3.5" />
           Customer display
         </a>
+        <PairDisplayButton branchId={branchId} />
       </div>
 
       <BranchNotice />

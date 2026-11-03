@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { subscribeDisplay, type DisplayState } from "@/lib/customer-display";
+import {
+  normalizePairCode,
+  subscribeDisplay,
+  subscribeDisplayRemote,
+  type DisplayState,
+} from "@/lib/customer-display";
 import { formatCurrency } from "@/lib/format";
 import { playPaymentReceived } from "@/lib/celebrate";
 import { QRCodeSVG } from "qrcode.react";
@@ -13,7 +18,23 @@ import { QRCodeSVG } from "qrcode.react";
  */
 export default function CustomerDisplayPage() {
   const [state, setState] = useState<DisplayState>({ kind: "idle" });
-  useEffect(() => subscribeDisplay(setState), []);
+  // Paired mode (?code=ABC234&branch=<id>): receive over Socket.IO so the
+  // display can be a different device. Without a code: same-browser window.
+  const [pairing, setPairing] = useState<{ code: string; branchId: string } | null>(null);
+  const [connected, setConnected] = useState(true);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const code = normalizePairCode(q.get("code") ?? "");
+    const branchId = q.get("branch");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of the URL on mount
+    if (code && branchId) setPairing({ code, branchId });
+  }, []);
+  useEffect(() => {
+    if (pairing) {
+      return subscribeDisplayRemote(pairing.branchId, pairing.code, setState, setConnected);
+    }
+    return subscribeDisplay(setState);
+  }, [pairing]);
 
   // Chime when the payment lands. Browsers only allow audio after a click on
   // the page, so the first tap on the display arms sound for the session.
@@ -34,6 +55,11 @@ export default function CustomerDisplayPage() {
       className="relative flex min-h-screen flex-col bg-background p-10 text-foreground"
       onClick={() => setSoundOn(true)}
     >
+      {pairing && !connected && (
+        <p role="status" className="absolute left-4 top-4 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
+          Reconnecting to the till… (sign in on this device if this persists)
+        </p>
+      )}
       {!soundOn && (
         <p className="absolute right-4 top-4 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
           Tap anywhere to enable payment sound
