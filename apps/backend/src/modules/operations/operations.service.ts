@@ -3,11 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type {
-  DocumentDto,
-  EquipmentDto,
-  ServiceLogDto,
-} from '@nventra/types';
+import type { DocumentDto, EquipmentDto, ServiceLogDto } from '@nventra/types';
 import { addDaysToDate, localDate } from '../../common/time';
 import { BranchTimeService } from '../../common/services/branch-time.service';
 import { PrismaService } from '../../prisma/prisma.service';

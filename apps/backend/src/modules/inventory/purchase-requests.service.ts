@@ -3,10 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type {
-  PurchaseRequestDto,
-  PurchaseRequestStatus,
-} from '@nventra/types';
+import type { PurchaseRequestDto, PurchaseRequestStatus } from '@nventra/types';
 import { PrismaService } from '../../prisma/prisma.service';
 
 const NEXT_STATUS: Record<PurchaseRequestStatus, PurchaseRequestStatus[]> = {

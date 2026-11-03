@@ -3,10 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type {
-  SupplierInvoiceDto,
-  SupplierPaymentDto,
-} from '@nventra/types';
+import type { SupplierInvoiceDto, SupplierPaymentDto } from '@nventra/types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { round2 } from '../../common/money';
 
