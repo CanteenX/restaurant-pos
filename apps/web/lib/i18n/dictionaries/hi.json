@@ -19,9 +19,10 @@
   "nav.labels": "लेबल",
   "nav.settings": "सेटिंग्स",
   "nav.myDeliveries": "मेरी डिलीवरी",
-  "nav.labels": "लेबल",
   "common.language": "भाषा",
   "common.loading": "लोड हो रहा है…",
   "common.save": "सहेजें",
-  "common.cancel": "रद्द करें"
+  "common.cancel": "रद्द करें",
+  "common.back": "वापस",
+  "common.done": "हो गया"
 }

@@ -14,8 +14,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { CartLine } from "@/components/pos/cart-line";
 import { SavedAddressPicker } from "@/components/pos/saved-address-picker";
 import type { RestaurantTable } from "@/hooks/use-tables";
-import { formatCurrency } from "@/lib/format";
 import { subtotalOf } from "@/lib/pricing-preview";
+import { useI18n } from "@/lib/i18n/context";
 
 export type PosOrderType = "DINE_IN" | "TAKEAWAY" | "DELIVERY";
 export interface DeliveryDetails {
@@ -74,6 +74,7 @@ export function CartPanel({
   /** Used to look up a returning customer's saved addresses by phone. */
   branchId?: string | null;
 }) {
+  const { t, formatCurrency } = useI18n();
   const subtotal = subtotalOf(lines.map((l) => l.unitPrice * l.quantity));
   const deliveryReady =
     orderType !== "DELIVERY" ||
@@ -86,13 +87,13 @@ export function CartPanel({
       <Tabs value={orderType} onValueChange={(v) => onOrderTypeChange(v as PosOrderType)}>
         <TabsList className="w-full">
           <TabsTrigger value="DINE_IN" className="flex-1">
-            Dine-in
+            {t("pos.orderType.dineIn")}
           </TabsTrigger>
           <TabsTrigger value="TAKEAWAY" className="flex-1">
-            Takeaway
+            {t("pos.orderType.takeaway")}
           </TabsTrigger>
           <TabsTrigger value="DELIVERY" className="flex-1">
-            Delivery
+            {t("pos.orderType.delivery")}
           </TabsTrigger>
         </TabsList>
       </Tabs>
@@ -100,18 +101,18 @@ export function CartPanel({
       {orderType === "DINE_IN" && (
         <Select value={tableId} onValueChange={(v) => onTableChange(v ?? "")}>
           <SelectTrigger className="w-full">
-            <SelectValue placeholder="Select table">
+            <SelectValue placeholder={t("pos.selectTable")}>
               {(value: string | null) => {
-                const t = tables.find((table) => table.id === value);
-                if (!t) return "Select table";
-                return `${t.name ?? `Table ${t.number}`}${t.status === "OCCUPIED" ? " (occupied)" : ""}`;
+                const tbl = tables.find((table) => table.id === value);
+                if (!tbl) return t("pos.selectTable");
+                return `${tbl.name ?? t("pos.tableNumber", { number: tbl.number })}${tbl.status === "OCCUPIED" ? ` ${t("pos.occupiedSuffix")}` : ""}`;
               }}
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
-            {tables.map((t) => (
-              <SelectItem key={t.id} value={t.id}>
-                {t.name ?? `Table ${t.number}`} {t.status === "OCCUPIED" ? "(occupied)" : ""}
+            {tables.map((tbl) => (
+              <SelectItem key={tbl.id} value={tbl.id}>
+                {tbl.name ?? t("pos.tableNumber", { number: tbl.number })} {tbl.status === "OCCUPIED" ? t("pos.occupiedSuffix") : ""}
               </SelectItem>
             ))}
           </SelectContent>
@@ -121,7 +122,7 @@ export function CartPanel({
       {orderType === "DELIVERY" && (
         <div className="flex flex-col gap-2">
           <Input
-            placeholder="Delivery address"
+            placeholder={t("pos.deliveryAddress")}
             value={delivery.address}
             onChange={(e) => onDeliveryChange({ ...delivery, address: e.target.value })}
           />
@@ -132,13 +133,13 @@ export function CartPanel({
           />
           <div className="grid grid-cols-2 gap-2">
             <Input
-              placeholder="Pincode"
+              placeholder={t("pos.pincode")}
               inputMode="numeric"
               value={delivery.pincode}
               onChange={(e) => onDeliveryChange({ ...delivery, pincode: e.target.value })}
             />
             <Input
-              placeholder="Phone"
+              placeholder={t("pos.phone")}
               inputMode="tel"
               value={delivery.phone}
               onChange={(e) => onDeliveryChange({ ...delivery, phone: e.target.value })}
@@ -149,7 +150,7 @@ export function CartPanel({
 
       {orderType !== "DINE_IN" && (
         <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Schedule for later (optional)
+          {t("pos.scheduleLater")}
           <Input
             type="datetime-local"
             value={scheduledFor}
@@ -160,12 +161,12 @@ export function CartPanel({
 
       {checkingTable && (
         <p role="status" className="rounded-lg bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
-          Checking this table&apos;s open bills…
+          {t("pos.checkingBills")}
         </p>
       )}
       {openBills && openBills.length > 1 && (
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" role="group" aria-label="Open bills on this table">
-          <span>{openBills.length} open bills here — add to:</span>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" role="group" aria-label={t("pos.openBillsAria")}>
+          <span>{t("pos.openBillsAddTo", { count: openBills.length })}</span>
           {openBills.map((b) => (
             <Button
               key={b.id}
@@ -184,9 +185,9 @@ export function CartPanel({
       {existingOrderNumber && (
         <div className="flex items-center justify-between gap-3 rounded-lg bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
           <span>
-            This table already has open order{" "}
+            {t("pos.existingOrder")}{" "}
             <span className="font-medium text-foreground">#{existingOrderNumber}</span>
-            {lines.length > 0 && " — these items will be added to it as a new round."}
+            {lines.length > 0 && t("pos.existingOrderAddRound")}
           </span>
           {onViewExistingOrder && (
             <Button
@@ -196,7 +197,7 @@ export function CartPanel({
               className="h-7 shrink-0 px-2 text-xs"
               onClick={onViewExistingOrder}
             >
-              View & pay
+              {t("pos.viewAndPay")}
             </Button>
           )}
         </div>
@@ -206,7 +207,7 @@ export function CartPanel({
         {lines.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
             <ShoppingCart className="h-8 w-8 opacity-40" />
-            <p className="text-sm">Cart is empty</p>
+            <p className="text-sm">{t("pos.cartEmpty")}</p>
           </div>
         ) : (
           <div className="flex flex-col divide-y divide-border">
@@ -256,17 +257,17 @@ export function CartPanel({
 
       <div className="flex flex-col gap-3 border-t border-border pt-4">
         <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">Subtotal (incl. tax)</span>
+          <span className="text-muted-foreground">{t("pos.subtotalInclTax")}</span>
           <span className="font-semibold tabular-nums text-foreground">
             {formatCurrency(subtotal)}
           </span>
         </div>
         <Button className="h-11" disabled={!canSubmit} onClick={onSubmit}>
           {isSubmitting
-            ? "Sending to kitchen…"
+            ? t("pos.sendingToKitchen")
             : existingOrderNumber
-              ? "Add to order & send to kitchen"
-              : "Send to kitchen"}
+              ? t("pos.addAndSend")
+              : t("pos.sendToKitchen")}
         </Button>
       </div>
     </div>
