@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
 import { HttpException, HttpStatus } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import type { AuditService } from '../audit/audit.service';
 import {
   AuthService,
   PIN_MAX_FAILURES,
@@ -51,7 +52,7 @@ function setup(user: ReturnType<typeof makeUser> | null = makeUser()) {
     prisma as never,
     jwt as never,
     {} as never,
-    audit,
+    audit as unknown as AuditService,
   );
   return { svc, prisma, jwt, audit };
 }
