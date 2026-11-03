@@ -122,6 +122,34 @@ async function main() {
     create: { userId: owner.id, branchId: branch.id },
   });
 
+  // A second staff member with a PIN, so the shared-till quick switch
+  // (owner PIN 1234 -> cashier PIN 2468) can be tried on a demo install.
+  console.log(
+    'Creating demo cashier (login: cashier@demo.local / Password123!, PIN 2468)...',
+  );
+  const cashier = await prisma.user.upsert({
+    where: {
+      restaurantId_email: {
+        restaurantId: restaurant.id,
+        email: 'cashier@demo.local',
+      },
+    },
+    update: {},
+    create: {
+      restaurantId: restaurant.id,
+      roleId: roleByName.get('CASHIER')!,
+      name: 'Demo Cashier',
+      email: 'cashier@demo.local',
+      passwordHash,
+      pinHash: await bcrypt.hash('2468', 12),
+    },
+  });
+  await prisma.userBranch.upsert({
+    where: { userId_branchId: { userId: cashier.id, branchId: branch.id } },
+    update: {},
+    create: { userId: cashier.id, branchId: branch.id },
+  });
+
   console.log('Seeding floor + tables...');
   const floor = await prisma.floor.upsert({
     where: { id: 'demo-floor' },
