@@ -1,0 +1,66 @@
+name: Nightly browser e2e
+
+# Full stack (docker compose, demo seed) + Playwright, once a night, and ONLY
+# if staging received commits in the last 24h. Per-PR browser QA happens in
+# the Claude cloud agent VMs instead (no Actions minutes). Budget: ~15 min/run.
+
+on:
+  schedule:
+    - cron: "30 20 * * *" # 02:00 IST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-e2e
+  cancel-in-progress: true
+
+jobs:
+  changed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: staging
+          fetch-depth: 50
+      - id: check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          n=$(git log --since="24 hours ago" --oneline | wc -l)
+          echo "commits in last 24h: $n"
+          [ "$n" -gt 0 ] && echo "run=true" >> "$GITHUB_OUTPUT" || echo "run=false" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: staging
+      - name: Start demo stack
+        run: ./install.sh --demo
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Playwright
+        working-directory: e2e
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+          CI=1 npx playwright test
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report
+          retention-days: 5
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose logs --tail=120

@@ -1,0 +1,95 @@
+name: CI
+
+# Deterministic gate for PRs into staging/master. On the free GitHub plan there
+# is no branch protection, so the merger agent treats a green run of this
+# workflow as the merge gate.
+#
+# MINUTES BUDGET: the CanteenX org shares 2,000 Actions minutes/month across
+# ALL repos. This workflow is deliberately lean:
+#   - PRs only (no extra run on push to staging), docs-only PRs skipped
+#   - one runner, pnpm store cached, superseded runs cancelled
+#   - backend e2e (Postgres) only when backend/types/prisma files change
+# Browser QA (docker compose + Playwright) runs inside the Claude cloud agent
+# VMs, which cost no Actions minutes; e2e.yml runs it here once a night only.
+
+on:
+  pull_request:
+    branches: [staging, master]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "casaos/**"
+      - "mobile/store/**"
+      - ".github/ISSUE_TEMPLATE/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: ci-gate
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      JWT_SECRET: ci-only-not-a-secret-ci-only-not-a-secret
+      TURBO_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: What changed
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - "apps/backend/**"
+              - "packages/types/**"
+              - "pnpm-lock.yaml"
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Build shared types + Prisma client
+        run: |
+          pnpm --filter "./packages/types" build
+          pnpm --filter "./apps/backend" exec prisma generate
+
+      - name: Typecheck
+        run: pnpm -r --if-present typecheck
+
+      - name: Lint
+        run: pnpm -r --if-present lint
+
+      - name: Unit tests
+        run: pnpm -r --if-present test
+
+      - name: Backend e2e (only when backend changed)
+        if: steps.changes.outputs.backend == 'true'
+        working-directory: apps/backend
+        run: pnpm exec prisma migrate deploy && pnpm test:e2e

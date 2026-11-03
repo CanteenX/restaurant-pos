@@ -8,15 +8,10 @@ name: Windows MSIX build
 # no Start Menu/UAC-prompt visual check — those need a human on real
 # hardware).
 
+# Nventra: manual-only. Automatic triggers removed to protect the org's
+# 2,000 Actions minutes/month and because this job targets upstream
+# (NodeDR) release infrastructure. Re-enable deliberately after the rebrand.
 on:
-  push:
-    branches: [master]
-    paths:
-      - 'windows/**'
-      - '.github/workflows/windows-msix.yml'
-  pull_request:
-    paths:
-      - 'windows/**'
   workflow_dispatch: {}
 
 jobs:

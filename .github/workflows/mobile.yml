@@ -4,10 +4,11 @@ name: Mobile app
 # Runs on a version tag or by hand. Signing secrets (set in the repo's Settings > Secrets):
 #   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
 #   GOOGLE_SERVICES_JSON (optional, base64 of google-services.json, enables push)
+# Nventra: manual-only. Automatic triggers removed to protect the org's
+# 2,000 Actions minutes/month and because this job targets upstream
+# (NodeDR) release infrastructure. Re-enable deliberately after the rebrand.
 on:
-  push:
-    tags: ['v*']
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 jobs:
   android:
