@@ -1505,6 +1505,7 @@ model Order {
   items               OrderItem[]
   kots                Kot[]
   payments            Payment[]
+  gatewayPayments     GatewayPayment[]
   giftCardRedemptions GiftCardRedemption[]
   refunds             Refund[]
 
@@ -1730,6 +1731,52 @@ model Payment {
   @@unique([orderId, clientRequestId])
   @@index([orderId])
   @@map("payments")
+}
+
+// One online payment attempt through a gateway adapter (see docs/PAYMENTS.md).
+// The order is only settled once, through checkout, keyed on this row's id;
+// paymentId points at the Payment that settlement created.
+enum GatewayPaymentStatus {
+  CREATED
+  PENDING
+  SUCCEEDED
+  FAILED
+  EXPIRED
+}
+
+model GatewayPayment {
+  id           String @id @default(cuid())
+  restaurantId String
+  branchId     String
+  orderId      String
+  order        Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  provider       String // integration-hub provider key, e.g. "razorpay"
+  method         PaymentMethod
+  amount         Decimal              @db.Decimal(12, 2)
+  currency       String               @default("INR")
+  status         GatewayPaymentStatus @default(CREATED)
+  // Client-supplied key: the same key on the same order is the same attempt.
+  idempotencyKey String
+  externalId     String? // the gateway's payment id
+  action         Json? // what the till shows the guest (UPI link, redirect)
+  failureCode    String?
+  failureMessage String?
+
+  // Set once the order payment exists. settlementError: the gateway took the
+  // money but the order could not take it (closed meanwhile) - needs a refund.
+  paymentId       String?   @unique
+  settledAt       DateTime?
+  settlementError String?
+
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([orderId, idempotencyKey])
+  @@unique([provider, externalId])
+  @@index([restaurantId, status])
+  @@map("gateway_payments")
 }
 
 model Refund {
