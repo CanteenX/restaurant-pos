@@ -10,6 +10,8 @@ import type {
   RecipeLineDto,
   MenuItemTrackingDto,
 } from '@nventra/types';
+import { AuditService } from '../../audit/audit.service';
+import { diffFields } from '../../audit/audit-diff';
 import { PrismaService } from '../../prisma/prisma.service';
 import { round2 } from '../../common/money';
 import { StockService } from './stock.service';
@@ -22,6 +24,7 @@ export class InventoryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stockService: StockService,
+    private readonly audit: AuditService,
   ) {}
 
   // --- Ingredients ----------------------------------------------------------
@@ -41,21 +44,51 @@ export class InventoryService {
     return ingredient;
   }
 
-  createIngredient(branchId: string, dto: IngredientDto) {
-    return this.prisma.ingredient.create({ data: { ...dto, branchId } });
+  async createIngredient(
+    branchId: string,
+    dto: IngredientDto,
+    userId?: string,
+  ) {
+    const created = await this.prisma.ingredient.create({
+      data: { ...dto, branchId },
+    });
+    await this.audit.record({
+      userId,
+      action: 'ingredient.created',
+      entity: 'Ingredient',
+      entityId: created.id,
+      metadata: { branchId, name: created.name, unit: created.unit },
+    });
+    return created;
   }
 
   async updateIngredient(
     branchId: string,
     id: string,
     dto: Partial<IngredientDto>,
+    userId?: string,
   ) {
-    await this.getIngredient(branchId, id);
-    return this.prisma.ingredient.update({ where: { id }, data: dto });
+    const existing = await this.getIngredient(branchId, id);
+    const updated = await this.prisma.ingredient.update({
+      where: { id },
+      data: dto,
+    });
+    await this.audit.record({
+      userId,
+      action: 'ingredient.updated',
+      entity: 'Ingredient',
+      entityId: id,
+      metadata: {
+        branchId,
+        name: updated.name,
+        changes: diffFields(existing, dto),
+      },
+    });
+    return updated;
   }
 
-  async deleteIngredient(branchId: string, id: string) {
-    await this.getIngredient(branchId, id);
+  async deleteIngredient(branchId: string, id: string, userId?: string) {
+    const existing = await this.getIngredient(branchId, id);
     const usedInRecipe = await this.prisma.recipeIngredient.count({
       where: { ingredientId: id },
     });
@@ -65,6 +98,13 @@ export class InventoryService {
       );
     }
     await this.prisma.ingredient.delete({ where: { id } });
+    await this.audit.record({
+      userId,
+      action: 'ingredient.deleted',
+      entity: 'Ingredient',
+      entityId: id,
+      metadata: { branchId, name: existing.name },
+    });
     return { ok: true };
   }
 

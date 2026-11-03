@@ -4,11 +4,16 @@ import type {
   CustomerAddressUpdateDto,
   CustomerDto,
 } from '@nventra/types';
+import { AuditService } from '../../audit/audit.service';
+import { diffFields } from '../../audit/audit-diff';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class CustomersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   list(branchId: string, search?: string) {
     return this.prisma.customer.findMany({
@@ -51,22 +56,59 @@ export class CustomersService {
     return customer;
   }
 
-  create(branchId: string, dto: CustomerDto) {
-    return this.prisma.customer.create({ data: { ...dto, branchId } });
+  async create(branchId: string, dto: CustomerDto, userId?: string) {
+    const created = await this.prisma.customer.create({
+      data: { ...dto, branchId },
+    });
+    await this.audit.record({
+      userId,
+      action: 'customer.created',
+      entity: 'Customer',
+      entityId: created.id,
+      metadata: { branchId, name: created.name },
+    });
+    return created;
   }
 
-  async update(branchId: string, id: string, dto: Partial<CustomerDto>) {
-    await this.assertInBranch(branchId, id);
-    return this.prisma.customer.update({ where: { id }, data: dto });
+  async update(
+    branchId: string,
+    id: string,
+    dto: Partial<CustomerDto>,
+    userId?: string,
+  ) {
+    const existing = await this.assertInBranch(branchId, id);
+    const updated = await this.prisma.customer.update({
+      where: { id },
+      data: dto,
+    });
+    await this.audit.record({
+      userId,
+      action: 'customer.updated',
+      entity: 'Customer',
+      entityId: id,
+      metadata: {
+        branchId,
+        name: updated.name,
+        changes: diffFields(existing, dto),
+      },
+    });
+    return updated;
   }
 
   // Hard delete — Order.customerId and GiftCard.customerId are both
   // optional with onDelete: SetNull (schema.prisma), so this never orphans
   // or blocks on past orders/gift cards; it just detaches them from the
   // profile being removed.
-  async remove(branchId: string, id: string) {
-    await this.assertInBranch(branchId, id);
+  async remove(branchId: string, id: string, userId?: string) {
+    const existing = await this.assertInBranch(branchId, id);
     await this.prisma.customer.delete({ where: { id } });
+    await this.audit.record({
+      userId,
+      action: 'customer.deleted',
+      entity: 'Customer',
+      entityId: id,
+      metadata: { branchId, name: existing.name },
+    });
     return { ok: true };
   }
 
@@ -159,5 +201,6 @@ export class CustomersService {
       where: { id, branchId },
     });
     if (!customer) throw new NotFoundException('Customer not found');
+    return customer;
   }
 }

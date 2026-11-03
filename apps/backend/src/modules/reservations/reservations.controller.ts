@@ -48,7 +48,9 @@ export class ReservationsController {
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
-    return this.reservationsService.create(branchId, body as never);
+    return this.reservationsService.create(branchId, body as never, {
+      actorId: user.id,
+    });
   }
 
   @Auth('reservations.manage')
@@ -62,6 +64,6 @@ export class ReservationsController {
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
     const { status } = body as { status: never };
-    return this.reservationsService.updateStatus(branchId, id, status);
+    return this.reservationsService.updateStatus(branchId, id, status, user.id);
   }
 }
