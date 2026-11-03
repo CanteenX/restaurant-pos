@@ -30,6 +30,18 @@ Runs at hourly cadence until 2026-11-05 08:00 UTC (cloud credit). After
 that, builder runs at an odd UTC hour stop immediately without doing work
 (effective every 2 hours), to stay inside the weekly plan limit.
 
+## Live tracker (every role)
+Whenever you change an issue's `agent:*` state (claim, PR opened, review
+verdict, merge, blocked), also update its row on the tracker page with the
+ArtifactData tool (load it with ToolSearch `select:ArtifactData`):
+`get` collection `board` doc `i<N>` from https://claude.ai/artifact/UPwdzfrnLQB9qKV2L9PD8Y,
+then `update` it with `if_version` = that version and
+`{state, pr, note, updated_at}` — state is `in_progress` (claimed),
+`review` (PR open / changes / approved), `done` (merged), `blocked`; `note`
+≤ 80 chars of what happened. If ArtifactData is unavailable or fails, skip
+it (GitHub stays the source of truth); never retry in a loop. Only the
+planner writes `tracker/status`, `needs` and `log`.
+
 ## Model routing (set on every issue by the planner)
 - `model:opus` — architecture, auth/security, money/payments, DB migrations,
   cross-cutting refactors (rebrand), anything `risk:high` or `size:L`.
