@@ -138,4 +138,4 @@ passwords and percent-encoding, are in [`docs/email.md`](email.md).
 - [ ] Test order printed on each printer
 - [ ] Test email sent (if SMTP is configured)
 - [ ] One backup taken and one restore tested
-- [ ] Support contact given to the restaurant
+- [ ] Support contact given to the restaurant, and [`SUPPORT-RUNBOOK.md`](./SUPPORT-RUNBOOK.md) shared with the support staff

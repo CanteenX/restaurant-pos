@@ -485,6 +485,7 @@ docs/           Screenshots and supplementary docs
 | [`ROADMAP.md`](./ROADMAP.md) | Phased build plan / living TODO — checkboxes are the real status |
 | [`DESIGN_SYSTEM.md`](./DESIGN_SYSTEM.md) | Visual language, tokens, type scale, component inventory, per-surface UX notes |
 | [`docs/PARTNER-INSTALL-GUIDE.md`](./docs/PARTNER-INSTALL-GUIDE.md) | Partner install guide: from a blank machine to a running Nventra POS on site, with a go-live checklist |
+| [`docs/SUPPORT-RUNBOOK.md`](./docs/SUPPORT-RUNBOOK.md) | Support runbook: triage, logs, restarts, DB, password/PIN/2FA recovery, printers, KDS, email, backups, updates |
 | [`casaos/README.md`](./casaos/README.md) | CasaOS/ZimaOS one-click install, image publishing, official app store submission steps |
 | [`windows/msix/README.md`](./windows/msix/README.md) | Windows MSIX desktop client — what it is/isn't, build/validate instructions, capabilities, what's CI-verified vs. not tested on real hardware |
 | [`ACCESSIBILITY.md`](./ACCESSIBILITY.md) | WCAG 2.1 AA target, what's implemented, testing methodology, known gaps |
