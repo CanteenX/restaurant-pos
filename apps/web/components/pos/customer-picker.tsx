@@ -3,6 +3,7 @@
 import { UserRound, X } from "lucide-react";
 import { useState } from "react";
 import { AddCustomerDialog } from "@/components/customers/add-customer-dialog";
+import { MembershipBadge } from "@/components/customers/membership-badge";
 import { Input } from "@/components/ui/input";
 import { useCustomers, type Customer } from "@/hooks/use-customers";
 
@@ -25,6 +26,7 @@ export function CustomerPicker({
           <UserRound className="h-4 w-4 text-muted-foreground" />
           <span className="font-medium text-foreground">{customer.name ?? customer.phone}</span>
           <span className="text-xs text-muted-foreground">{customer.loyaltyPoints} pts</span>
+          <MembershipBadge branchId={branchId} customerId={customer.id} />
         </div>
         <button
           type="button"
