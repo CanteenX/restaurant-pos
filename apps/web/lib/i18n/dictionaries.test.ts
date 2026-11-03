@@ -39,3 +39,20 @@ test("fr dictionary has no English values left (except brand names)", () => {
   );
   assert.deepEqual(untranslated, []);
 });
+
+// hi is filled area by area (docs/I18N.md): it may lack keys (they fall back
+// to en), but it must never invent keys, hold empty values, or miss the
+// app chrome (nav + common), which the language switch is judged by.
+test("hi dictionary is a non-empty subset of en covering the chrome", () => {
+  const hi = load("hi");
+  const extra = Object.keys(hi).filter((k) => !(k in en));
+  const empty = Object.entries(hi).filter(([, v]) => v.trim() === "").map(([k]) => k);
+  const chrome = enKeys.filter((k) => /^(nav|common)\./.test(k) && !(k in hi));
+  assert.deepEqual({ extra, empty, chrome }, { extra: [], empty: [], chrome: [] });
+});
+
+test("hi chrome strings are written in Devanagari", () => {
+  const hi = load("hi");
+  const latinOnly = Object.entries(hi).filter(([, v]) => !/[\u0900-\u097F]/.test(v)).map(([k]) => k);
+  assert.deepEqual(latinOnly, []);
+});
