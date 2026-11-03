@@ -31,8 +31,9 @@ test("gift card list shows the new balance after redemption at checkout", async 
   await expect(pos.getByText("Payment recorded")).toBeVisible();
   await pos.close();
 
-  // The card (₹137 < ₹280 bill) is fully used up; the open list updates itself.
-  await page.goto("/gift-cards");
+  // The card (₹137 < ₹280 bill) is fully used up. No reload or goto here: the
+  // still-open list must update itself via the realtime payment event
+  // (checkout ran in a different page).
   const used = page.getByTestId("gift-card-row").filter({ hasText: code });
   await expect(used).toContainText("₹0.00");
   await expect(used).toContainText("Used up");
