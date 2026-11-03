@@ -1,4 +1,4 @@
-# OrderRestro tutorial
+# Nventra POS tutorial
 
 Get from zero to your first UPI-paid order in about ten minutes, then set up staff, stock and accounts. Screenshots use fictional demo data.
 
@@ -11,14 +11,14 @@ Get from zero to your first UPI-paid order in about ten minutes, then set up sta
 You need a machine that stays on in the restaurant (a mini PC, an old laptop, a NAS or a VPS) with Docker. The database is created for you on first start.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Raktim94/nodedr-restaurant-pos/master/scripts/quickstart.sh | bash
+curl -fsSL https://raw.githubusercontent.com/CanteenX/restaurant-pos/master/scripts/quickstart.sh | bash
 ```
 
 Or from a clone:
 
 ```bash
-git clone https://github.com/Raktim94/nodedr-restaurant-pos.git
-cd nodedr-restaurant-pos
+git clone https://github.com/CanteenX/restaurant-pos.git
+cd restaurant-pos
 ./install.sh
 ```
 
@@ -103,7 +103,7 @@ The till works on a phone too:
 
 ## 5. Get paid with UPI
 
-OrderRestro builds a standard UPI payment link for the **exact amount due**. There is nothing to type in the customer's app, and no payment-gateway fees.
+Nventra POS builds a standard UPI payment link for the **exact amount due**. There is nothing to type in the customer's app, and no payment-gateway fees.
 
 ### Set up
 
@@ -240,7 +240,7 @@ Reports go out at 06:00 branch time: daily covers yesterday, weekly goes on Mond
 | **Settings → Audit log** | Who did what, and when. |
 | **Settings → Backup** | Schedule and restore backups. Test a restore before you need one. |
 | **Settings → Security** | Two-factor sign-in and recovery codes. |
-| **Settings → API keys, Webhooks** | Let other systems talk to OrderRestro. |
+| **Settings → API keys, Webhooks** | Let other systems talk to Nventra POS. |
 | **Settings → Updates** | Check for a new version. |
 
 <table>
@@ -270,7 +270,7 @@ Reports go out at 06:00 branch time: daily covers yesterday, weekly goes on Mond
 
 ## 12. Connect other systems
 
-OrderRestro has a REST API (`/api/v1`, docs at `/api/docs`), API keys, webhooks and an MCP server. See [docs/integrations-api.md](docs/integrations-api.md).
+Nventra POS has a REST API (`/api/v1`, docs at `/api/docs`), API keys, webhooks and an MCP server. See [docs/integrations-api.md](docs/integrations-api.md).
 
 ## Troubleshooting
 
@@ -289,8 +289,8 @@ Everything lives in your Postgres volume. Use **Settings → Backup** for schedu
 
 Every backup and download carries a `SHA256SUMS` file. Check a downloaded copy with `sha256sum -c SHA256SUMS`. A restore checks it first and refuses a corrupt or modified backup without touching your data.
 
-Questions or bugs: [open an issue](https://github.com/Raktim94/nodedr-restaurant-pos/issues).
+Questions or bugs: [open an issue](https://github.com/CanteenX/restaurant-pos/issues).
 
 ---
 
-<sub>OrderRestro is developed by [NodeDR Infotech Private Limited](https://www.nodedr.com/) · [nodedr.com](https://www.nodedr.com/)</sub>
+<sub>Nventra POS is a fork of [Nodedr OrderRestro](https://github.com/Raktim94/nodedr-restaurant-pos) by Nodedr Infotech Private Limited and Raktim Ranjit.</sub>

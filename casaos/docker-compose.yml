@@ -49,7 +49,7 @@ services:
       SYNC_API_KEY: ""
       # In-app "Update now" button (Settings > Updates) -> the updater below.
       UPDATER_URL: "http://nventra-pos-updater:8080"
-      UPDATER_TOKEN: "nodedr-restaurant-updater"
+      UPDATER_TOKEN: "nventra-pos-updater"
     volumes:
       - type: bind
         source: /DATA/AppData/$AppID/uploads
@@ -115,7 +115,7 @@ services:
     hostname: nventra-pos-updater
     restart: unless-stopped
     environment:
-      UPDATER_TOKEN: "nodedr-restaurant-updater"
+      UPDATER_TOKEN: "nventra-pos-updater"
       TARGET_CONTAINERS: "nventra-pos-backend,nventra-pos-web"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

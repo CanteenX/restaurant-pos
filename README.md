@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="apps/web/public/brand-lockup.png" alt="Nodedr OrderRestro" width="520">
+<img src="apps/web/public/brand-lockup.png" alt="Nventra POS" width="520">
 
 <img src="docs/orderrestro-cover.jpg" alt="Illustrative evening scene in an independent restaurant" width="100%">
 
@@ -21,21 +21,17 @@ dine-in, takeaway, delivery and kitchen operations.
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 [![Status](https://img.shields.io/badge/status-active%20development-orange.svg)](./ROADMAP.md)
 
-Developed by [NodeDR Infotech Private Limited](https://www.nodedr.com/)
-
-**[Try OrderRestro](https://orderrestro.nodedr.com/)** · **[Case study](https://www.raktimranjit.com/projects/orderrestro)** · **[Maintainer: Raktim Ranjit](https://www.raktimranjit.com/)**
-
-<p align="center">
-  <a href="https://orderrestro.nodedr.com/"><img src="https://img.shields.io/badge/Go%20to%20the%20OrderRestro%20website-orderrestro.nodedr.com-E0234E?style=for-the-badge" alt="Go to the OrderRestro website"></a>
-</p>
+**Nventra POS** is a fork of [Nodedr OrderRestro](https://github.com/Raktim94/nodedr-restaurant-pos)
+by Nodedr Infotech Private Limited and Raktim Ranjit.
+It is not the official Nodedr release.
 
 <p align="center">
-  <img src="docs/assets/hero-animated.svg" alt="Nodedr OrderRestro: animated overview with an illustrative sample screen" width="100%">
+  <img src="docs/assets/hero-animated.svg" alt="Nventra POS: animated overview with an illustrative sample screen" width="100%">
 </p>
 
 
 [Quick Start](#quick-start) ·
-[How to use](#how-to-use-orderrestro) ·
+[How to use](#how-to-use-nventra-pos) ·
 [Full tutorial](./TUTORIAL.md) ·
 [Features](#features) ·
 [Screenshots](#screenshots) ·
@@ -49,7 +45,7 @@ Developed by [NodeDR Infotech Private Limited](https://www.nodedr.com/)
 
 ## What this is
 
-**Nodedr OrderRestro** is a purpose-built, offline-first Restaurant
+**Nventra POS** is a purpose-built, offline-first Restaurant
 Management System for restaurants, cafés, coffee shops, bakeries, fast
 food, fine dining, bars, food courts, cloud kitchens, and multi-branch
 chains. The whole stack — Postgres, API, and web app — runs on one local
@@ -57,7 +53,8 @@ server on the restaurant's own LAN: order-taking, billing, KDS, and
 printing all keep working with the WAN cable unplugged. No subscription,
 no forced cloud dependency, self-hosted by design.
 
-It's a sister project to [`nodedr-pos`](https://github.com/Raktim94/nodedr-pos)
+It is a fork of [Nodedr OrderRestro](https://github.com/Raktim94/nodedr-restaurant-pos), which is itself a sister
+project to [`nodedr-pos`](https://github.com/Raktim94/nodedr-pos)
 (the retail-shop POS), reusing its proven patterns — auth/session model,
 receipt rendering, ESC/POS printing, currency-rounding discipline — but
 built as its own codebase, because restaurant floor/kitchen/reservation
@@ -183,7 +180,7 @@ roles) under **Settings** in the sidebar, photo upload on menu items, and
 an English/Spanish/French language switcher on the guest-facing QR
 ordering page and staff sidebar.
 
-## Why OrderRestro
+## Why Nventra POS
 
 - **UPI-first checkout (India)** — pick UPI and a QR for the exact bill
   amount appears at the till *and* on the customer-facing screen; a
@@ -198,7 +195,7 @@ ordering page and staff sidebar.
 - **India-ready** — GST (inclusive or exclusive), UPI, ₹ formatting, plus
   US sales tax, EU VAT and Spanish IVA for other markets.
 
-## How to use OrderRestro
+## How to use Nventra POS
 
 Start with the [screenshot-guided tutorial](./TUTORIAL.md) for the full
 first-run walkthrough. It covers sign-up, setup, daily service, and the
@@ -251,7 +248,7 @@ management tools with **56 screenshots of the app**.
 ## FAQ
 
 **Is there a free, open-source restaurant POS I can self-host?**
-Yes — OrderRestro is AGPL-3.0 and installs with `docker compose up`, or as
+Yes — Nventra POS is AGPL-3.0 and installs with `docker compose up`, or as
 a one-click app on CasaOS / ZimaOS.
 
 **Does it support UPI payments and GST billing?**
@@ -308,15 +305,11 @@ Postgres over the originally-specced SQLite — is in
 </p>
 
 
-### One-line install (Ubuntu / Debian, amd64 and arm64)
+### One-line install (Ubuntu / Debian)
 
-```bash
-curl -fsSL https://orderrestro.nodedr.com/install-linux.sh | sudo bash
-```
-
-Installs the `nodedr-orderrestro` .deb (runs in Docker; installs Docker if
-missing). OrderRestro opens on port 1995. Direct downloads and checksums are on
-the [releases page](https://github.com/Raktim94/nodedr-restaurant-pos/releases/latest).
+Nventra POS does not publish its own `.deb` packages yet; the one-line
+installer and packages on the upstream site install the upstream product, not
+this fork. Use the one-click install below.
 
 ### Installing Docker
 
@@ -358,7 +351,7 @@ already bundled, which is all this project requires.
 ### One-click install
 
 ```bash
-git clone https://github.com/Raktim94/nodedr-restaurant-pos.git && cd nodedr-restaurant-pos && ./install.sh
+git clone https://github.com/CanteenX/restaurant-pos.git && cd restaurant-pos && ./install.sh
 ```
 
 [`install.sh`](install.sh) generates a `.env` with random secrets (only if
@@ -379,8 +372,8 @@ If you'd rather run each step yourself (e.g. to set your own secrets instead
 of generated ones):
 
 ```bash
-git clone https://github.com/Raktim94/nodedr-restaurant-pos.git
-cd nodedr-restaurant-pos
+git clone https://github.com/CanteenX/restaurant-pos.git
+cd restaurant-pos
 cp .env.example .env        # edit JWT_SECRET / POSTGRES_PASSWORD for anything beyond local dev
 docker compose up -d --build
 docker exec nventra-pos-backend npx ts-node prisma/seed.ts   # optional: demo data + login; upsert-based, safe to re-run
@@ -405,8 +398,8 @@ container:
 ### Upgrading an install from before the Nventra rename
 
 The Postgres user and database are now `nventra` / `nventra_pos` (previously
-`nodedr` / `nodedr_restaurant`), and the login cookie is `nventra_session`
-(it used the old `nodedr_` prefix before). Postgres only creates its user and database on
+the upstream names), and the login cookie is `nventra_session` (it used the
+upstream prefix before). Postgres only creates its user and database on
 an empty volume, so an existing install must recreate the volume. This deletes
 the old database: take a backup first if it holds anything you need.
 
@@ -542,8 +535,10 @@ This project follows the [Contributor Covenant](./CODE_OF_CONDUCT.md).
 
 ## License
 
+Nventra POS is a fork of [Nodedr OrderRestro](https://github.com/Raktim94/nodedr-restaurant-pos). Upstream code is
 Copyright © 2026 [Nodedr Infotech Private Limited](https://www.nodedr.com/)
-and Raktim Ranjit. Licensed under the
+and Raktim Ranjit; modifications © 2026 Nventra (see [`COPYRIGHT`](./COPYRIGHT)
+and [`NOTICE`](./NOTICE)). Licensed under the
 [GNU Affero General Public License v3.0](./LICENSE) (AGPL-3.0). In short:
 you're free to self-host, use, and modify this software for your
 restaurant or business. If you modify it and run that modified version
@@ -557,15 +552,16 @@ See [`MAINTAINERS.md`](./MAINTAINERS.md) for project maintainers.
 ---
 
 <div align="center">
-<img src="apps/web/public/logo.png" alt="Nodedr OrderRestro" width="72">
+<img src="apps/web/public/logo.png" alt="Nventra POS" width="72">
 </div>
 
 
-## Case study
+## Upstream
 
-Read the [OrderRestro case study](https://www.raktimranjit.com/projects/orderrestro) for the product background and design decisions.
-
-Maintainer: [Raktim Ranjit](https://www.raktimranjit.com/)
+The upstream project's background and design decisions are in the
+[OrderRestro case study](https://www.raktimranjit.com/projects/orderrestro)
+by its author, [Raktim Ranjit](https://www.raktimranjit.com/). Fork
+maintainers are listed in [`MAINTAINERS.md`](./MAINTAINERS.md).
 
 ---
 
@@ -575,6 +571,7 @@ kitchen display system, KDS, restaurant inventory management, restaurant
 payroll and attendance, café POS, cloud kitchen software, QR table ordering,
 offline-first POS, NestJS, Next.js, PostgreSQL, Prisma, CasaOS, ZimaOS.</sub>
 
-## Commercial licence
+## Trademarks
 
-Licensed under the AGPL-3.0. A [commercial licence](COMMERCIAL-LICENSE.md) is available on request for use without the AGPL obligations. The NodeDR OrderRestro name and logo are not covered by the AGPL.
+The Nventra POS name and logo, and the upstream Nodedr / OrderRestro names, are
+not covered by the AGPL; see [`TRADEMARK_POLICY.md`](./TRADEMARK_POLICY.md).

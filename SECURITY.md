@@ -1,9 +1,11 @@
 # Security policy
 
 ## Reporting a vulnerability
-Please do **not** open a public issue. Email **mail@raktimranjit.com** with a
-description, affected version, and steps to reproduce, or use GitHub's private
-vulnerability reporting on this repository. Do not include real customer data.
+Please do **not** open a public issue. Use GitHub's private vulnerability
+reporting on [CanteenX/restaurant-pos](https://github.com/CanteenX/restaurant-pos/security/advisories/new) with a
+description, affected version, and steps to reproduce. Do not include real
+customer data. This policy covers Nventra POS; for the
+upstream Nodedr OrderRestro project, follow its own security policy.
 
 You should get an acknowledgement within a few days. Please allow reasonable
 time to fix before public disclosure; we will credit you if you wish.

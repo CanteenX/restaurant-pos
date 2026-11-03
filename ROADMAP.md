@@ -8,7 +8,7 @@ inventory, CRM, payments, security, AI, etc. — ~305 line items each marked
 Shipped/Partial/Planned against the real codebase) see
 [`FEATURE-CHECKLIST.md`](./FEATURE-CHECKLIST.md). This file tracks the same
 ground phase-by-phase for engineering; that one is organized by product
-category for anyone (including the website) that wants "what does OrderRestro
+category for anyone (including the website) that wants "what does Nventra POS
 actually do today."
 
 ## Current phase: 5–8 core features shipped (see each phase for what is and is not built)
@@ -586,7 +586,7 @@ reach it (tax code masters, delivery-platform rate cards, etc.).
 
   **Real bugs/gotchas caught this session:**
   1. `apps/backend/.env`'s `DATABASE_URL` had a stale password
-     (`nodedr_dev_pw`) that didn't match root `.env`'s actual
+     (an old dev-only value) that didn't match root `.env`'s actual
      `POSTGRES_PASSWORD` (`change-me`, which is what the running Postgres
      volume was actually initialized with) — local migrations failed with
      an auth error until traced and fixed. Pre-existing drift between the

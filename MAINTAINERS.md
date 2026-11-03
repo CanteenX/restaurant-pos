@@ -1,18 +1,25 @@
 # Maintainers
 
+Nventra POS is maintained by the CanteenX organisation on GitHub:
+[CanteenX/restaurant-pos](https://github.com/CanteenX/restaurant-pos).
+
 | Name | Role | Contact |
 |---|---|---|
-| Raktim Ranjit | Lead Maintainer | [raktimranjit.com](https://www.raktimranjit.com/) · mail@raktimranjit.com · [@Raktim94](https://github.com/Raktim94) |
+| [@Deep1012](https://github.com/Deep1012) | Maintainer (Nventra POS) | [issues](https://github.com/CanteenX/restaurant-pos/issues) |
+
+## Upstream
+
+Nventra POS is a fork of [Nodedr OrderRestro](https://github.com/Raktim94/nodedr-restaurant-pos),
+created and maintained by Raktim Ranjit ([raktimranjit.com](https://www.raktimranjit.com/))
+and Nodedr Infotech Private Limited, who also build the sister retail project
+[`nodedr-pos`](https://github.com/Raktim94/nodedr-pos). The upstream
+maintainers do not maintain or support this fork; please report fork issues
+here, not upstream.
 
 ## Copyright
 
-Copyright © 2026 [Nodedr Infotech Private Limited](https://www.nodedr.com/)
-and Raktim Ranjit. Licensed under the
-[GNU Affero General Public License v3.0](./LICENSE) — see
-[`LICENSE`](./LICENSE) for the full text and [`README.md`](./README.md#license)
-for what that means in practice for users and contributors.
-
-Nodedr Infotech Private Limited builds and maintains Nodedr OrderRestro
-and its sister projects (see [`nodedr-pos`](https://github.com/Raktim94/nodedr-pos))
-as free, self-hosted software — no subscription, no vendor lock-in. See
-[`CONTRIBUTING.md`](./CONTRIBUTING.md) for how to get involved.
+Upstream code: Copyright © 2026 Nodedr Infotech Private Limited and Raktim
+Ranjit. Modifications © 2026 Nventra. Licensed under the
+[GNU Affero General Public License v3.0](./LICENSE); see [`COPYRIGHT`](./COPYRIGHT)
+and [`NOTICE`](./NOTICE). See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for how to
+get involved.

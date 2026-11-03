@@ -1,4 +1,4 @@
-# Nodedr OrderRestro — Master Project Document
+# Nventra POS — Master Project Document
 
 > Start here. This file is the source of truth for scope, status, and decisions.
 > Companion docs: [`ARCHITECTURE.md`](./ARCHITECTURE.md) (tech stack + why),
@@ -7,12 +7,12 @@
 
 ## What this is
 
-**Nodedr OrderRestro** is a purpose-built, offline-first Restaurant Management
+**Nventra POS** (a fork of [Nodedr OrderRestro](https://github.com/Raktim94/nodedr-restaurant-pos)) is a purpose-built, offline-first Restaurant Management
 System — not a retail POS reused for restaurants. Target venues: restaurants,
 cafés, coffee shops, bakeries, fast food, fine dining, bars, food courts,
 cloud kitchens, and multi-branch chains.
 
-It is a sister project to [`nodedr-pos`](../nodedr-pos) (the retail shop
+Upstream, it is a sister project to [`nodedr-pos`](https://github.com/Raktim94/nodedr-pos) (the retail shop
 POS), sharing its self-hosted/Docker/no-subscription philosophy and reusing
 *proven patterns* from it (auth session model, PDF/HTML receipt rendering,
 ESC/POS + USB printing lessons, currency/tax-rounding discipline, ISO

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Rebrand 1/4 guard (#3): package scope, image names and container names must
-# be Nventra. Fails (exit 1) listing every offender; passes silently-ish.
+# Rebrand guard (#3-#6): package scope, image names and container names must
+# be Nventra, and "nodedr" may only appear as upstream attribution (#6).
+# Fails (exit 1) listing every offender; passes silently-ish.
 #   scripts/agent/check-rebrand.sh
 # Uses `docker compose config` for the root compose file when Docker is
 # available, and a plain grep of every compose file otherwise.
@@ -45,6 +46,28 @@ if docker info >/dev/null 2>&1; then
   [ -n "$odd" ] && bad "docker compose config shows non-nventra names:
 $odd"
 fi
+
+# 4. "nodedr" only as attribution (#6). Paths in rebrand-allowlist.txt are
+#    exempt; on every other line the attribution tokens below are removed
+#    first, and whatever still says nodedr is an offender.
+ALLOW_FILE=scripts/agent/rebrand-allowlist.txt
+specs=()
+while IFS= read -r l; do
+  l="${l%%#*}"; l="${l%"${l##*[![:space:]]}"}"
+  [ -n "$l" ] && specs+=(":(exclude,literal)$l")
+done < "$ALLOW_FILE"
+ATTRIBUTION='(https?://)?(github\.com|raw\.githubusercontent\.com)/Raktim94/nodedr-[a-z-]+|nodedr-(pos|ecommerce-template)|(fork of|based on|forked from|derived from|upstream) (the )?\[?Nodedr( OrderRestro)?|official Nodedr release|Nodedr Infotech Private Limited|https?://www\.nodedr\.com/?'
+left=$(git grep -n -i -I nodedr -- . "${specs[@]}" | while IFS= read -r hit; do
+  printf %s "$hit" | sed -E "s#^[^:]+:[0-9]+:##; s#${ATTRIBUTION}##Ig" | grep -qi nodedr && printf '%s\n' "$hit"
+done)
+[ -n "$left" ] && bad "non-attribution nodedr references (fix them or add the path with a reason to $ALLOW_FILE):
+$left"
+
+# 5. The commercial-licence offer is gone and nothing links to it.
+[ -e COMMERCIAL-LICENSE.md ] && bad "COMMERCIAL-LICENSE.md still exists"
+links=$(git grep -n -i "COMMERCIAL-LICENSE" -- . ':!scripts/agent/check-rebrand.sh' || true)
+[ -n "$links" ] && bad "links to COMMERCIAL-LICENSE.md remain:
+$links"
 
 [ "$fail" = 0 ] && echo "rebrand check: OK"
 exit "$fail"

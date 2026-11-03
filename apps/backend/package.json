@@ -1,7 +1,7 @@
 {
   "name": "@nventra/backend",
   "version": "0.0.1",
-  "description": "Nodedr OrderRestro API",
+  "description": "Nventra POS API",
   "author": "Raktim Ranjit <mail@raktimranjit.com> (https://github.com/Raktim94)",
   "private": true,
   "license": "AGPL-3.0-only",
