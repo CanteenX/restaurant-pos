@@ -1,7 +1,7 @@
-# Connecting your own website (Next.js on `www`, OrderRestro behind a Cloudflare Tunnel)
+# Connecting your own website (Next.js on `www`, Nventra POS behind a Cloudflare Tunnel)
 
 The common setup: the public site lives on separate hosting at
-`www.example.com`; OrderRestro runs on a machine in the restaurant and is
+`www.example.com`; Nventra POS runs on a machine in the restaurant and is
 reached from the internet through a Cloudflare Tunnel at `api.example.com`.
 
 ```
@@ -11,12 +11,12 @@ Visitor's browser ──HTTPS──▶ www.example.com  (Next.js, any host)
                       https://api.example.com/api/v1/integrations/...
                                    │  Cloudflare Tunnel (outbound from the restaurant)
                                    ▼
-        cloudflared ─▶ web:3000 (OrderRestro web) ─▶ backend:4000 ─▶ postgres:5432
+        cloudflared ─▶ web:3000 (Nventra POS web) ─▶ backend:4000 ─▶ postgres:5432
                                    └── only `web` is reachable; the rest stay on the private Docker network
 ```
 
-The browser never talks to OrderRestro and never sees the key: it calls the
-website's own backend, which calls OrderRestro.
+The browser never talks to Nventra POS and never sees the key: it calls the
+website's own backend, which calls Nventra POS.
 
 ## 1. Create the key
 
@@ -38,10 +38,10 @@ it issues a new secret with the same scopes and location, moves the old key's
 orders to it so status and customer lookups keep working, and revokes the old
 key immediately. Update the website's environment with the new secret.
 
-## 2. Expose OrderRestro with a Cloudflare Tunnel
+## 2. Expose Nventra POS with a Cloudflare Tunnel
 
 1. Add the domain to Cloudflare. In **Networking > Tunnels** create a
-   remotely-managed tunnel and install `cloudflared` on the OrderRestro machine
+   remotely-managed tunnel and install `cloudflared` on the Nventra POS machine
    (the dashboard shows the exact command with your token).
 2. On the tunnel's **Routes** tab choose **Add route > Published application**:
    subdomain `api`, domain `example.com`, **Service URL**:
@@ -72,7 +72,7 @@ services:
     depends_on: [web]
 ```
 
-### OrderRestro `.env` for HTTPS behind the tunnel
+### Nventra POS `.env` for HTTPS behind the tunnel
 
 ```env
 COOKIE_SECURE=true                      # staff logins over https://api.example.com
@@ -162,13 +162,13 @@ export async function orderrestro<T>(
 
 export class OrderrestroError extends Error {
   constructor(public status: number, public body: string) {
-    super(`OrderRestro ${status}`); // never put request data (phone/address) in the message
+    super(`Nventra POS ${status}`); // never put request data (phone/address) in the message
   }
 }
 ```
 
 ```ts
-// app/api/order/route.ts   (the browser posts here, never to OrderRestro)
+// app/api/order/route.ts   (the browser posts here, never to Nventra POS)
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { orderrestro, OrderrestroError } from '@/lib/orderrestro';

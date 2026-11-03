@@ -1,4 +1,7 @@
-# Contributing to Nodedr OrderRestro
+# Contributing to Nventra POS
+
+Nventra POS is a fork of [Nodedr OrderRestro](https://github.com/Raktim94/nodedr-restaurant-pos)
+(AGPL-3.0). Contributions here go to the fork, not upstream.
 
 First off — thank you for considering a contribution. This is a young,
 fast-moving project (Phases 0-3 of a 20-module scope are done; see
@@ -30,15 +33,15 @@ anything here is out of date, trust [`PROJECT.md`](./PROJECT.md) and
 ## Code of Conduct
 
 This project follows the [Contributor Covenant](./CODE_OF_CONDUCT.md). By
-participating, you agree to uphold it. Report unacceptable behavior to
-**mail@raktimranjit.com**.
+participating, you agree to uphold it. Report unacceptable behavior to the
+maintainers listed in [`MAINTAINERS.md`](./MAINTAINERS.md).
 
 ## Maintainers & copyright
 
-See [`MAINTAINERS.md`](./MAINTAINERS.md) — Raktim Ranjit is the lead
-maintainer; project copyright is held jointly by
-[Nodedr Infotech Private Limited](https://www.nodedr.com/) and Raktim
-Ranjit. By submitting a PR, you agree your contribution is licensed under
+See [`MAINTAINERS.md`](./MAINTAINERS.md). Copyright in the upstream code is
+held jointly by Nodedr Infotech Private Limited and Raktim Ranjit
+(see [`COPYRIGHT`](./COPYRIGHT)); the fork's modifications are © Nventra
+(see [`NOTICE`](./NOTICE)). By submitting a PR, you agree your contribution is licensed under
 the same [AGPL-3.0](./LICENSE) as the rest of the project; you retain
 copyright on your own contribution. Only submit code you wrote or have the
 right to license under the AGPL-3.0, and keep third-party notices intact. The
@@ -74,8 +77,8 @@ Docker for it.
 ### Option A — full stack via Docker
 
 ```bash
-git clone https://github.com/Raktim94/nodedr-restaurant-pos.git
-cd nodedr-restaurant-pos
+git clone https://github.com/CanteenX/restaurant-pos.git
+cd restaurant-pos
 cp .env.example .env                 # edit JWT_SECRET / POSTGRES_PASSWORD for anything beyond local dev
 docker compose up -d --build
 docker exec nventra-pos-backend npx ts-node prisma/seed.ts   # first run only — demo data + login
@@ -249,7 +252,7 @@ PR.
 
 ## Questions & discussion
 
-Use [GitHub Discussions](https://github.com/Raktim94/nodedr-restaurant-pos/discussions)
+Use [GitHub Discussions](https://github.com/CanteenX/restaurant-pos/discussions)
 for "how do I…" / "why does X work this way" / general chat. Use Issues
 for concrete bugs and feature requests. Keep architecture debates in
 Discussions or a tagged issue rather than scattered across PR comments,

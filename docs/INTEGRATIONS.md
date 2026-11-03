@@ -1,8 +1,8 @@
 # Integrations hub
 
-Settings → Integrations lets a restaurant connect OrderRestro to outside
+Settings → Integrations lets a restaurant connect Nventra POS to outside
 platforms **using its own accounts and credentials**. Nothing routes through a
-central Nodedr server; the credentials belong to the restaurant and are stored
+central vendor server; the credentials belong to the restaurant and are stored
 on its own installation, encrypted.
 
 ## What works today
@@ -20,7 +20,7 @@ on its own installation, encrypted.
 Zomato and Swiggy have no public order API: restaurants receive their orders
 through the platform's merchant webhook or an aggregator / channel manager
 (UrbanPiper, Petpooja, Dotpe and similar) that the restaurant has an account
-with. OrderRestro therefore exposes one signed endpoint per restaurant and
+with. Nventra POS therefore exposes one signed endpoint per restaurant and
 provider (`zomato`, `swiggy`, `aggregator`); Settings -> Integrations shows the
 exact URL and a secret generator.
 

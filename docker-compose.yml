@@ -65,7 +65,7 @@ services:
       # container below to pull the latest published images. Unset these two
       # and the Update button simply says this install can't update itself.
       UPDATER_URL: "http://updater:8080"
-      UPDATER_TOKEN: "${UPDATER_TOKEN:-nodedr-restaurant-updater}"
+      UPDATER_TOKEN: "${UPDATER_TOKEN:-nventra-pos-updater}"
       # Where releases come from (see .env.example). GHCR_TOKEN is only
       # needed when the published images are private.
       UPDATE_REPO: "${UPDATE_REPO:-CanteenX/restaurant-pos}"
@@ -153,7 +153,7 @@ services:
     container_name: nventra-pos-updater
     restart: unless-stopped
     environment:
-      UPDATER_TOKEN: "${UPDATER_TOKEN:-nodedr-restaurant-updater}"
+      UPDATER_TOKEN: "${UPDATER_TOKEN:-nventra-pos-updater}"
       TARGET_CONTAINERS: "nventra-pos-backend,nventra-pos-web"
       GHCR_TOKEN: "${GHCR_TOKEN:-}"
     volumes:

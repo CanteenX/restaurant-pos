@@ -1,0 +1,40 @@
+# Paths allowed to mention "nodedr" after the rebrand (#3-#6), read by
+# scripts/agent/check-rebrand.sh. One git pathspec per line, then " # reason".
+# Everything else may only mention nodedr via the attribution tokens listed in
+# check-rebrand.sh (upstream repo URLs, the nodedr-pos sister project,
+# "fork of / based on Nodedr OrderRestro", the upstream copyright holder).
+
+# --- Upstream copyright and licence notices (keep untouched) ---
+LICENSE                       # AGPL text
+COPYRIGHT                     # upstream copyright holders
+NOTICE                        # upstream attribution + our modifications line
+
+# --- Guards and agent docs that name the old brand on purpose ---
+scripts/agent/check-rebrand.sh                       # the guard itself
+scripts/agent/rebrand-allowlist.txt                  # this file
+CLAUDE.md                                            # fork instructions
+docs/agents/                                         # agent pipeline docs
+e2e/tests/branding.spec.ts                           # asserts old name is absent
+apps/backend/src/modules/orders/escpos-receipt.spec.ts  # asserts old name is absent
+apps/backend/test/auth-cookie.e2e-spec.ts            # asserts legacy cookie is rejected
+apps/web/app/(dashboard)/settings/page.tsx           # AGPL upstream attribution block
+
+# --- Deferred: needs a human decision (see PR for #6) ---
+.github/workflows/            # agents may not edit workflows; release infra disabled
+mobile/                       # app id com.nodedr.orderrestro, store listing, privacy URLs, Firebase project
+windows/msix/                 # Partner Center publisher identity
+packaging/deb/                # .deb package name, install domain, existing data volumes
+casaos/docker-compose.yml     # CasaOS app id and /DATA/AppData path of existing installs
+docs/MOBILE-APP-PLAN.md       # store publisher (legal entity) decision
+apps/backend/src/system/update.service.ts               # updater repoint is a Phase D issue
+apps/backend/src/modules/verifactu/verifactu.service.ts  # VeriFactu producer = registered legal entity
+apps/backend/src/modules/verifactu/verifactu.domain.spec.ts  # same
+apps/web/hooks/use-branch.tsx                        # localStorage key; renaming resets saved branch
+apps/web/hooks/use-notification-mute.ts              # localStorage key; renaming resets mute setting
+apps/web/lib/i18n/context.tsx                        # localStorage key; renaming resets language
+e2e/tests/i18n-hindi.spec.ts                         # clears the legacy locale key above
+e2e/tests/pin-switch.spec.ts                         # reads the legacy branch key above
+
+# --- Attribution documents that name the upstream marks on purpose ---
+TRADEMARK_POLICY.md           # states the upstream marks are not licensed to us
+CITATION.cff                  # cites the upstream project as a reference

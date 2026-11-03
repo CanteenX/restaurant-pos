@@ -83,10 +83,9 @@ export class SupplierInvoicesService {
   }
 
   // Read-modify-write inside the transaction, never a DB `increment` — same
-  // Decimal-balance discipline this project uses everywhere else (see
-  // [[project_nodedr_restaurant_pos]] / [[project_nodedr_pos]] float-drift
-  // lesson), so two concurrent payments against the same invoice can't
-  // silently lose one of them.
+  // Decimal-balance discipline this project uses everywhere else (see the
+  // upstream nodedr-pos float-drift lesson), so two concurrent payments
+  // against the same invoice can't silently lose one of them.
   async recordPayment(
     branchId: string,
     invoiceId: string,
