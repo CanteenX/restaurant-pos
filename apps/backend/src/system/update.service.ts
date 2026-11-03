@@ -16,7 +16,43 @@ export interface VersionInfo {
   checkedAt: string;
 }
 
-const GITHUB_REPO = 'Raktim94/nodedr-restaurant-pos';
+const DEFAULT_UPDATE_REPO = 'CanteenX/restaurant-pos';
+const DEFAULT_IMAGE_REPO = 'canteenx/nventra-pos-backend';
+const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const IMAGE_REPO_RE =
+  /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/;
+
+type Env = Record<string, string | undefined>;
+
+/** GitHub `owner/repo` whose tags/releases this install updates from. */
+export function resolveUpdateRepo(env: Env = process.env): string {
+  const v = (env.UPDATE_REPO ?? '').trim();
+  return GITHUB_REPO_RE.test(v) && !v.includes('..') ? v : DEFAULT_UPDATE_REPO;
+}
+
+/** GHCR repository (without `ghcr.io/`) of the backend image, for the manifest check. */
+export function resolveImageRepo(env: Env = process.env): string {
+  const v = (env.UPDATE_IMAGE_REPO ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^ghcr\.io\//, '');
+  return IMAGE_REPO_RE.test(v) ? v : DEFAULT_IMAGE_REPO;
+}
+
+/** GHCR's token endpoint accepts any username with a PAT as the password. */
+export function ghcrBasicAuth(token: string): string {
+  return `Basic ${Buffer.from(`token:${token}`).toString('base64')}`;
+}
+
+function ghcrToken(): string {
+  return (process.env.GHCR_TOKEN ?? '').trim();
+}
+
+/** Strip the GHCR token from anything that might end up in a log line. */
+function redact(text: string): string {
+  const token = ghcrToken();
+  return token ? text.split(token).join('***') : text;
+}
 // Avoid hammering GitHub's unauthenticated rate limit (60 req/hr per IP,
 // shared across every self-hosted install behind the same egress IP in the
 // worst case) — a check this infrequent is still fast enough to surface a
@@ -44,7 +80,7 @@ export class UpdateService {
       latestVersion = await this.fetchLatestTag();
     } catch (err) {
       this.logger.warn(
-        `update check failed: ${err instanceof Error ? err.message : String(err)}`,
+        `update check failed: ${redact(err instanceof Error ? err.message : String(err))}`,
       );
     }
 
@@ -64,7 +100,7 @@ export class UpdateService {
       updateAvailable: newer && imagePublished,
       building: newer && !imagePublished,
       releaseUrl: latestVersion
-        ? `https://github.com/${GITHUB_REPO}/releases/tag/${latestVersion}`
+        ? `https://github.com/${resolveUpdateRepo()}/releases/tag/${latestVersion}`
         : null,
       checkedAt: new Date().toISOString(),
     };
@@ -78,7 +114,7 @@ export class UpdateService {
   }
 
   // Hands the update to the `updater` sidecar container (updater/server.js),
-  // same design as nodedr-pos. A container can't safely replace itself, and
+  // same design as the upstream nodedr-pos sister project. A container can't safely replace itself, and
   // giving this API the Docker socket would be far more privilege than a POS
   // backend should hold — the sidecar is reachable only on the internal
   // Docker network, only with UPDATER_TOKEN, and only ever swaps the image
@@ -155,15 +191,20 @@ export class UpdateService {
   }
 
   // CI publishes the image shortly after a tag appears; updating inside that
-  // window would pull nothing. Anonymous GHCR manifest check — anything other
+  // window would pull nothing. GHCR manifest check — anonymous for public
+  // images, authenticated with GHCR_TOKEN for private ones. Anything other
   // than a clear 404 means "can't tell", and the tag is trusted.
   private async imageTagExists(tag: string): Promise<boolean | null> {
     try {
-      const repo = 'raktim94/nodedr-restaurant-pos-backend';
+      const repo = resolveImageRepo();
       const version = tag.replace(/^v/i, '');
+      const pat = ghcrToken();
       const tokRes = await fetch(
-        `https://ghcr.io/token?scope=repository:${repo}:pull`,
-        { signal: AbortSignal.timeout(6000) },
+        `https://ghcr.io/token?scope=repository:${repo}:pull&service=ghcr.io`,
+        {
+          headers: pat ? { Authorization: ghcrBasicAuth(pat) } : {},
+          signal: AbortSignal.timeout(6000),
+        },
       );
       if (!tokRes.ok) return null;
       const { token } = (await tokRes.json()) as { token: string };
@@ -188,11 +229,11 @@ export class UpdateService {
 
   private async fetchLatestTag(): Promise<string | null> {
     const res = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPO}/tags?per_page=1`,
+      `https://api.github.com/repos/${resolveUpdateRepo()}/tags?per_page=1`,
       {
         headers: {
           Accept: 'application/vnd.github+json',
-          'User-Agent': 'nodedr-restaurant-pos-update-check',
+          'User-Agent': 'nventra-pos-update-check',
         },
         signal: AbortSignal.timeout(5000),
       },
