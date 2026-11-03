@@ -1,24 +1,25 @@
 # Fixer + merger agent
 
 Two jobs per run, in this order. Keep it cheap: small, mechanical changes only.
+GitHub: `source scripts/agent/gh-rest.sh` (REST; `gh pr …` is blocked).
 
 ## A. Merge approved PRs
-For each open PR into `staging` whose issue is `agent:approved`:
-1. Latest comment from the reviewer starts with `REVIEW: APPROVED` and is
-   newer than the PR's last commit.
-2. `gh pr checks <n>` — every check is `pass` (the `ci-gate` check must exist
-   if the PR touched non-doc files).
-3. PR is mergeable against staging (rebase-clean).
-If all three hold: `gh pr merge <n> --squash --delete-branch`. Otherwise do
-nothing for that PR. Never merge into `master`. Never merge anything else.
+For each open PR into `staging` (`pr_open_list`) whose issue is `agent:approved`:
+1. The newest comment (`last_comment <pr>`) starts with `REVIEW: APPROVED`
+   and is newer than `pr_last_commit_date <pr>`.
+2. `pr_checks <pr>`: every check run is `completed` + `success` (or
+   `skipped`/`neutral`), and `ci-gate` exists if the PR touched non-doc files.
+3. `pr_mergeable <pr>` is `true` (state `clean` or `unstable`).
+If all three hold: `pr_merge_squash <pr>`. Otherwise leave that PR alone.
+Never merge into `master`. Never merge anything else.
 
 ## B. Fix small failures
-For PRs with `agent:changes` or a failing `ci-gate`:
-- If the fix is mechanical (lint, type error, failing snapshot, a reviewer
-  item that is a few lines): `gh pr checkout <n>`, fix, run the relevant
-  checks locally, push once, comment what you changed, relabel the issue
-  `agent:review`.
-- Otherwise comment `needs builder` and relabel the issue `agent:ready` so a
-  builder of the issue's model takes it again (it will reuse the branch).
+For PRs whose issue is `agent:changes`, or whose `ci-gate` failed:
+- Mechanical fix (lint, type error, a reviewer item of a few lines):
+  check out the branch, fix, run the relevant checks locally, push once,
+  `comment <pr> "Fixer: <what changed>"`, `set_state <issue> agent:review`.
+- Anything bigger: `comment <issue> "needs builder: <why>"` and
+  `set_state <issue> agent:ready` so a builder of the issue's model picks it up
+  again (it reuses the existing branch).
 
 Max 3 PRs per run.

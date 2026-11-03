@@ -26,6 +26,11 @@ if [ ! -f .env ]; then
   trap cleanup EXIT
 fi
 
+# Cloud VMs start without the Docker daemon running.
+# shellcheck source=scripts/agent/gh-rest.sh
+source "$(dirname "${BASH_SOURCE[0]}")/gh-rest.sh"
+ensure_docker
+
 echo "== starting fresh demo stack"
 docker compose down -v --remove-orphans >/dev/null 2>&1 || true
 ./install.sh --demo
