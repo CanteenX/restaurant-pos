@@ -29,6 +29,7 @@ export const PERMISSIONS = [
   { key: "reservations.manage", label: "Manage Reservations", category: "Reservations" },
   { key: "settings.manage", label: "Manage Settings", category: "Admin" },
   { key: "customers.manage", label: "Manage Customers & Loyalty", category: "CRM" },
+  { key: "memberships.manage", label: "Manage Membership Tiers & Enrolments", category: "CRM" },
   { key: "audit_log.view", label: "View Audit Log", category: "Admin" },
   { key: "roles.manage", label: "Manage Roles", category: "Admin" },
   { key: "backup.manage", label: "Manage Backups", category: "Admin" },
@@ -91,7 +92,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<StaffRole, PermissionKey[]> = {
     "sales.view", "orders.create", "orders.edit", "orders.cancel", "orders.accept",
     "discounts.apply", "discounts.unlimited", "bills.print", "tables.manage", "tables.view", "menu.manage", "menu.view",
     "inventory.manage", "reports.access", "kds.manage",
-    "reservations.manage", "customers.manage", "refunds.process",
+    "reservations.manage", "customers.manage", "memberships.manage", "refunds.process",
     "attendance.manage", "delivery.manage", "staff.manage", "accounting.manage", "marketing.manage", "operations.manage",
   ],
   CASHIER: [

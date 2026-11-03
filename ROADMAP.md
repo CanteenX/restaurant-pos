@@ -176,7 +176,10 @@ containers, not just "it compiles."
       **Scope note:** the earn/redeem rate is a fixed constant for now
       (`LOYALTY_POINT_VALUE` / `LOYALTY_EARN_PER_CURRENCY` in
       `orders.service.ts`), not yet a per-restaurant configurable program —
-      real "memberships" (tiers) are not built, only the points ledger.
+      Membership tiers (#12): tiers with discount %, points multiplier and
+      duration, enrol/upgrade/expire API and a server-side benefit lookup
+      (`MembershipService.benefitFor`). Not yet applied at checkout and no
+      UI yet (follow-up issues).
 - [x] Gift cards: issue (random code + balance), balance lookup, redeem as
       a checkout payment source — debits up to the remaining amount due
       (never more than the card's balance), read-modify-write with

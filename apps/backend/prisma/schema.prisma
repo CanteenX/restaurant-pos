@@ -91,6 +91,7 @@ model Restaurant {
 
   branches               Branch[]
   roles                  Role[]
+  membershipTiers        MembershipTier[]
   users                  User[]
   integrationApiKeys     IntegrationApiKey[]
   webhookEndpoints       WebhookEndpoint[]
@@ -1254,6 +1255,7 @@ model Customer {
   referralsMade    Referral[]        @relation("ReferralReferrer")
   referralReceived Referral?         @relation("ReferralReferred")
   pointsLedger     PointsLedger[]
+  memberships      CustomerMembership[]
 
   @@index([branchId, phone])
   @@map("customers")
@@ -2551,6 +2553,50 @@ model PointsLedger {
 
   @@index([customerId, createdAt])
   @@map("points_ledger")
+}
+
+// A membership level (e.g. Silver/Gold) defined once per restaurant. Benefits
+// are read server-side by MembershipService.benefitFor; nothing trusts a
+// client-sent discount or multiplier.
+model MembershipTier {
+  id               String     @id @default(cuid())
+  restaurantId     String
+  restaurant       Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  name             String
+  rank             Int        @default(0) // higher = better; upgrades move up
+  discountPercent  Decimal    @default(0) @db.Decimal(5, 2)
+  pointsMultiplier Decimal    @default(1) @db.Decimal(4, 2)
+  durationDays     Int? // null = never expires
+  description      String?
+  active           Boolean    @default(true)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  memberships CustomerMembership[]
+
+  @@unique([restaurantId, name])
+  @@map("membership_tiers")
+}
+
+// One enrolment period. A customer has at most one current row: endedAt null
+// and expiresAt null or in the future. Upgrades and manual expiry close the
+// current row (endedAt) and keep it as history.
+model CustomerMembership {
+  id          String         @id @default(cuid())
+  customerId  String
+  customer    Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tierId      String
+  tier        MembershipTier @relation(fields: [tierId], references: [id], onDelete: Restrict)
+  startsAt    DateTime       @default(now())
+  expiresAt   DateTime?
+  endedAt     DateTime?
+  endReason   String? // UPGRADED | EXPIRED
+  createdById String?
+  createdAt   DateTime       @default(now())
+
+  @@index([customerId, startsAt])
+  @@index([tierId])
+  @@map("customer_memberships")
 }
 
 // A phone that signed in to the mobile app and can receive push notifications.
