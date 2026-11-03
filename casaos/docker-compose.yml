@@ -37,7 +37,7 @@ services:
       # update made the app refuse to boot with a known placeholder value,
       # a broken install out of the box — this way nobody ever has to
       # touch it and it still works correctly.
-      JWT_EXPIRES_IN: "12h"
+      SESSION_IDLE_MINUTES: "60"
       PORT: "4000"
       CORS_ORIGIN: "http://localhost:1995"
       COOKIE_SECURE: "false"

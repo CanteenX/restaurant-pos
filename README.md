@@ -105,6 +105,13 @@ nothing about it is tied to a specific machine or network:
   `Secure` cookie on a non-HTTPS origin, which locks every user out with
   "Unauthorized" even though login appears to succeed.
 
+**Sessions.** A login stays valid while it is used and signs out after
+`SESSION_IDLE_MINUTES` (default 60) of inactivity. `POST
+/api/v1/auth/sessions/revoke` signs the caller out of every device, and
+`POST /api/v1/auth/sessions/revoke/:userId` (needs `users.manage`) does the
+same for a staff member; a password reset or 2FA reset by an admin, and
+disabling an account, also end that user's sessions and live sockets.
+
 Whichever way you reach it, it's the same three containers, same data, same
 login — there's no separate "cloud" mode to configure.
 

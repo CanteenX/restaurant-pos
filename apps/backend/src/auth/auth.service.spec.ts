@@ -230,3 +230,12 @@ describe('FailureLockout', () => {
     expect(l.lockedFor('k', 70_001)).toBe(0);
   });
 });
+
+describe('AuthService session tokens', () => {
+  it('embeds the user tokenVersion as `tv` in the JWT', async () => {
+    const { svc, jwt } = setup(makeUser({ tokenVersion: 7 }));
+    const out = await svc.pinLogin({ userId: 'u1', pin: PIN }, '10.7.7.7');
+    expect(jwt.signAsync).toHaveBeenCalledWith({ sub: 'u1', tv: 7 });
+    expect(out.token).toBe('token-1');
+  });
+});

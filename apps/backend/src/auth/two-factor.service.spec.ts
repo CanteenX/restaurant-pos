@@ -15,8 +15,13 @@ function setup(lastStep: number | null = null, updateCount = 1) {
     twoFactorLastStep: lastStep,
   };
   const prisma = {
-    user: { updateMany: jest.fn().mockResolvedValue({ count: updateCount }) },
+    user: {
+      updateMany: jest.fn().mockResolvedValue({ count: updateCount }),
+      update: jest.fn().mockResolvedValue({}),
+      findFirst: jest.fn().mockResolvedValue({ id: 'u2' }),
+    },
   };
+  const sessions = { revokeAll: jest.fn().mockResolvedValue(1) };
   const config = {
     get: (k: string) => (k === 'TWO_FACTOR_KEY' ? KEY : undefined),
     getOrThrow: () => KEY,
@@ -25,10 +30,11 @@ function setup(lastStep: number | null = null, updateCount = 1) {
     prisma as never,
     config as never,
     { record: jest.fn() } as never,
+    sessions as never,
   );
   const codeAt = (offset = 0) =>
     hotp(base32Decode(secret), stepAt(Date.now()) + offset);
-  return { svc, user, prisma, codeAt };
+  return { svc, user, prisma, codeAt, sessions };
 }
 
 describe('TwoFactorService.verifyLogin', () => {
@@ -69,5 +75,13 @@ describe('TwoFactorService.verifyLogin', () => {
       );
     }
     await expect(svc.verifyLogin(user, codeAt())).rejects.toThrow(/Too many/);
+  });
+});
+
+describe('TwoFactorService.adminReset', () => {
+  it('ends every session of the staff member being reset', async () => {
+    const { svc, sessions } = setup();
+    await svc.adminReset('owner', 'r1', 'u2');
+    expect(sessions.revokeAll).toHaveBeenCalledWith('u2');
   });
 });

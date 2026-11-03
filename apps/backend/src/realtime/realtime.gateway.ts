@@ -62,11 +62,12 @@ export class RealtimeGateway
       const token = this.extractSessionCookie(client);
       if (!token) throw new Error('No session cookie');
 
-      const payload = this.jwt.verify<{ sub: string }>(token);
+      const payload = this.jwt.verify<{ sub: string; tv?: number }>(token);
       const user = await this.prisma.user.findUnique({
         where: { id: payload.sub },
       });
-      if (!user || !user.isActive) throw new Error('Session no longer valid');
+      if (!user || !user.isActive || (payload.tv ?? 0) !== user.tokenVersion)
+        throw new Error('Session no longer valid');
 
       const branchId = client.handshake.query.branchId;
       if (typeof branchId !== 'string' || !branchId) {
@@ -145,6 +146,12 @@ export class RealtimeGateway
 
   private displayRoom(branchId: string, code: string) {
     return `display:${branchId}:${code}`;
+  }
+
+  // "Log out of all devices": every socket a revoked user holds joined
+  // their user room at connect time, so dropping that room drops them all.
+  disconnectUser(userId: string) {
+    this.server?.in(this.userRoom(userId)).disconnectSockets(true);
   }
 
   private branchRoom(branchId: string) {

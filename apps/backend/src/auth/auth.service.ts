@@ -68,6 +68,7 @@ export class AuthService {
     restaurantId: string;
     name: string;
     roleId: string;
+    tokenVersion: number;
     role: { name: string; permissions: { permission: { key: string } }[] };
     permissionOverrides?: PermissionSource['permissionOverrides'];
   }): SessionUser {
@@ -373,7 +374,10 @@ export class AuthService {
     user: Parameters<AuthService['toSessionUser']>[0],
   ) {
     const sessionUser = this.toSessionUser(user);
-    const token = await this.jwt.signAsync({ sub: user.id });
+    const token = await this.jwt.signAsync({
+      sub: user.id,
+      tv: user.tokenVersion,
+    });
     return { token, user: sessionUser };
   }
 }

@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SessionService } from './session.service';
 import {
   generateRecoveryCode,
   generateSecret,
@@ -42,6 +43,7 @@ export class TwoFactorService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly audit: AuditService,
+    private readonly sessions: SessionService,
   ) {}
 
   private get keyMaterial() {
@@ -240,6 +242,8 @@ export class TwoFactorService {
     });
     if (!target) throw new BadRequestException('Staff member not found');
     await this.clear(targetUserId);
+    // Whoever holds the lost device may still be signed in: end those sessions.
+    await this.sessions.revokeAll(targetUserId);
     await this.audit.record({
       userId: actorId,
       action: '2fa.reset',

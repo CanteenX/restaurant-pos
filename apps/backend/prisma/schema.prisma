@@ -314,6 +314,8 @@ model User {
   twoFactorEnabled        Boolean  @default(false)
   twoFactorRecoveryHashes String[] @default([]) // bcrypt hashes of unused one-time recovery codes
   twoFactorLastStep       Int? // last accepted TOTP step: a code works once
+  // Bumped to revoke every session at once; JWTs carry it as `tv`.
+  tokenVersion            Int      @default(0)
 
   // Delivery rider app: on duty, and the last position the rider's phone reported.
   riderOnline     Boolean   @default(false)
