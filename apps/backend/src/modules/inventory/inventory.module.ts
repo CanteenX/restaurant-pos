@@ -1,11 +1,14 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../../audit/audit.module';
+import { BranchTimeService } from '../../common/services/branch-time.service';
+import { NotificationsModule } from '../../notifications/notifications.module';
 import { BranchAccessService } from '../../common/services/branch-access.service';
 import { GoodsReceiptsService } from './goods-receipts.service';
 import { InventoryController } from './inventory.controller';
 import { InventoryService } from './inventory.service';
 import { PurchaseOrdersService } from './purchase-orders.service';
 import { PurchaseRequestsService } from './purchase-requests.service';
+import { StockAlertsService } from './stock-alerts.service';
 import { StockService } from './stock.service';
 import { SupplierInvoicesService } from './supplier-invoices.service';
 import { SupplierQuotationsService } from './supplier-quotations.service';
@@ -14,7 +17,7 @@ import { TransfersService } from './transfers.service';
 import { WasteService } from './waste.service';
 
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, NotificationsModule],
   controllers: [InventoryController, TransfersController],
   providers: [
     InventoryService,
@@ -22,11 +25,13 @@ import { WasteService } from './waste.service';
     GoodsReceiptsService,
     WasteService,
     StockService,
+    StockAlertsService,
     TransfersService,
     PurchaseRequestsService,
     SupplierQuotationsService,
     SupplierInvoicesService,
     BranchAccessService,
+    BranchTimeService,
   ],
   exports: [InventoryService],
 })
