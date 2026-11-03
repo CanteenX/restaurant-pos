@@ -8,6 +8,8 @@ gh issue list --label agent:ready --label model:<YOUR_MODEL> --state open \
   --json number,title,labels --limit 50
 ```
 - Skip issues whose lane already has an `agent:in-progress` issue.
+- Skip issues whose body says `Depends on #N` while any such #N is still open
+  (`gh issue view N --json state`). Dependencies always win over issue order.
 - If any `lane:foundation` issue is open and yours is not foundation, stop.
 - Take the lowest-numbered remaining issue. Claim it immediately:
   `gh issue edit N --remove-label agent:ready --add-label agent:in-progress`
