@@ -4,6 +4,8 @@ import { AlertTriangle } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { ImportCsvDialog } from "@/components/imports/import-csv-dialog";
+import Link from "next/link";
+import { buttonVariants } from "@/components/ui/button";
 import { AddIngredientDialog } from "@/components/inventory/add-ingredient-dialog";
 import { AdjustStockDialog } from "@/components/inventory/adjust-stock-dialog";
 import { InventoryTabs } from "@/components/inventory/inventory-tabs";
@@ -51,6 +53,9 @@ function InventoryView() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Link href="/labels?source=inventory" className={buttonVariants({ variant: "outline" })}>
+            Print labels
+          </Link>
           {canImport && <ImportCsvDialog kind="ingredients" branchId={branchId} />}
           <AddIngredientDialog branchId={branchId} />
         </div>
