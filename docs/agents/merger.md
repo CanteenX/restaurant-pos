@@ -9,8 +9,15 @@ For each open PR into `staging` (`pr_open_list`) whose issue is `agent:approved`
    and is newer than `pr_last_commit_date <pr>`.
 2. `pr_checks <pr>`: every check run is `completed` + `success` (or
    `skipped`/`neutral`), and `ci-gate` exists if the PR touched non-doc files.
-3. `pr_mergeable <pr>` is `true` (state `clean` or `unstable`).
-If all three hold: `pr_merge_squash <pr>`. Otherwise leave that PR alone.
+3. `pr_mergeable <pr>` is `true` (state `clean` or `unstable`). GitHub computes
+   this lazily: if it prints `null`/`unknown`, wait 5 s and ask again (up to 3×).
+If all three hold: `pr_merge_squash <pr>`. Merge **up to 10 PRs per run**,
+oldest approval first; after each merge, re-check the next PR's mergeability
+(an earlier merge can create a conflict).
+**Approved but conflicting** (`mergeable` false / state `dirty`): comment
+`needs rebase onto staging (merge conflict)` and `set_state <issue> agent:changes`
+so a builder rebases it (builders fix `agent:changes` first; the PR is
+re-reviewed after the new commit). Anything else: leave the PR alone.
 Never merge into `master`. Never merge anything else.
 
 ## B. Fix small failures
@@ -22,4 +29,4 @@ For PRs whose issue is `agent:changes`, or whose `ci-gate` failed:
   `set_state <issue> agent:ready` so a builder of the issue's model picks it up
   again (it reuses the existing branch).
 
-Max 3 PRs per run.
+Job B: max 3 PRs per run (Job A merges are capped at 10, above).
