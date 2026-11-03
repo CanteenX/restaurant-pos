@@ -8,6 +8,12 @@ GitHub MCP tools (`mcp__github__issue_read`, `issue_write`, `add_issue_comment`,
 `create_pull_request`, `pull_request_read`). Start Docker with `ensure_docker`.
 
 ## 1. Pick work
+**Review fixes come first:** if any open issue has `agent:changes` and your
+`model:` label, take the oldest one instead of new work: check out its existing
+`claude/N-*` branch, address every numbered item in the latest `REVIEW: CHANGES`
+comment, re-verify, push once, comment `Addressed review: <summary>` and
+`set_state N agent:review`. One issue per run either way.
+
 ```bash
 source scripts/agent/gh-rest.sh
 issues_with_labels "agent:ready,model:<YOUR_MODEL>"      # number, title, labels
