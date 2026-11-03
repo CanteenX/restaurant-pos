@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, MonitorSmartphone, ShoppingCart } from "lucide-react";
+import { ChevronLeft, MonitorSmartphone, Scale, ShoppingCart } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { StatusNote, useNoteToast } from "@/components/ui/status-note";
@@ -13,11 +13,12 @@ import { clearDraft, switchTableDraft, type Drafts } from "@/lib/pos-drafts";
 import { CheckoutPanel } from "@/components/pos/checkout-panel";
 import { KitchenProgressWidget } from "@/components/pos/kitchen-progress-widget";
 import { ModifierPickerDialog } from "@/components/pos/modifier-picker-dialog";
+import { ScaleDialog } from "@/components/pos/scale-dialog";
 import { PosTablePicker } from "@/components/pos/pos-table-picker";
 import { ProductGrid } from "@/components/pos/product-grid";
 import { Card } from "@/components/ui/card";
 import { useBranch } from "@/hooks/use-branch";
-import type { MenuItem } from "@/hooks/use-menu";
+import { useMenuItems, type MenuItem } from "@/hooks/use-menu";
 import {
   useAddOrderItems,
   useCreateOrder,
@@ -63,6 +64,8 @@ function PosPageInner() {
   };
   const [selectedBillId, setSelectedBillId] = useState<string | null>(null);
   const [pickerItem, setPickerItem] = useState<MenuItem | null>(null);
+  const [scaleOpen, setScaleOpen] = useState(false);
+  const menuItemsQuery = useMenuItems(branchId);
   const [activeOrder, setActiveOrder] = useState<CreatedOrder | null>(null);
   const [activeCustomer, setActiveCustomer] = useState<OpenOrder["customer"]>(null);
   // /pos?tableId=... can change while this page stays mounted.
@@ -132,6 +135,11 @@ function PosPageInner() {
       return;
     }
     addLine(item.id, item.name, Number(item.price), [], "");
+  };
+
+  const handleWeighed = (item: MenuItem, label: string, price: number) => {
+    const portion: Portion = { kind: "CUSTOM", customLabel: label, customPrice: price };
+    addLine(item.id, `${item.name} (${label})`, price, [], "", portion);
   };
 
   const handleModifierConfirm = (modifierIds: string[], modifierLabel: string, portion?: Portion) => {
@@ -257,6 +265,14 @@ function PosPageInner() {
         <div className="min-w-0 flex-1">
           <KitchenProgressWidget branchId={branchId} />
         </div>
+        <button
+          type="button"
+          onClick={() => setScaleOpen(true)}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        >
+          <Scale className="h-3.5 w-3.5" />
+          Weigh item
+        </button>
         <a
           href="/customer-display"
           target="_blank"
@@ -269,6 +285,13 @@ function PosPageInner() {
         </a>
         <PairDisplayButton branchId={branchId} />
       </div>
+
+      <ScaleDialog
+        open={scaleOpen}
+        items={menuItemsQuery.data ?? []}
+        onClose={() => setScaleOpen(false)}
+        onConfirm={handleWeighed}
+      />
 
       <BranchNotice />
 
