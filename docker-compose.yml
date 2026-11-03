@@ -66,6 +66,11 @@ services:
       # and the Update button simply says this install can't update itself.
       UPDATER_URL: "http://updater:8080"
       UPDATER_TOKEN: "${UPDATER_TOKEN:-nodedr-restaurant-updater}"
+      # Where releases come from (see .env.example). GHCR_TOKEN is only
+      # needed when the published images are private.
+      UPDATE_REPO: "${UPDATE_REPO:-CanteenX/restaurant-pos}"
+      UPDATE_IMAGE_REPO: "${UPDATE_IMAGE_REPO:-ghcr.io/canteenx/nventra-pos-backend}"
+      GHCR_TOKEN: "${GHCR_TOKEN:-}"
       # Optional: S3 backup config can also be set from Settings > Backup
       # (persisted to the `backup_config` DB row, which takes priority over
       # these). Uncomment for a headless/CasaOS-style deployment that
@@ -150,6 +155,7 @@ services:
     environment:
       UPDATER_TOKEN: "${UPDATER_TOKEN:-nodedr-restaurant-updater}"
       TARGET_CONTAINERS: "nventra-pos-backend,nventra-pos-web"
+      GHCR_TOKEN: "${GHCR_TOKEN:-}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 

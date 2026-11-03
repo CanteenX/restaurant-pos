@@ -1,4 +1,4 @@
-// NodeDR OrderRestro updater — a tiny sidecar that moves the app's containers to a
+// Nventra POS updater (from the upstream Nodedr OrderRestro updater) — a tiny sidecar that moves the app's containers to a
 // specific published version. Needed because a container can't replace itself,
 // and because CasaOS pins every image to an exact version (no :latest), so
 // "pull the same tag again" (Watchtower) would never find anything new.
@@ -17,16 +17,18 @@ const crypto = require('node:crypto');
 
 const SOCKET = process.env.DOCKER_SOCKET || '/var/run/docker.sock';
 const TOKEN = process.env.UPDATER_TOKEN || '';
+// Optional pull token for private GHCR images (read:packages). Never logged.
+const GHCR_TOKEN = (process.env.GHCR_TOKEN || '').trim();
 const TARGETS = (process.env.TARGET_CONTAINERS || 'nventra-pos-backend,nventra-pos-web').split(',').map((s) => s.trim()).filter(Boolean);
 const PORT = Number(process.env.PORT || 8080);
 const VERSION_RE = /^\d+\.\d+\.\d+$/;
 
 const status = { state: 'idle', version: null, error: null, step: null };
 
-function docker(method, path, body) {
+function docker(method, path, body, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
-    const req = http.request({ socketPath: SOCKET, method, path, headers: payload ? { 'Content-Type': 'application/json', 'Content-Length': payload.length } : {} }, (res) => {
+    const req = http.request({ socketPath: SOCKET, method, path, headers: { ...extraHeaders, ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': payload.length } : {}) } }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => {
@@ -48,15 +50,28 @@ const json = async (m, p, b) => { const t = await docker(m, p, b); return t ? JS
 const enc = encodeURIComponent;
 
 function splitImage(ref) {
-  // "ghcr.io/raktim94/nodedr-restaurant-pos-backend:1.4.0" -> repo + tag (a registry port
+  // "ghcr.io/canteenx/nventra-pos-backend:1.4.0" -> repo + tag (a registry port
   // colon is before the last slash, so only a colon after it is a tag).
   const slash = ref.lastIndexOf('/');
   const colon = ref.indexOf(':', slash + 1);
   return colon === -1 ? { repo: ref, tag: 'latest' } : { repo: ref.slice(0, colon), tag: ref.slice(colon + 1) };
 }
 
+// Docker Engine API X-Registry-Auth value for a GHCR image, or null when no
+// token is configured or the image lives on another registry (the token must
+// never be sent anywhere but ghcr.io).
+function registryAuthHeader(repo, token = GHCR_TOKEN) {
+  if (!token || !repo.startsWith('ghcr.io/')) return null;
+  return Buffer.from(JSON.stringify({ username: 'token', password: token, serveraddress: 'ghcr.io' })).toString('base64url');
+}
+
+function redact(text, token = GHCR_TOKEN) {
+  return token ? String(text).split(token).join('***') : String(text);
+}
+
 async function pull(repo, tag) {
-  const out = await docker('POST', `/images/create?fromImage=${enc(repo)}&tag=${enc(tag)}`);
+  const auth = registryAuthHeader(repo);
+  const out = await docker('POST', `/images/create?fromImage=${enc(repo)}&tag=${enc(tag)}`, undefined, auth ? { 'X-Registry-Auth': auth } : {});
   for (const line of out.split('\n')) {
     if (!line.trim()) continue;
     let o; try { o = JSON.parse(line); } catch { continue; }
@@ -129,8 +144,9 @@ async function run(version) {
     // Best-effort cleanup of the superseded images so disks don't fill up.
     for (const p of done) await docker('DELETE', `/images/${enc(`${p.repo}:${p.from}`)}`).catch(() => {});
   } catch (err) {
-    console.error('update failed:', err.message);
-    Object.assign(status, { state: 'error', error: err.message, step: null });
+    const message = redact(err.message);
+    console.error('update failed:', message);
+    Object.assign(status, { state: 'error', error: message, step: null });
   }
 }
 
@@ -160,4 +176,4 @@ const server = http.createServer((req, res) => {
 });
 
 if (require.main === module) server.listen(PORT, () => console.log(`updater listening on :${PORT}, managing ${TARGETS.join(', ')}`));
-module.exports = { splitImage, createBody };
+module.exports = { splitImage, createBody, registryAuthHeader, redact };
