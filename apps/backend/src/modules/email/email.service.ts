@@ -6,6 +6,7 @@ export interface OutgoingEmail {
   to: string;
   subject: string;
   text: string;
+  headers?: Record<string, string>;
   attachments?: { filename: string; content: Buffer; contentType?: string }[];
 }
 

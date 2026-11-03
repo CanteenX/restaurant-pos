@@ -25,5 +25,10 @@ percent-encoded. The most common one is `@` in an email address: write
 `you@gmail.com` as `you%40gmail.com`. Other characters that need encoding
 include `:`, `/`, `?`, `#` and `%`.
 
-## Stock alerts
-Every day at 07:00 the server notifies staff with `inventory.manage` (in-app, once per branch per local day) about batches expiring within `expiryAlertDays` (Settings → restaurant, default 7) and ingredients at or below their reorder level. When SMTP is configured the same digest is emailed to those users; without SMTP only the in-app notification is sent.
+## Marketing unsubscribe links
+Every marketing email carries a signed, per-recipient unsubscribe link (in the
+footer and in the `List-Unsubscribe` / `List-Unsubscribe-Post` headers, RFC
+8058). Set `PUBLIC_URL` (for example `https://pos.mycafe.com`) so the link
+points at your server; it defaults to `http://localhost:1995`. Links expire
+after a year. Opting out sets the customer's marketing opt-out, so later
+campaigns skip them.

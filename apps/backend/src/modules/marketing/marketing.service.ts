@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import type { CampaignDto, CouponDto, PromotionDto } from '@nventra/types';
 import { BranchTimeService } from '../../common/services/branch-time.service';
@@ -11,6 +12,11 @@ import { localMinuteAndDay } from '../../common/time';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import {
+  buildUnsubscribeHeaders,
+  signUnsubscribeToken,
+  verifyUnsubscribeToken,
+} from './unsubscribe-token';
 import {
   discountAmount,
   evaluateCoupon,
@@ -36,7 +42,30 @@ export class MarketingService {
     private readonly time: BranchTimeService,
     private readonly email: EmailService,
     private readonly webhooks: WebhooksService,
+    private readonly config: ConfigService,
   ) {}
+
+  private get secret() {
+    return this.config.getOrThrow<string>('JWT_SECRET');
+  }
+
+  private unsubscribeUrl(customerId: string) {
+    const base = (
+      this.config.get<string>('PUBLIC_URL') || 'http://localhost:1995'
+    ).replace(/\/+$/, '');
+    return `${base}/api/v1/public/unsubscribe/${signUnsubscribeToken(customerId, this.secret)}`;
+  }
+
+  /** Opts the customer behind a valid token out of marketing. Idempotent; reveals nothing. */
+  async unsubscribe(token: string): Promise<boolean> {
+    const id = verifyUnsubscribeToken(token, this.secret);
+    if (!id) return false;
+    await this.prisma.customer.updateMany({
+      where: { id },
+      data: { marketingOptOut: true },
+    });
+    return true;
+  }
 
   // --- Coupons -------------------------------------------------------------
 
@@ -274,6 +303,7 @@ export class MarketingService {
     return {
       campaign: c,
       recipients: picked.map((cu) => ({
+        id: cu.id,
         name: cu.name ?? '',
         contact: (c.channel === 'EMAIL' ? cu.email : cu.phone) ?? '',
       })),
@@ -329,13 +359,17 @@ export class MarketingService {
         where: { id: branchId },
         select: { restaurant: { select: { name: true } } },
       });
-      const footer = `\n\n—\nYou are receiving this because you are a customer of ${restaurant?.restaurant.name ?? 'our restaurant'}. Reply to this email to stop receiving offers.`;
+      const name = restaurant?.restaurant.name ?? 'our restaurant';
       result = await this.email.sendEach(
-        recipients.map((r) => ({
-          to: r.contact,
-          subject: campaign.name,
-          text: campaign.message + footer,
-        })),
+        recipients.map((r) => {
+          const url = this.unsubscribeUrl(r.id);
+          return {
+            to: r.contact,
+            subject: campaign.name,
+            text: `${campaign.message}\n\n—\nYou are receiving this because you are a customer of ${name}. Unsubscribe: ${url}`,
+            headers: buildUnsubscribeHeaders(url),
+          };
+        }),
       );
     } else {
       const hasHook = await this.webhooks.hasSubscriber(
