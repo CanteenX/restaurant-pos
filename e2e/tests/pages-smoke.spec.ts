@@ -4,7 +4,7 @@ import { openDashboard } from "./helpers";
 // Every staff page must render without an error boundary or console error.
 const PAGES = [
   "/dashboard", "/pos", "/orders", "/tables", "/reservations", "/menu", "/kds",
-  "/customers", "/inventory", "/inventory/procurement", "/delivery", "/team",
+  "/customers", "/gift-cards", "/inventory", "/inventory/procurement", "/delivery", "/team",
   "/attendance", "/accounting", "/reports", "/marketing", "/operations",
   "/settings", "/settings/roles", "/settings/security", "/settings/audit-log",
   "/settings/backup",
