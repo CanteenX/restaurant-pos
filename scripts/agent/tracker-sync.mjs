@@ -13,10 +13,19 @@ import { readFileSync } from "node:fs";
 const REPO = process.env.GH_REPO || "CanteenX/restaurant-pos";
 const SKIP = new Set([2]); // the build-log issue
 
+// Page manually: `gh api --paginate` follows Link headers that use
+// numeric-id paths (repositories/{id}/...), which the Claude cloud proxy rejects.
 function gh(path) {
-  const out = execFileSync("gh", ["api", "--paginate", path], { encoding: "utf8", maxBuffer: 64 << 20 });
-  // --paginate concatenates JSON arrays as "][": normalise into one array.
-  return JSON.parse(`[${out.trim().replace(/^\[|\]$/g, "").replace(/\]\s*\[/g, ",")}]`);
+  const all = [];
+  for (let page = 1; page <= 20; page++) {
+    const sep = path.includes("?") ? "&" : "?";
+    const out = execFileSync("gh", ["api", `${path}${sep}page=${page}`], { encoding: "utf8", maxBuffer: 64 << 20 });
+    const items = JSON.parse(out);
+    if (!Array.isArray(items) || items.length === 0) break;
+    all.push(...items);
+    if (items.length < 100) break;
+  }
+  return all;
 }
 function ghOne(path) {
   return JSON.parse(execFileSync("gh", ["api", path], { encoding: "utf8" }));
