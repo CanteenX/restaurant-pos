@@ -25,3 +25,5 @@ STATIC=1 packaging/deb/test.sh          # fast checks, no root or Docker
 sudo DEB=dist/nventra-pos_1.2.3_amd64.deb packaging/deb/test.sh   # full install/upgrade/remove/purge test
 ```
 Packages are not signed and there is no hosted repository yet.
+
+Note: `.github/workflows/deb.yml` is disabled and still uses the old `nodedr-orderrestro` names; update it to `nventra-pos` before re-enabling.
