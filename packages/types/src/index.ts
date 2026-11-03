@@ -24,3 +24,4 @@ export * from "./accounting";
 export * from "./marketing";
 export * from "./order-lifecycle";
 export * from "./customer-display";
+export * from "./labels";

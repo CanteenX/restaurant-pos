@@ -18,6 +18,8 @@ import {
   billPreviewSchema,
   checkoutSchema,
   createOrderSchema,
+  labelPrintSchema,
+  type LabelPrintDto,
   cancelOrderSchema,
   deleteOrdersSchema,
   mergeOrdersSchema,
@@ -48,6 +50,8 @@ import {
   type PrintResult,
 } from './escpos-receipt';
 import { probeNetworkPrinter } from './escpos-network';
+import { buildTspl } from './label-tspl';
+import { buildZpl } from './label-zpl';
 import {
   PrinterNotFoundError,
   findPrinterDescriptor,
@@ -600,6 +604,37 @@ export class OrdersController {
     }
     await this.deliver(target, buffer);
     return { ok: true, profile };
+  }
+
+  // Shelf / packaging / expiry labels (ZPL or TSPL) through the branch's
+  // printer transport. Golden-output tested only; not verified on hardware.
+  @Auth('bills.print')
+  @Post('labels/print')
+  async printLabels(
+    @CurrentUser() user: SessionUser,
+    @Body(new ZodValidationPipe(labelPrintSchema)) dto: LabelPrintDto,
+    @Query('branchId') branchId?: string,
+    @Query('via') via?: string,
+  ) {
+    const buffer = dto.language === 'TSPL' ? buildTspl(dto) : buildZpl(dto);
+    if (via === 'preview') {
+      return {
+        ok: true,
+        language: dto.language,
+        commands: buffer.toString('utf8'),
+      };
+    }
+    let target: BranchPrinterTarget = {
+      printerConnection: 'USB',
+      printerHost: null,
+      printerPort: 9100,
+    };
+    if (branchId) {
+      await this.branchAccess.assertAccess(user.restaurantId, branchId);
+      target = await this.ordersService.printerTarget(branchId);
+    }
+    await this.deliver(target, buffer);
+    return { ok: true, language: dto.language, labels: dto.labels.length };
   }
 
   // Opens the cash drawer wired to the thermal printer ("No sale" / test).

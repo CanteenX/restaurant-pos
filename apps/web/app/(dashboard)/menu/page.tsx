@@ -12,7 +12,8 @@ import { EditCategoryDialog } from "@/components/menu/edit-category-dialog";
 import { EditItemDialog } from "@/components/menu/edit-item-dialog";
 import { Badge } from "@/components/ui/badge";
 import { UploadImage } from "@/components/ui/upload-image";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import Link from "next/link";
 import { ResponsiveTabs } from "@/components/ui/nav-picker";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -200,6 +201,9 @@ export default function MenuPage() {
             {canManage && (
               <div className="flex flex-wrap items-center gap-2">
                 <BulkPriceDialog branchId={branchId} categories={categories ?? []} />
+                <Link href="/labels?source=menu" className={buttonVariants({ variant: "outline" })}>
+                  Print labels
+                </Link>
                 <ImportCsvDialog kind="menu" branchId={branchId} />
                 <AddItemDialog branchId={branchId} categories={categories ?? []} />
               </div>
