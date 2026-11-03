@@ -10,6 +10,7 @@ import {
   UseGuards,
   UsePipes,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiTags } from '@nestjs/swagger';
 import {
   loginSchema,
@@ -27,29 +28,26 @@ import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { Auth } from '../common/decorators/auth.decorator';
 import { AuthService } from './auth.service';
 import { TwoFactorService } from './two-factor.service';
-
-const SESSION_COOKIE = 'nventra_session';
-const COOKIE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-
-// A `Secure` cookie is silently dropped by every browser on a plain
-// `http://` origin — including the default `http://<lan-ip>:1995` this app
-// is normally reached at. Deriving this from `NODE_ENV === 'production'`
-// (the old behavior) meant every Docker deployment set `Secure` on the
-// session cookie yet was served over HTTP, so login "succeeded" but the
-// browser never stored the cookie and every following request came back
-// 401 Unauthorized. Default to false; opt in explicitly via COOKIE_SECURE
-// once the app is actually served over HTTPS (see README).
-function isCookieSecure(): boolean {
-  return process.env.COOKIE_SECURE === 'true';
-}
+import { SessionService } from './session.service';
+import {
+  SESSION_COOKIE,
+  sessionCookieOptions,
+  sessionIdleSeconds,
+} from './session';
 
 @ApiTags('auth')
 @Controller('v1/auth')
 export class AuthController {
+  private readonly cookieMaxAgeMs: number;
+
   constructor(
     private readonly authService: AuthService,
     private readonly twoFactor: TwoFactorService,
-  ) {}
+    private readonly sessions: SessionService,
+    config: ConfigService,
+  ) {
+    this.cookieMaxAgeMs = sessionIdleSeconds(config) * 1000;
+  }
 
   // Tighter than the app-wide default — unauthenticated and creates a full
   // restaurant + owner account, a more attractive abuse target than login.
@@ -116,22 +114,38 @@ export class AuthController {
       user.id,
       String(body?.password ?? ''),
     );
-    res.clearCookie(SESSION_COOKIE, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: isCookieSecure(),
-    });
+    res.clearCookie(SESSION_COOKIE, sessionCookieOptions());
     return { ok: true };
   }
 
   @Post('logout')
   logout(@Res({ passthrough: true }) res: Response) {
-    res.clearCookie(SESSION_COOKIE, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: isCookieSecure(),
-    });
+    res.clearCookie(SESSION_COOKIE, sessionCookieOptions());
     return { ok: true };
+  }
+
+  // "Log out of all devices": every token this user holds stops working,
+  // including the one on this request.
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('sessions/revoke')
+  async revokeMySessions(
+    @CurrentUser() user: SessionUser,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.sessions.revokeAll(user.id);
+    res.clearCookie(SESSION_COOKIE, sessionCookieOptions());
+    return { ok: true };
+  }
+
+  // An owner/admin signs a staff member out everywhere (lost/shared device).
+  @Auth('users.manage')
+  @Post('sessions/revoke/:userId')
+  revokeStaffSessions(
+    @CurrentUser() user: SessionUser,
+    @Param('userId') userId: string,
+  ) {
+    return this.sessions.revokeForStaff(user.id, user.restaurantId, userId);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -196,11 +210,10 @@ export class AuthController {
   }
 
   private setSessionCookie(res: Response, token: string) {
-    res.cookie(SESSION_COOKIE, token, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: isCookieSecure(),
-      maxAge: COOKIE_MAX_AGE_MS,
-    });
+    res.cookie(
+      SESSION_COOKIE,
+      token,
+      sessionCookieOptions(this.cookieMaxAgeMs),
+    );
   }
 }

@@ -22,7 +22,8 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: "postgresql://nventra:${POSTGRES_PASSWORD}@postgres:5432/nventra_pos"
-      JWT_EXPIRES_IN: "12h"
+      SESSION_IDLE_MINUTES: "${SESSION_IDLE_MINUTES:-60}"
+      SESSION_MAX_HOURS: "${SESSION_MAX_HOURS:-12}"
       PORT: "4000"
       CORS_ORIGIN: "${FRONTEND_ORIGIN:-http://localhost:1995}"
       COOKIE_SECURE: "${COOKIE_SECURE:-false}"

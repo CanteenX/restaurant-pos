@@ -14,6 +14,7 @@ import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { AuditService } from '../../audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SessionService } from '../../auth/session.service';
 
 const SELECT = {
   id: true,
@@ -42,6 +43,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly sessions: SessionService,
   ) {}
 
   list(restaurantId: string) {
@@ -169,6 +171,11 @@ export class UsersService {
       },
       select: SELECT,
     });
+
+    // A new password or a disabled account ends every existing session.
+    if (dto.password || dto.isActive === false) {
+      await this.sessions.revokeAll(id);
+    }
 
     // Never log `dto.password`/`passwordHash` — only the fields it's safe
     // for an owner reviewing history to see. `passwordChanged` is a boolean

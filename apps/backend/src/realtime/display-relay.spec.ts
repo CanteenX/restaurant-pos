@@ -4,7 +4,12 @@ import { RealtimeGateway } from './realtime.gateway';
 // the SAME branch published under the SAME code.
 function makeGateway() {
   const emitted: { rooms: string[]; event: string; payload: unknown }[] = [];
-  const gw = new RealtimeGateway({} as never, {} as never, {} as never);
+  const gw = new RealtimeGateway(
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+  );
   gw.server = {
     to: (rooms: string | string[]) => ({
       emit: (event: string, payload: unknown) =>

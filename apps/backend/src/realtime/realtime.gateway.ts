@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import {
   OnGatewayConnection,
@@ -11,6 +12,11 @@ import {
 } from '@nestjs/websockets';
 import { displayJoinSchema, displayPublishSchema } from '@nventra/types';
 import type { Server, Socket } from 'socket.io';
+import {
+  isPastMaxLifetime,
+  sessionMaxSeconds,
+  type SessionPayload,
+} from '../auth/session';
 import { BranchAccessService } from '../common/services/branch-access.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -45,6 +51,7 @@ export class RealtimeGateway
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
     private readonly branchAccess: BranchAccessService,
+    private readonly config: ConfigService,
   ) {}
 
   // Every other realtime event (KOT contents, table/order status, customer
@@ -62,11 +69,15 @@ export class RealtimeGateway
       const token = this.extractSessionCookie(client);
       if (!token) throw new Error('No session cookie');
 
-      const payload = this.jwt.verify<{ sub: string }>(token);
+      const payload = this.jwt.verify<SessionPayload>(token);
+      const now = Math.floor(Date.now() / 1000);
+      if (isPastMaxLifetime(payload, now, sessionMaxSeconds(this.config)))
+        throw new Error('Session expired');
       const user = await this.prisma.user.findUnique({
         where: { id: payload.sub },
       });
-      if (!user || !user.isActive) throw new Error('Session no longer valid');
+      if (!user || !user.isActive || (payload.tv ?? 0) !== user.tokenVersion)
+        throw new Error('Session no longer valid');
 
       const branchId = client.handshake.query.branchId;
       if (typeof branchId !== 'string' || !branchId) {
@@ -145,6 +156,12 @@ export class RealtimeGateway
 
   private displayRoom(branchId: string, code: string) {
     return `display:${branchId}:${code}`;
+  }
+
+  // "Log out of all devices": every socket a revoked user holds joined
+  // their user room at connect time, so dropping that room drops them all.
+  disconnectUser(userId: string) {
+    this.server?.in(this.userRoom(userId)).disconnectSockets(true);
   }
 
   private branchRoom(branchId: string) {
