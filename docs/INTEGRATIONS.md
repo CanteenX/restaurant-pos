@@ -51,6 +51,10 @@ sending accept / reject / ready back to the platform (that needs each
 platform's outbound API and sandbox), so staff still confirm status inside the
 platform or the aggregator.
 
+The audit of what is missing and the chosen design for the outbound side
+(status loop, retries, item on/off, menu sync) is in
+[AGGREGATORS.md](AGGREGATORS.md).
+
 ## Statuses
 
 `NOT_CONNECTED`, `PENDING_CONFIGURATION`, `CONNECTED`, `SYNC_ERROR`,
