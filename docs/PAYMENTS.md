@@ -90,6 +90,19 @@ meanwhile, or the gateway confirmed a different amount), the attempt keeps
 `payment.gateway_unsettled` is written. **That money must be refunded or
 reconciled by a person**; refunds through the adapter are a follow-up issue.
 
+A confirmation for a different amount than the attempt is never settled: the
+attempt keeps its open status and gets the `settlementError`, and a flagged
+attempt is never settled by any later report, even one with the right amount.
+A repeat of the same bad report is not flagged or audited again.
+
+A signed webhook for a payment we have no attempt for (for example a create
+that timed out at the gateway but still went through) is acknowledged with
+`{ ok: true, ignored: true }` and logged as a warning.
+
+Known gap: a second attempt can be started for the same balance while the
+first is still `PENDING`. If the guest pays both, one settles and the other is
+flagged and needs a manual refund.
+
 ## API
 
 All under `/api/v1/payment-gateway`; staff endpoints need `bills.print`

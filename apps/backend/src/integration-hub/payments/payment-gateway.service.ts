@@ -301,8 +301,14 @@ export class PaymentGatewayService {
         externalId: event.externalId,
       },
     });
-    // Not ours (or already deleted with its order): acknowledge, do nothing.
-    if (!attempt) return { ok: true, ignored: true };
+    // Not ours (or already deleted with its order): acknowledge, do nothing,
+    // but leave a trace - a create that timed out may still have charged.
+    if (!attempt) {
+      this.logger.warn(
+        `gateway ${providerKey} webhook for unknown payment ${event.externalId} (${event.status}) ignored`,
+      );
+      return { ok: true, ignored: true };
+    }
     const after = await this.applyReport(attempt, event);
     return {
       ok: true,
@@ -326,6 +332,8 @@ export class PaymentGatewayService {
         next === 'SUCCEEDED' &&
         report.amountMinor !== toMinorUnits(current.amount)
       ) {
+        // Already flagged: a person is on it, do not log it again.
+        if (current.settlementError) return current;
         return this.flag(current, 'The gateway confirmed a different amount');
       }
       // Compare-and-set on the status we read; a concurrent report wins once.

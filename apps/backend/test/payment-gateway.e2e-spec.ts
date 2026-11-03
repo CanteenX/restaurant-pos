@@ -269,6 +269,51 @@ describe('Payment gateway (e2e)', () => {
     expect(await payments(orderId)).toHaveLength(1); // the cash only
   });
 
+  it('flags a confirmation for a different amount and never settles it', async () => {
+    const orderId = await newOrder(200);
+    const a = (await attempt(orderId).expect(201)).body;
+    const r = await webhook({
+      externalId: a.externalId,
+      status: 'SUCCEEDED',
+      amountMinor: 100,
+    }).expect(200);
+    expect(r.body.settled).toBe(false);
+    // A repeat of the bad report does not flag (or audit) it a second time.
+    await webhook({
+      externalId: a.externalId,
+      status: 'SUCCEEDED',
+      amountMinor: 100,
+    }).expect(200);
+    // A later, correct-looking confirmation must not settle a flagged attempt.
+    await webhook({
+      externalId: a.externalId,
+      status: 'SUCCEEDED',
+      amountMinor: 20000,
+    }).expect(200);
+    expect(await payments(orderId)).toHaveLength(0);
+    const view = (await owner.get(`${P}/attempts/${a.id}`).expect(200)).body;
+    expect(view.settlementError).toBeTruthy();
+    expect(view.settled).toBe(false);
+    const order = await prisma.order.findUniqueOrThrow({
+      where: { id: orderId },
+    });
+    expect(order.status).toBe('OPEN');
+    expect(
+      await prisma.auditLog.count({
+        where: { action: 'payment.gateway_unsettled', entityId: orderId },
+      }),
+    ).toBe(1);
+  });
+
+  it('acknowledges a signed webhook for an unknown payment without effect', async () => {
+    const r = await webhook({
+      externalId: `mock_pay_unknown_${tag}`,
+      status: 'SUCCEEDED',
+      amountMinor: 100,
+    }).expect(200);
+    expect(r.body).toMatchObject({ ok: true, ignored: true });
+  });
+
   it('keeps attempts inside their restaurant', async () => {
     const orderId = await newOrder(50);
     const a = (await attempt(orderId).expect(201)).body;
