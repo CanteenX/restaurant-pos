@@ -75,6 +75,8 @@ model Restaurant {
   referralMinPurchase    Decimal @default(200) @db.Decimal(10, 2)
   // Smallest order a website / API customer may place. 0 = no minimum.
   onlineMinOrderAmount   Decimal @default(0) @db.Decimal(10, 2)
+  // Stock alerts: warn this many days before a batch expires (0 = only already-expired).
+  expiryAlertDays        Int     @default(7)
   // Website / API ordering price change: PERCENT or AMOUNT (per item). Negative = cheaper, positive = costlier. 0 = off.
   onlinePriceAdjustKind  String  @default("PERCENT")
   onlinePriceAdjustValue Decimal @default(0) @db.Decimal(10, 2)

@@ -30,6 +30,7 @@ export const restaurantSettingsSchema = z.object({
   referralReferredPoints: z.coerce.number().int().min(0).max(100000).optional(),
   referralMinPurchase: z.coerce.number().min(0).max(1000000).optional(),
   onlineMinOrderAmount: z.coerce.number().min(0).max(1000000).optional(),
+  expiryAlertDays: z.coerce.number().int().min(0).max(365).optional(),
   // Website / app-ordering prices: PERCENT or AMOUNT, negative = cheaper, positive = costlier.
   onlinePriceAdjustKind: z.enum(["PERCENT", "AMOUNT"]).optional(),
   onlinePriceAdjustValue: z.coerce.number().min(-100000).max(100000).optional(),
