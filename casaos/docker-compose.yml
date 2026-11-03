@@ -50,7 +50,10 @@ services:
       SYNC_API_KEY: ""
       # In-app "Update now" button (Settings > Updates) -> the updater below.
       UPDATER_URL: "http://nventra-pos-updater:8080"
-      UPDATER_TOKEN: "nventra-pos-updater"
+      # Change to the SAME long random value here and in the updater service
+      # (e.g. `openssl rand -hex 32`). The updater refuses this placeholder,
+      # so in-app updates stay off until you do.
+      UPDATER_TOKEN: "change-me-to-a-long-random-updater-token"
     volumes:
       - type: bind
         source: /DATA/AppData/$AppID/uploads
@@ -77,6 +80,9 @@ services:
         - container: COOKIE_SECURE
           description:
             en_US: Set to true only when served over real HTTPS. Leave false for plain local/LAN use — a true value on plain HTTP silently breaks login (the session cookie gets dropped by the browser).
+        - container: UPDATER_TOKEN
+          description:
+            en_US: Secret shared with the updater (which controls Docker). Set the same long random value (e.g. openssl rand -hex 32) here and in the updater. The placeholder is refused, so in-app updates stay off until you change it.
       volumes:
         - container: /data/uploads
           description:
@@ -116,13 +122,18 @@ services:
     hostname: nventra-pos-updater
     restart: unless-stopped
     environment:
-      UPDATER_TOKEN: "nventra-pos-updater"
+      # Must match the backend's UPDATER_TOKEN; see the note there.
+      UPDATER_TOKEN: "change-me-to-a-long-random-updater-token"
       TARGET_CONTAINERS: "nventra-pos-backend,nventra-pos-web"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - nodedr-restaurant-pos
     x-casaos:
+      envs:
+        - container: UPDATER_TOKEN
+          description:
+            en_US: Secret shared with the updater (which controls Docker). Set the same long random value (e.g. openssl rand -hex 32) here and in the backend. The placeholder is refused, so in-app updates stay off until you change it.
       volumes:
         - container: /var/run/docker.sock
           description:
@@ -174,6 +185,12 @@ x-casaos:
         both the `postgres` service's `POSTGRES_PASSWORD` and the
         `backend` service's `DATABASE_URL`. Leaving the default is not
         safe for a real installation.
+
+        To use the in-app **Update now** button, also set `UPDATER_TOKEN`
+        to the same long random value (e.g. `openssl rand -hex 32`) in
+        both the `backend` and `updater` services. The updater controls
+        Docker, so it refuses the placeholder and in-app updates stay off
+        until you change it.
 
         Your data (Postgres database + uploaded images) persists at
         `/DATA/AppData/nodedr-restaurant-pos/`, following CasaOS/ZimaOS's

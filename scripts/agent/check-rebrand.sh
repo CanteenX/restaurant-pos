@@ -41,7 +41,7 @@ for f in $COMPOSE_FILES; do
 done
 
 if docker info >/dev/null 2>&1; then
-  cfg=$(JWT_SECRET=check docker compose -f docker-compose.yml config 2>&1) || bad "docker compose config failed: $cfg"
+  cfg=$(JWT_SECRET=check UPDATER_TOKEN=check docker compose -f docker-compose.yml config 2>&1) || bad "docker compose config failed: $cfg"
   odd=$(printf '%s\n' "$cfg" | grep -E '^[[:space:]]+(image|container_name):' | grep -vE 'nventra-pos-|postgres:16' || true)
   [ -n "$odd" ] && bad "docker compose config shows non-nventra names:
 $odd"

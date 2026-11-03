@@ -382,7 +382,7 @@ of generated ones):
 ```bash
 git clone https://github.com/CanteenX/restaurant-pos.git
 cd restaurant-pos
-cp .env.example .env        # edit JWT_SECRET / POSTGRES_PASSWORD for anything beyond local dev
+cp .env.example .env        # set JWT_SECRET, POSTGRES_PASSWORD and UPDATER_TOKEN (openssl rand -hex 32)
 docker compose up -d --build
 docker exec nventra-pos-backend npx ts-node prisma/seed.ts   # optional: demo data + login; upsert-based, safe to re-run
 ```

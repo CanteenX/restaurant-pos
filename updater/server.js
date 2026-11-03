@@ -150,14 +150,29 @@ async function run(version) {
   }
 }
 
+// This container holds the Docker socket (host root), so a guessable token
+// would hand that to anything on the internal network. Values that have been
+// published (the old compose default, the CasaOS placeholder) or are too short
+// to be a secret disable the updater instead.
+const PUBLISHED_TOKENS = new Set(['nodedr-restaurant-updater', 'change-me-to-a-long-random-updater-token']);
+const MIN_TOKEN_LENGTH = 24;
+function tokenProblem(token) {
+  if (!token) return 'UPDATER_TOKEN is not set';
+  if (PUBLISHED_TOKENS.has(token)) return 'UPDATER_TOKEN is a published placeholder; set a random one (openssl rand -hex 32)';
+  if (token.length < MIN_TOKEN_LENGTH) return `UPDATER_TOKEN must be at least ${MIN_TOKEN_LENGTH} characters`;
+  return null;
+}
+const TOKEN_PROBLEM = tokenProblem(TOKEN);
+
 function authed(req) {
   const given = Buffer.from((req.headers.authorization || '').replace(/^Bearer /, ''));
   const want = Buffer.from(TOKEN);
-  return want.length > 0 && given.length === want.length && crypto.timingSafeEqual(given, want);
+  return given.length === want.length && crypto.timingSafeEqual(given, want);
 }
 
 const server = http.createServer((req, res) => {
   const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (TOKEN_PROBLEM) return send(503, { error: `updater disabled: ${TOKEN_PROBLEM}` });
   if (!authed(req)) return send(401, { error: 'unauthorized' });
   if (req.method === 'GET' && req.url === '/v1/status') return send(200, status);
   if (req.method === 'POST' && req.url === '/v1/update') {
@@ -175,5 +190,8 @@ const server = http.createServer((req, res) => {
   send(404, { error: 'not found' });
 });
 
-if (require.main === module) server.listen(PORT, () => console.log(`updater listening on :${PORT}, managing ${TARGETS.join(', ')}`));
-module.exports = { splitImage, createBody, registryAuthHeader, redact };
+if (require.main === module) {
+  if (TOKEN_PROBLEM) console.error(`updater disabled until fixed: ${TOKEN_PROBLEM}`);
+  server.listen(PORT, () => console.log(`updater listening on :${PORT}, managing ${TARGETS.join(', ')}`));
+}
+module.exports = { splitImage, createBody, registryAuthHeader, redact, tokenProblem };
