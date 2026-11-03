@@ -6,6 +6,7 @@ export * from "./orders";
 export * from "./reservations";
 export * from "./kitchen";
 export * from "./customers";
+export * from "./memberships";
 export * from "./gift-cards";
 export * from "./combos";
 export * from "./inventory";
