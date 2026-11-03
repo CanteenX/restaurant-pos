@@ -21,6 +21,7 @@ import { toast } from "@/lib/toast";
 import { useI18n } from "@/lib/i18n/context";
 import { forgetBranchChoice } from "@/hooks/use-branch";
 import { changeServer, isNativeApp } from "@/lib/native";
+import { nextTheme } from "@/lib/theme-toggle";
 
 function initials(name?: string) {
   if (!name) return "?";
@@ -33,7 +34,7 @@ function initials(name?: string) {
 }
 
 export function UserMenu({ user }: { user?: SessionUser }) {
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
   const logout = useLogout();
   const revokeAll = useRevokeMySessions();
   const { t } = useI18n();
@@ -44,7 +45,7 @@ export function UserMenu({ user }: { user?: SessionUser }) {
     <div className="flex items-center gap-2">
       <button
         type="button"
-        onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+        onClick={() => setTheme(nextTheme(resolvedTheme))}
         className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-secondary"
         aria-label="Toggle theme"
       >
