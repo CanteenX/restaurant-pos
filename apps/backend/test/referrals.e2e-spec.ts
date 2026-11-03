@@ -386,4 +386,50 @@ run('Referral rewards (e2e)', () => {
     expect(res.applied).toBe(false);
     await prisma.restaurant.delete({ where: { id: other.id } });
   });
+  describe('staff endpoints', () => {
+    const mk = (n: number, name: string) =>
+      prisma.customer.create({
+        data: { branchId: BRANCH, name, phone: phone(n) },
+      });
+    const apply = (customerId: string, code: string) =>
+      owner.post(`/api/v1/referrals/apply${q}`).send({ customerId, code });
+
+    it('applies a code, rejects self-referral and duplicates, lists, and stats', async () => {
+      await settings({ referralEnabled: true });
+      const a = await mk(81, 'Staff A');
+      const b = await mk(82, 'Staff B');
+      const codeA = await referralsSvc.codeFor(a.id);
+      await apply(a.id, codeA).expect(400);
+      await apply(b.id, codeA).expect(201);
+      const dup = await apply(b.id, codeA).expect(400);
+      expect(JSON.stringify(dup.body)).toMatch(/already referred/i);
+      const list = await owner
+        .get(`/api/v1/referrals/customer/${a.id}${q}`)
+        .expect(200);
+      expect(list.body.made).toHaveLength(1);
+      expect(list.body.made[0].referred.id).toBe(b.id);
+      const used = await owner
+        .get(`/api/v1/referrals/customer/${b.id}${q}`)
+        .expect(200);
+      expect(used.body.usedCode.code).toBe(codeA);
+      const stats = await owner.get(`/api/v1/referrals/stats${q}`).expect(200);
+      expect(stats.body.total).toBeGreaterThanOrEqual(1);
+    });
+
+    it('does not leak customers from another restaurant', async () => {
+      const other = await prisma.restaurant.create({
+        data: { name: `Iso ${tag}` },
+      });
+      const br = await prisma.branch.create({
+        data: { name: 'Iso', restaurantId: other.id },
+      });
+      const c = await prisma.customer.create({
+        data: { branchId: br.id, name: 'Iso', phone: phone(83) },
+      });
+      await owner.get(`/api/v1/referrals/customer/${c.id}${q}`).expect(404);
+      await prisma.customer.delete({ where: { id: c.id } });
+      await prisma.branch.delete({ where: { id: br.id } });
+      await prisma.restaurant.delete({ where: { id: other.id } });
+    });
+  });
 });
