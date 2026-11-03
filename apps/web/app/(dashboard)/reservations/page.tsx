@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useBranch } from "@/hooks/use-branch";
 import { useReservations, useUpdateReservationStatus, type Reservation } from "@/hooks/use-reservations";
 import { useFloors } from "@/hooks/use-tables";
+import { formatDeposit } from "@/lib/reservation-deposit";
 import { cn } from "@/lib/utils";
 
 const STATUS_STYLES: Record<ReservationStatusDto, string> = {
@@ -119,6 +120,14 @@ export default function ReservationsPage() {
                 </span>
               </button>
               <div className="flex items-center gap-3">
+                {formatDeposit(r.deposit) && (
+                  <span
+                    data-testid="reservation-deposit"
+                    className="rounded-full bg-secondary px-2 py-0.5 text-xs tabular-nums text-foreground"
+                  >
+                    Deposit {formatDeposit(r.deposit)}
+                  </span>
+                )}
                 <span className="text-sm tabular-nums text-muted-foreground">
                   {new Date(r.reservedAt).toLocaleString(undefined, {
                     month: "short",

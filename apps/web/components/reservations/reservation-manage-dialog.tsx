@@ -7,6 +7,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { ChannelBadge } from "@/components/orders/channel-badges";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useUpdateReservationStatus, type Reservation } from "@/hooks/use-reservations";
+import { formatDeposit } from "@/lib/reservation-deposit";
 import { cn } from "@/lib/utils";
 
 const when = (iso: string) =>
@@ -79,6 +80,11 @@ export function ReservationManageDialog({
             </div>
             <div className="rounded-lg bg-secondary/40 px-3 py-2">
               <div className="font-medium text-foreground">{when(r.reservedAt)}</div>
+              {formatDeposit(r.deposit) && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Deposit: {formatDeposit(r.deposit)}
+                </p>
+              )}
               {r.specialRequests && (
                 <p className="mt-1 text-xs text-muted-foreground">Request: {r.specialRequests}</p>
               )}
