@@ -30,7 +30,14 @@ const gold = tier({
   durationDays: null,
 });
 
-function setup(opts: { open?: any; tiers?: any[]; customer?: any } = {}) {
+function setup(
+  opts: {
+    open?: any;
+    tiers?: any[];
+    customer?: any;
+    closedConcurrently?: boolean;
+  } = {},
+) {
   const tiers = opts.tiers ?? [tier(), gold];
   const prisma: any = {
     customer: {
@@ -56,6 +63,12 @@ function setup(opts: { open?: any; tiers?: any[]; customer?: any } = {}) {
         Promise.resolve({ id: 'm-new', ...data }),
       ),
       update: jest.fn(({ data }: any) => Promise.resolve({ ...data })),
+      updateMany: jest
+        .fn()
+        .mockResolvedValue({ count: opts.closedConcurrently ? 0 : 1 }),
+      findUniqueOrThrow: jest.fn(({ where }: any) =>
+        Promise.resolve({ id: where.id, endReason: 'EXPIRED' }),
+      ),
     },
   };
   prisma.$transaction = jest.fn((fn: any) => fn(prisma));
@@ -215,11 +228,20 @@ describe('MembershipService.upgrade / expire', () => {
 
   it('expires the current membership now', async () => {
     const { svc, prisma } = setup({ open: current });
-    await svc.expire('r1', 'b1', 'c1', NOW);
-    expect(prisma.customerMembership.update).toHaveBeenCalledWith({
-      where: { id: 'm1' },
+    const row = await svc.expire('r1', 'b1', 'c1', NOW);
+    expect(prisma.customerMembership.updateMany).toHaveBeenCalledWith({
+      where: { id: 'm1', endedAt: null },
       data: { endedAt: NOW, endReason: 'EXPIRED' },
     });
+    expect(row).toMatchObject({ id: 'm1', endReason: 'EXPIRED' });
+  });
+
+  it('does not overwrite a row an upgrade closed at the same time', async () => {
+    const { svc, prisma } = setup({ open: current, closedConcurrently: true });
+    await expect(svc.expire('r1', 'b1', 'c1', NOW)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(prisma.customerMembership.update).not.toHaveBeenCalled();
   });
 });
 

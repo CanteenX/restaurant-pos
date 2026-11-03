@@ -162,6 +162,40 @@ describe('Memberships (e2e)', () => {
     );
   });
 
+  it('a partial tier PATCH keeps the fields it did not send', async () => {
+    const id = (
+      await owner
+        .post('/api/v1/memberships/tiers')
+        .send({
+          name: `Partial ${tag}`,
+          rank: 50,
+          discountPercent: 15,
+          pointsMultiplier: 2,
+        })
+        .expect(201)
+    ).body.id;
+    await owner
+      .patch(`/api/v1/memberships/tiers/${id}`)
+      .send({ active: false })
+      .expect(200);
+    const res = (
+      await owner
+        .patch(`/api/v1/memberships/tiers/${id}`)
+        .send({ name: `Partial+ ${tag}` })
+        .expect(200)
+    ).body;
+    expect(Number(res.discountPercent)).toBe(15);
+    expect(Number(res.pointsMultiplier)).toBe(2);
+    expect(res.active).toBe(false);
+    const row = await prisma.membershipTier.findUniqueOrThrow({
+      where: { id },
+    });
+    expect(row.name).toBe(`Partial+ ${tag}`);
+    expect(Number(row.discountPercent)).toBe(15);
+    expect(Number(row.pointsMultiplier)).toBe(2);
+    expect(row.active).toBe(false);
+  });
+
   it('a cashier can read but not create tiers or enrol', async () => {
     await cashier.get('/api/v1/memberships/tiers').expect(200);
     await cashier.get(`${mem()}${q}`).expect(200);

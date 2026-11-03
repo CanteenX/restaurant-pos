@@ -162,9 +162,16 @@ export class MembershipService {
     if (!open || !this.isCurrent(open, now)) {
       throw new BadRequestException('Customer has no current membership');
     }
-    return this.prisma.customerMembership.update({
-      where: { id: open.id },
+    // Only close a row that is still open: an upgrade racing us may have
+    // closed it as UPGRADED already, and that history must not be relabelled.
+    const { count } = await this.prisma.customerMembership.updateMany({
+      where: { id: open.id, endedAt: null },
       data: { endedAt: now, endReason: 'EXPIRED' },
+    });
+    if (count === 0)
+      throw new ConflictException('Membership was changed concurrently');
+    return this.prisma.customerMembership.findUniqueOrThrow({
+      where: { id: open.id },
     });
   }
 
