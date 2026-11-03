@@ -83,6 +83,14 @@ services:
       # S3_BACKUP_REGION: "auto"
       # S3_BACKUP_INTERVAL_DAYS: "3"
       # S3_BACKUP_RETAIN_COUNT: "2"
+      # Local scheduled backups to a USB drive / NAS folder (docs/BACKUPS.md).
+      # Off unless LOCAL_BACKUP_ROOT is set; uncomment it together with the
+      # matching volume line below. Interval/retention/sub-folder can also be
+      # changed from the app (PUT /api/v1/backups/local/config).
+      # LOCAL_BACKUP_ROOT: "/backups"
+      # LOCAL_BACKUP_DIR: ""                # sub-folder inside the root
+      # LOCAL_BACKUP_INTERVAL_HOURS: "24"
+      # LOCAL_BACKUP_RETAIN_COUNT: "7"
     depends_on:
       postgres:
         condition: service_healthy
@@ -93,6 +101,9 @@ services:
       - "4000"
     volumes:
       - uploads_data:/data/uploads
+      # Local backups: mount the host drive/share (read-write) at the
+      # LOCAL_BACKUP_ROOT path above.
+      # - /media/usb-backup:/backups
       # Direct-USB thermal printing (see apps/backend/src/modules/orders/
       # escpos-usb.ts, ported from nodedr-pos's real hardware-verified
       # transport) needs the backend to see the host's USB device nodes.
