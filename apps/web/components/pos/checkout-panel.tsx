@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { QueryError } from "@/components/ui/query-error";
 import { PaymentMethodButtons } from "@/components/pos/payment-method-buttons";
 import { CustomerPicker } from "@/components/pos/customer-picker";
+import { SplitBillDialog } from "@/components/pos/split-bill-dialog";
 import type { Customer } from "@/hooks/use-customers";
 import { lookupGiftCard } from "@/hooks/use-gift-cards";
 import { CancelOrderDialog, useCanCancelOrders } from "@/components/orders/cancel-order-dialog";
@@ -95,6 +96,7 @@ export function CheckoutPanel({
   const [giftCardBalance, setGiftCardBalance] = useState<number | null>(null);
   const [checkingGiftCard, setCheckingGiftCard] = useState(false);
   const [splitCount, setSplitCount] = useState("1");
+  const [splitOpen, setSplitOpen] = useState(false);
   const [customer, setCustomer] = useState<Customer | null>(initialCustomer);
   const [couponInput, setCouponInput] = useState("");
   const [appliedCoupon, setAppliedCoupon] = useState("");
@@ -715,6 +717,26 @@ export function CheckoutPanel({
               <span className="text-xs text-muted-foreground">guests</span>
             </div>
           </div>
+          {bill && (live?.items.length ?? 0) > 0 && (
+            <>
+              <Button type="button" variant="outline" className="h-10" onClick={() => setSplitOpen(true)}>
+                Split by guest…
+              </Button>
+              <SplitBillDialog
+                open={splitOpen}
+                onOpenChange={setSplitOpen}
+                lines={(live?.items ?? []).map((i) => ({
+                  id: i.id,
+                  name: i.nameSnapshot,
+                  quantity: i.quantity,
+                  total: Number(i.lineTotal),
+                }))}
+                bill={{ subtotal: bill.subtotal, taxAmount: bill.taxAmount, totalDue: bill.totalDue }}
+                balanceDue={remainingDue}
+                onPickAmount={(amt) => setAmountText(String(amt))}
+              />
+            </>
+          )}
           {split > 1 && bill && (
             <p className="-mt-2 text-center text-xs text-muted-foreground">
               {formatCurrency(round2(balance / split))} each — enter each guest&apos;s share as a part
