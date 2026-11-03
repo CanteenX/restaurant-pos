@@ -126,6 +126,42 @@ describe('MembershipService.enrol', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  it('scopes the customer lookup to the branch and the restaurant', async () => {
+    const { svc, prisma } = setup();
+    await svc.enrol('r1', 'b1', 'c1', 't-silver', 'u1', NOW);
+    expect(prisma.customer.findFirst.mock.calls[0][0].where).toEqual({
+      id: 'c1',
+      branchId: 'b1',
+      branch: { restaurantId: 'r1' },
+    });
+  });
+
+  it.each([
+    [
+      'enrol',
+      (s: MembershipService) => s.enrol('r1', '', 'c1', 't-silver', 'u1', NOW),
+    ],
+    [
+      'upgrade',
+      (s: MembershipService) =>
+        s.upgrade('r1', undefined as any, 'c1', 't-gold', 'u1', NOW),
+    ],
+    ['expire', (s: MembershipService) => s.expire('r1', '', 'c1', NOW)],
+    [
+      'summary',
+      (s: MembershipService) => s.summary('r1', undefined as any, 'c1', NOW),
+    ],
+    ['no restaurant', (s: MembershipService) => s.summary('', 'b1', 'c1', NOW)],
+  ])(
+    'refuses a missing branch or restaurant (%s) before any query',
+    async (_n, call) => {
+      const { svc, prisma } = setup();
+      await expect(call(svc)).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.customer.findFirst).not.toHaveBeenCalled();
+      expect(prisma.customerMembership.create).not.toHaveBeenCalled();
+    },
+  );
+
   it('turns a concurrent duplicate (unique index) into a 409', async () => {
     const { svc, prisma } = setup();
     prisma.customerMembership.create.mockRejectedValue(
@@ -172,14 +208,14 @@ describe('MembershipService.upgrade / expire', () => {
     await expect(
       svc.upgrade('r1', 'b1', 'c1', 't-gold', 'u1', NOW),
     ).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.expire('b1', 'c1', NOW)).rejects.toBeInstanceOf(
+    await expect(svc.expire('r1', 'b1', 'c1', NOW)).rejects.toBeInstanceOf(
       BadRequestException,
     );
   });
 
   it('expires the current membership now', async () => {
     const { svc, prisma } = setup({ open: current });
-    await svc.expire('b1', 'c1', NOW);
+    await svc.expire('r1', 'b1', 'c1', NOW);
     expect(prisma.customerMembership.update).toHaveBeenCalledWith({
       where: { id: 'm1' },
       data: { endedAt: NOW, endReason: 'EXPIRED' },

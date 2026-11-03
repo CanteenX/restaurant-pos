@@ -27,14 +27,19 @@ run('Standalone mode (e2e)', () => {
   });
 
   beforeAll(async () => {
-    const mod = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const mod = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
     app = mod.createNestApplication();
     app.use(cookieParser());
     app.setGlobalPrefix('api');
     await app.init();
     prisma = app.get(PrismaService);
     owner = request.agent(app.getHttpServer());
-    await owner.post('/api/v1/auth/login').send({ email: 'owner@demo.local', password: 'Password123!' }).expect(201);
+    await owner
+      .post('/api/v1/auth/login')
+      .send({ email: 'owner@demo.local', password: 'Password123!' })
+      .expect(201);
     const me = (await owner.get('/api/v1/auth/me').expect(200)).body.user;
     // A plain dish (no required options, not a combo) on any branch of this restaurant.
     const dish = await prisma.menuItem.findFirstOrThrow({
@@ -55,18 +60,33 @@ run('Standalone mode (e2e)', () => {
   });
 
   it('the snapshot carries the menu, tables and what the receipt needs', async () => {
-    const s = (await owner.get(`/api/v1/mobile/standalone/snapshot?branchId=${branchId}`).expect(200)).body;
+    const s = (
+      await owner
+        .get(`/api/v1/mobile/standalone/snapshot?branchId=${branchId}`)
+        .expect(200)
+    ).body;
     expect(s.branch.id).toBe(branchId);
     expect(s.items.length).toBeGreaterThan(0);
-    expect(s.items[0]).toEqual(expect.objectContaining({ id: expect.any(String), price: expect.any(Number), taxRate: expect.any(Number) }));
+    expect(s.items[0]).toEqual(
+      expect.objectContaining({
+        id: expect.any(String),
+        price: expect.any(Number),
+        taxRate: expect.any(Number),
+      }),
+    );
     expect(s.categories.length).toBeGreaterThan(0);
     expect(s.restaurant.currency).toBeTruthy();
     expect(Array.isArray(s.floors)).toBe(true);
   });
 
   it('is closed to someone who is not signed in', async () => {
-    await http().get(`/api/v1/mobile/standalone/snapshot?branchId=${branchId}`).expect(401);
-    await http().post(`/api/v1/mobile/standalone/sales?branchId=${branchId}`).send({ sales: [] }).expect(401);
+    await http()
+      .get(`/api/v1/mobile/standalone/snapshot?branchId=${branchId}`)
+      .expect(401);
+    await http()
+      .post(`/api/v1/mobile/standalone/sales?branchId=${branchId}`)
+      .send({ sales: [] })
+      .expect(401);
   });
 
   it('records an offline sale at the price the customer paid, once', async () => {
@@ -75,7 +95,12 @@ run('Standalone mode (e2e)', () => {
       items: [{ menuItemId: itemId, quantity: 2, unitPrice: 77 }],
       payments: [{ method: 'CASH', amount: 154, tendered: 200 }],
     };
-    const first = (await owner.post(`/api/v1/mobile/standalone/sales?branchId=${branchId}`).send({ deviceName: 'Test phone', sales: [sale] }).expect(201)).body;
+    const first = (
+      await owner
+        .post(`/api/v1/mobile/standalone/sales?branchId=${branchId}`)
+        .send({ deviceName: 'Test phone', sales: [sale] })
+        .expect(201)
+    ).body;
     expect(first.results[0].status).toBe('created');
 
     const order = await prisma.order.findFirstOrThrow({
@@ -92,10 +117,23 @@ run('Standalone mode (e2e)', () => {
     expect(order.createdAt.getTime()).toBeLessThan(Date.now() - 3_000_000);
 
     // The same sale sent again (a dropped reply) is not recorded twice.
-    const again = (await owner.post(`/api/v1/mobile/standalone/sales?branchId=${branchId}`).send({ sales: [sale] }).expect(201)).body;
-    expect(again.results[0]).toEqual(expect.objectContaining({ status: 'duplicate', orderId: order.id }));
-    expect(await prisma.order.count({ where: { branchId, clientRequestId: sale.id } })).toBe(1);
-    expect(await prisma.payment.count({ where: { orderId: order.id } })).toBe(1);
+    const again = (
+      await owner
+        .post(`/api/v1/mobile/standalone/sales?branchId=${branchId}`)
+        .send({ sales: [sale] })
+        .expect(201)
+    ).body;
+    expect(again.results[0]).toEqual(
+      expect.objectContaining({ status: 'duplicate', orderId: order.id }),
+    );
+    expect(
+      await prisma.order.count({
+        where: { branchId, clientRequestId: sale.id },
+      }),
+    ).toBe(1);
+    expect(await prisma.payment.count({ where: { orderId: order.id } })).toBe(
+      1,
+    );
   });
 
   it('applies a discount and a UPI payment', async () => {
@@ -105,9 +143,16 @@ run('Standalone mode (e2e)', () => {
       discountPercent: 10,
       payments: [{ method: 'UPI', amount: 90, reference: 'UPI123' }],
     };
-    const r = (await owner.post(`/api/v1/mobile/standalone/sales?branchId=${branchId}`).send({ sales: [sale] }).expect(201)).body;
+    const r = (
+      await owner
+        .post(`/api/v1/mobile/standalone/sales?branchId=${branchId}`)
+        .send({ sales: [sale] })
+        .expect(201)
+    ).body;
     expect(r.results[0].status).toBe('created');
-    const order = await prisma.order.findFirstOrThrow({ where: { branchId, clientRequestId: sale.id } });
+    const order = await prisma.order.findFirstOrThrow({
+      where: { branchId, clientRequestId: sale.id },
+    });
     expect(order.status).toBe('PAID');
     expect(Number(order.discountAmount)).toBe(10);
     expect(Number(order.totalAmount)).toBe(90);
@@ -119,16 +164,39 @@ run('Standalone mode (e2e)', () => {
       items: [{ menuItemId: itemId, quantity: 1, unitPrice: 100 }],
       payments: [{ method: 'CASH', amount: 40 }],
     };
-    const r = (await owner.post(`/api/v1/mobile/standalone/sales?branchId=${branchId}`).send({ sales: [sale] }).expect(201)).body;
+    const r = (
+      await owner
+        .post(`/api/v1/mobile/standalone/sales?branchId=${branchId}`)
+        .send({ sales: [sale] })
+        .expect(201)
+    ).body;
     expect(r.results[0].status).toBe('refused');
-    const order = await prisma.order.findFirstOrThrow({ where: { branchId, clientRequestId: sale.id } });
+    const order = await prisma.order.findFirstOrThrow({
+      where: { branchId, clientRequestId: sale.id },
+    });
     expect(order.status).toBe('CANCELLED');
   });
 
   it('refuses a dish that is not on this branch menu, without stopping the others', async () => {
-    const good = { ...saleBase(4), items: [{ menuItemId: itemId, quantity: 1, unitPrice: 50 }], payments: [{ method: 'CASH', amount: 50 }] };
-    const bad = { ...saleBase(5), items: [{ menuItemId: 'not-a-real-dish', quantity: 1, unitPrice: 50 }], payments: [{ method: 'CASH', amount: 50 }] };
-    const r = (await owner.post(`/api/v1/mobile/standalone/sales?branchId=${branchId}`).send({ sales: [bad, good] }).expect(201)).body;
-    expect(r.results.map((x: { status: string }) => x.status)).toEqual(['refused', 'created']);
+    const good = {
+      ...saleBase(4),
+      items: [{ menuItemId: itemId, quantity: 1, unitPrice: 50 }],
+      payments: [{ method: 'CASH', amount: 50 }],
+    };
+    const bad = {
+      ...saleBase(5),
+      items: [{ menuItemId: 'not-a-real-dish', quantity: 1, unitPrice: 50 }],
+      payments: [{ method: 'CASH', amount: 50 }],
+    };
+    const r = (
+      await owner
+        .post(`/api/v1/mobile/standalone/sales?branchId=${branchId}`)
+        .send({ sales: [bad, good] })
+        .expect(201)
+    ).body;
+    expect(r.results.map((x: { status: string }) => x.status)).toEqual([
+      'refused',
+      'created',
+    ]);
   });
 });

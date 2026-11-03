@@ -78,8 +78,13 @@ export class MembershipService {
 
   // ---- Enrolments ----------------------------------------------------------
 
-  async summary(branchId: string, customerId: string, now = new Date()) {
-    await this.assertCustomer(branchId, customerId);
+  async summary(
+    restaurantId: string,
+    branchId: string,
+    customerId: string,
+    now = new Date(),
+  ) {
+    await this.assertCustomer(restaurantId, branchId, customerId);
     const [benefit, history] = await Promise.all([
       this.benefitFor(customerId, now),
       this.prisma.customerMembership.findMany({
@@ -100,7 +105,7 @@ export class MembershipService {
     userId: string,
     now = new Date(),
   ) {
-    await this.assertCustomer(branchId, customerId);
+    await this.assertCustomer(restaurantId, branchId, customerId);
     return this.run(async (tx) => {
       const tier = await this.findTier(tx, restaurantId, tierId, true);
       const open = await this.openRow(tx, customerId);
@@ -128,7 +133,7 @@ export class MembershipService {
     userId: string,
     now = new Date(),
   ) {
-    await this.assertCustomer(branchId, customerId);
+    await this.assertCustomer(restaurantId, branchId, customerId);
     return this.run(async (tx) => {
       const tier = await this.findTier(tx, restaurantId, tierId, true);
       const open = await this.openRow(tx, customerId);
@@ -146,8 +151,13 @@ export class MembershipService {
     });
   }
 
-  async expire(branchId: string, customerId: string, now = new Date()) {
-    await this.assertCustomer(branchId, customerId);
+  async expire(
+    restaurantId: string,
+    branchId: string,
+    customerId: string,
+    now = new Date(),
+  ) {
+    await this.assertCustomer(restaurantId, branchId, customerId);
     const open = await this.openRow(this.prisma, customerId);
     if (!open || !this.isCurrent(open, now)) {
       throw new BadRequestException('Customer has no current membership');
@@ -236,9 +246,21 @@ export class MembershipService {
     return tier;
   }
 
-  private async assertCustomer(branchId: string, customerId: string) {
+  /**
+   * The customer must sit in this branch of this restaurant. A missing id is
+   * refused outright: Prisma drops `undefined` filters, which would otherwise
+   * match a customer in any tenant. Because the tier is also looked up by
+   * restaurantId, a tier and customer can never come from different tenants.
+   */
+  private async assertCustomer(
+    restaurantId: string,
+    branchId: string,
+    customerId: string,
+  ) {
+    if (!restaurantId || !branchId || !customerId)
+      throw new BadRequestException('branchId is required');
     const c = await this.prisma.customer.findFirst({
-      where: { id: customerId, branchId },
+      where: { id: customerId, branchId, branch: { restaurantId } },
       select: { id: true },
     });
     if (!c) throw new NotFoundException('Customer not found');

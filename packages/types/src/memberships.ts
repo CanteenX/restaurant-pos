@@ -22,12 +22,22 @@ export type MembershipTierDto = z.infer<typeof membershipTierSchema>;
 export const membershipTierUpdateSchema = membershipTierSchema
   .partial()
   .refine((v) => Object.keys(v).length > 0, "Nothing to update");
-export type MembershipTierUpdateDto = z.infer<typeof membershipTierUpdateSchema>;
+export type MembershipTierUpdateDto = z.infer<
+  typeof membershipTierUpdateSchema
+>;
 
 export const membershipEnrolSchema = z.object({
   tierId: z.string().min(1),
 });
 export type MembershipEnrolDto = z.infer<typeof membershipEnrolSchema>;
+
+/** Every per-customer membership route is scoped to a branch the caller owns. */
+export const membershipBranchQuerySchema = z.object({
+  branchId: z.string().trim().min(1, "branchId is required"),
+});
+export type MembershipBranchQueryDto = z.infer<
+  typeof membershipBranchQuerySchema
+>;
 
 /** What a customer's current membership entitles them to. */
 export interface MembershipBenefit {

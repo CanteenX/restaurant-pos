@@ -9,9 +9,11 @@ import {
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import {
+  membershipBranchQuerySchema,
   membershipEnrolSchema,
   membershipTierSchema,
   membershipTierUpdateSchema,
+  type MembershipBranchQueryDto,
   type MembershipEnrolDto,
   type MembershipTierDto,
   type MembershipTierUpdateDto,
@@ -64,18 +66,20 @@ export class MembershipsController {
   @Get('customers/:id/membership')
   async summary(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query(new ZodValidationPipe(membershipBranchQuerySchema, 'query'))
+    { branchId }: MembershipBranchQueryDto,
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
-    return this.memberships.summary(branchId, id);
+    return this.memberships.summary(user.restaurantId, branchId, id);
   }
 
   @Auth('memberships.manage')
   @Post('customers/:id/membership')
   async enrol(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query(new ZodValidationPipe(membershipBranchQuerySchema, 'query'))
+    { branchId }: MembershipBranchQueryDto,
     @Param('id') id: string,
     @Body(new ZodValidationPipe(membershipEnrolSchema))
     body: MembershipEnrolDto,
@@ -94,7 +98,8 @@ export class MembershipsController {
   @Post('customers/:id/membership/upgrade')
   async upgrade(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query(new ZodValidationPipe(membershipBranchQuerySchema, 'query'))
+    { branchId }: MembershipBranchQueryDto,
     @Param('id') id: string,
     @Body(new ZodValidationPipe(membershipEnrolSchema))
     body: MembershipEnrolDto,
@@ -113,10 +118,11 @@ export class MembershipsController {
   @Post('customers/:id/membership/expire')
   async expire(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query(new ZodValidationPipe(membershipBranchQuerySchema, 'query'))
+    { branchId }: MembershipBranchQueryDto,
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
-    return this.memberships.expire(branchId, id);
+    return this.memberships.expire(user.restaurantId, branchId, id);
   }
 }

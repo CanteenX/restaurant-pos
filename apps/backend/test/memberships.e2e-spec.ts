@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return -- supertest bodies are untyped by design */
 // Membership tiers and enrolments: lifecycle, permissions, tenant isolation.
-//   MEMBERSHIPS_E2E=1 DATABASE_URL=... JWT_SECRET=x npx jest --config ./test/jest-e2e.json --runInBand memberships
+// Self-contained: registers its own two restaurants (A and B) and a cashier,
+// so it runs on a freshly migrated DB with no seed and no opt-in flag.
+//   DATABASE_URL=... JWT_SECRET=x pnpm test:e2e -- --runInBand memberships
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { ThrottlerStorage } from '@nestjs/throttler';
@@ -11,34 +13,54 @@ import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 import { PrismaService } from './../src/prisma/prisma.service';
 
-const run = process.env.MEMBERSHIPS_E2E ? describe : describe.skip;
-const BRANCH = 'demo-branch';
-const q = `?branchId=${BRANCH}`;
-// The isolation test creates a second restaurant, which needs sign-up opened.
-process.env.ALLOW_PUBLIC_SIGNUP = 'true';
 const tag = randomUUID().slice(0, 6);
+const PASSWORD = 'Password123!';
 type Agent = ReturnType<typeof request.agent>;
 
-run('Memberships (e2e)', () => {
+describe('Memberships (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
   let owner: Agent;
   let cashier: Agent;
+  let other: Agent;
+  let q: string;
+  let oq: string;
   let customerId: string;
   let silver: string;
   let gold: string;
+  let previousSignup: string | undefined;
   const mem = () => `/api/v1/customers/${customerId}/membership`;
 
   const login = async (email: string) => {
     const a = request.agent(app.getHttpServer());
     await a
       .post('/api/v1/auth/login')
-      .send({ email, password: 'Password123!' })
+      .send({ email, password: PASSWORD })
       .expect(201);
     return a;
   };
+  // A new tenant with its own OWNER; returns the owner agent and branch id.
+  const registerRestaurant = async (name: string) => {
+    const email = `mem-${name}-${tag}@example.com`;
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/register')
+      .send({
+        ownerName: `Owner ${name}`,
+        email,
+        password: PASSWORD,
+        restaurantName: `Mem ${name} ${tag}`,
+        branchName: 'Main',
+      })
+      .expect(201);
+    const agent = await login(email);
+    const branchId = (await agent.get('/api/v1/branches').expect(200)).body[0]
+      .id as string;
+    return { agent, branchId };
+  };
 
   beforeAll(async () => {
+    previousSignup = process.env.ALLOW_PUBLIC_SIGNUP;
+    process.env.ALLOW_PUBLIC_SIGNUP = 'true';
     const mod = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(ThrottlerStorage)
       .useValue({
@@ -56,19 +78,25 @@ run('Memberships (e2e)', () => {
     app.setGlobalPrefix('api', { exclude: [] });
     await app.init();
     prisma = app.get(PrismaService);
-    owner = await login('owner@demo.local');
+
+    const a = await registerRestaurant('a');
+    owner = a.agent;
+    q = `?branchId=${a.branchId}`;
+    const b = await registerRestaurant('b');
+    other = b.agent;
+    oq = `?branchId=${b.branchId}`;
 
     const roles = (await owner.get('/api/v1/users/roles').expect(200)).body;
     const cashierRole = roles.find((r: any) => r.name === 'CASHIER');
-    const email = `cashier-mem-${tag}@demo.local`;
+    const email = `cashier-mem-${tag}@example.com`;
     await owner
       .post('/api/v1/users')
       .send({
         name: `Cashier ${tag}`,
         email,
-        password: 'Password123!',
+        password: PASSWORD,
         roleId: cashierRole.id,
-        branchIds: [BRANCH],
+        branchIds: [a.branchId],
       })
       .expect(201);
     cashier = await login(email);
@@ -90,7 +118,9 @@ run('Memberships (e2e)', () => {
       where: { name: { endsWith: tag } },
     });
     await prisma.user.deleteMany({ where: { email: { contains: tag } } });
-    await app.close();
+    if (previousSignup === undefined) delete process.env.ALLOW_PUBLIC_SIGNUP;
+    else process.env.ALLOW_PUBLIC_SIGNUP = previousSignup;
+    await app?.close();
   });
 
   it('creates tiers and refuses duplicates and bad input', async () => {
@@ -222,22 +252,6 @@ run('Memberships (e2e)', () => {
   });
 
   it('is isolated per restaurant', async () => {
-    const email = `mem-other-${tag}@example.com`;
-    await request(app.getHttpServer())
-      .post('/api/v1/auth/register')
-      .send({
-        ownerName: 'Other',
-        email,
-        password: 'Password123!',
-        restaurantName: `Other ${tag}`,
-        branchName: 'Main',
-      })
-      .expect(201);
-    const other = await login(email);
-    const otherBranch = (await other.get('/api/v1/branches').expect(200))
-      .body[0].id;
-    const oq = `?branchId=${otherBranch}`;
-
     const theirs = (await other.get('/api/v1/memberships/tiers').expect(200))
       .body;
     expect(theirs.map((t: any) => t.id)).not.toContain(silver);
@@ -266,5 +280,36 @@ run('Memberships (e2e)', () => {
           .discountPercent,
       ),
     ).toBe(12.5);
+  });
+
+  it.each([
+    ['summary', 'get', ''],
+    ['enrol', 'post', ''],
+    ['upgrade', 'post', '/upgrade'],
+    ['expire', 'post', '/expire'],
+  ] as const)('400s %s without a branchId', async (_n, method, path) => {
+    for (const query of ['', '?branchId=']) {
+      await owner[method](`${mem()}${path}${query}`)
+        .send({ tierId: gold })
+        .expect(400);
+    }
+  });
+
+  it('refuses another tenant reaching our customer without a branchId', async () => {
+    const evil = (
+      await other
+        .post('/api/v1/memberships/tiers')
+        .send({ name: `Evil ${tag}`, rank: 1, discountPercent: 100 })
+        .expect(201)
+    ).body.id;
+    await other.get(mem()).expect(400);
+    await other.post(mem()).send({ tierId: evil }).expect(400);
+    await other.post(`${mem()}/upgrade`).send({ tierId: evil }).expect(400);
+    await other.post(`${mem()}/expire`).expect(400);
+    expect(
+      await prisma.customerMembership.count({
+        where: { customerId, tierId: evil },
+      }),
+    ).toBe(0);
   });
 });
