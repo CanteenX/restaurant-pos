@@ -17,7 +17,8 @@ export interface PushMessage {
   data?: Record<string, string>;
 }
 
-const b64url = (b: Buffer | string) => Buffer.from(b).toString('base64url');
+const b64url = (b: Buffer | string) =>
+  Buffer.from(b).toString('base64url');
 
 /**
  * Push notifications to the OrderRestro mobile app through Firebase Cloud
@@ -46,9 +47,7 @@ export class PushService {
           : '');
       this.account = raw ? (JSON.parse(raw) as ServiceAccount) : null;
     } catch (e) {
-      this.log.warn(
-        `Push is off: bad FCM service account (${(e as Error).message})`,
-      );
+      this.log.warn(`Push is off: bad FCM service account (${(e as Error).message})`);
       this.account = null;
     }
     return this.account;
@@ -59,8 +58,7 @@ export class PushService {
   }
 
   private async accessToken(acct: ServiceAccount): Promise<string> {
-    if (this.cached && this.cached.expires > Date.now() + 60_000)
-      return this.cached.token;
+    if (this.cached && this.cached.expires > Date.now() + 60_000) return this.cached.token;
     const now = Math.floor(Date.now() / 1000);
     const header = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
     const claim = b64url(
@@ -72,9 +70,7 @@ export class PushService {
         exp: now + 3600,
       }),
     );
-    const sig = createSign('RSA-SHA256')
-      .update(`${header}.${claim}`)
-      .sign(acct.private_key);
+    const sig = createSign('RSA-SHA256').update(`${header}.${claim}`).sign(acct.private_key);
     const res = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -85,14 +81,8 @@ export class PushService {
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) throw new Error(`token ${res.status}`);
-    const j = (await res.json()) as {
-      access_token: string;
-      expires_in: number;
-    };
-    this.cached = {
-      token: j.access_token,
-      expires: Date.now() + j.expires_in * 1000,
-    };
+    const j = (await res.json()) as { access_token: string; expires_in: number };
+    this.cached = { token: j.access_token, expires: Date.now() + j.expires_in * 1000 };
     return j.access_token;
   }
 
@@ -117,22 +107,13 @@ export class PushService {
     for (const d of devices) {
       const res = await fetch(url, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${bearer}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: {
             token: d.token,
             notification: { title: msg.title, body: msg.body },
-            data: {
-              ...(msg.data ?? {}),
-              ...(msg.path ? { path: msg.path } : {}),
-            },
-            android: {
-              priority: 'HIGH',
-              notification: { channel_id: 'orders', sound: 'default' },
-            },
+            data: { ...(msg.data ?? {}), ...(msg.path ? { path: msg.path } : {}) },
+            android: { priority: 'HIGH', notification: { channel_id: 'orders', sound: 'default' } },
             apns: { payload: { aps: { sound: 'default' } } },
           },
         }),
@@ -142,9 +123,7 @@ export class PushService {
         // UNREGISTERED / invalid: the app was removed. Forget the phone.
         const text = await res.text();
         if (/UNREGISTERED|INVALID_ARGUMENT/.test(text)) {
-          await this.prisma.deviceToken.deleteMany({
-            where: { token: d.token },
-          });
+          await this.prisma.deviceToken.deleteMany({ where: { token: d.token } });
         }
       }
     }

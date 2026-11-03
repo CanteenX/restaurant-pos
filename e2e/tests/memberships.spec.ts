@@ -20,6 +20,7 @@ test("create a tier, enrol a customer, and see the badge at POS", async ({ page 
   await card.getByRole("button", { name: "Enrol" }).click();
   await expect(card).toContainText(`${tier}`);
   await expect(card).toContainText("10% off");
+  await card.screenshot({ path: "test-results/memberships-profile.png" });
 
   await page.goto("/pos");
   await page.getByRole("button", { name: "Table 5" }).click();
