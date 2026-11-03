@@ -163,13 +163,26 @@ export class RiderService {
       where: { userId },
       select: { branchId: true },
     });
-    for (const b of branches)
-      this.realtime.emitToBranch(b.branchId, 'rider.location', {
-        id: userId,
-        lat,
-        lng,
-        at: at.toISOString(),
+    const payload = { id: userId, lat, lng, at: at.toISOString() };
+    for (const b of branches) {
+      // Rider GPS is permission-gated: only dispatchers, never the whole branch room.
+      const dispatchers = await this.prisma.user.findMany({
+        where: {
+          isActive: true,
+          branches: { some: { branchId: b.branchId } },
+          role: {
+            permissions: { some: { permission: { key: 'delivery.manage' } } },
+          },
+        },
+        select: { id: true },
       });
+      if (dispatchers.length)
+        this.realtime.emitToUsers(
+          dispatchers.map((d) => d.id),
+          'rider.location',
+          payload,
+        );
+    }
     return { saved: true };
   }
 
