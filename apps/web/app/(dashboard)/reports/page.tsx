@@ -11,6 +11,7 @@ import { hasPermission, useCurrentUser } from "@/hooks/use-auth";
 import { useBranch } from "@/hooks/use-branch";
 import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { DayHourHeatmap, TableHeatmap } from "@/components/reports/heatmap";
 import { SchedulesPanel } from "@/components/reports/schedules-panel";
 
 interface CatalogEntry {
@@ -111,6 +112,9 @@ export default function ReportsPage() {
             ) : error ? (
               <p className="text-sm text-destructive">{error instanceof ApiError ? error.message : "Could not load report"}</p>
             ) : data && data.rows.length > 0 ? (
+              <>
+              {key === "peak-hours" && <DayHourHeatmap rows={data.rows} />}
+              {key === "table-turnover" && <TableHeatmap rows={data.rows} />}
               <table className="w-full text-sm">
                 <thead className="text-left text-xs text-muted-foreground">
                   <tr>
@@ -129,6 +133,7 @@ export default function ReportsPage() {
                   ))}
                 </tbody>
               </table>
+              </>
             ) : (
               <p className="py-8 text-center text-sm text-muted-foreground">No data for this period.</p>
             )}
