@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { DeleteAccountDialog } from "@/components/layout/delete-account-dialog";
 import { useLogout } from "@/hooks/use-auth";
+import { forgetBranchChoice } from "@/hooks/use-branch";
 import { changeServer, isNativeApp } from "@/lib/native";
 
 function initials(name?: string) {
@@ -61,7 +62,18 @@ export function UserMenu({ user }: { user?: SessionUser }) {
             <p className="text-xs font-normal text-muted-foreground">{user?.roleName}</p>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => router.push("/switch-user")}>
+          <DropdownMenuItem
+            onClick={() =>
+              // End this user's session before showing the tiles: a till left on
+              // the switch screen must not keep the previous user signed in.
+              logout.mutate(undefined, {
+                onSuccess: () => {
+                  forgetBranchChoice();
+                  router.push("/switch-user");
+                },
+              })
+            }
+          >
             <UserRoundCog className="h-4 w-4" />
             Switch user
           </DropdownMenuItem>

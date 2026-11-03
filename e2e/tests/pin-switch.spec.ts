@@ -4,6 +4,7 @@ import { openDashboard } from "./helpers";
 // Shared-till quick switch (issue #11). Runs on a tablet-sized touch viewport.
 // The seeded demo cashier (apps/backend/prisma/seed.ts) has PIN 2468.
 // pin-login is throttled to 5/min per address: this file makes 2 real calls.
+// "Switch user" signs the current user out first, so the keypad runs with no session.
 const CASHIER_PIN = "2468";
 const ROSTER_KEY = "nventra.pinRoster";
 const BRANCH_KEY = "nodedr_branch_id";
@@ -68,6 +69,23 @@ test.describe("PIN quick switch", () => {
     await page.getByRole("button", { name: "Unlock" }).click();
     await expect(page.getByRole("alert").filter({ hasText: "locked for 15 minutes" })).toBeVisible();
     await page.screenshot({ path: "test-results/pin-switch-locked-tablet.png" });
+  });
+
+  test("switch user signs the owner out before showing the tiles", async ({ page }) => {
+    await page.getByRole("button", { name: "Demo Owner" }).click();
+    await page.getByRole("menuitem", { name: "Switch user" }).click();
+    await expect(page).toHaveURL(/\/switch-user/);
+    await expect(page.getByRole("button", { name: /Demo Cashier/ })).toBeVisible();
+
+    const me = await page.request.get("/api/v1/auth/me");
+    expect(me.status()).toBe(401);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/(login|switch-user)/);
+    await expect(page.getByText("Today's Revenue")).toHaveCount(0);
+    await page.goto("/dashboard");
+    await expect(page).toHaveURL(/\/(login|switch-user)/);
+    await expect(page.getByText("Today's Revenue")).toHaveCount(0);
   });
 
   test("owner switches to the cashier by PIN and sees none of the owner's state", async ({ page }) => {
