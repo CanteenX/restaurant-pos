@@ -26,6 +26,15 @@ async function seedPaidOrder(page: Page, tableName: string, qty: number): Promis
   expect(paid.ok(), await paid.text()).toBeTruthy();
 }
 
+// Reports bucket by the branch timezone, which can already be "tomorrow" in UTC
+// terms, so widen the page's default (UTC-dated) range to always include today.
+async function openReport(page: Page, name: string): Promise<void> {
+  await page.goto("/reports");
+  await page.getByRole("button", { name }).click();
+  const dates = page.locator('input[type="date"]');
+  await dates.nth(1).fill(new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10));
+}
+
 test.beforeAll(async ({ browser }) => {
   const ctx = await browser.newContext({ storageState: "playwright/.auth/owner.json" });
   const page = await ctx.newPage();
@@ -37,8 +46,7 @@ test.beforeAll(async ({ browser }) => {
 });
 
 test("day-by-hour heat map renders cells, metric toggle and legend", async ({ page }) => {
-  await page.goto("/reports");
-  await page.getByRole("button", { name: "Peak hours" }).click();
+  await openReport(page, "Peak hours");
   await expect(page.getByTestId("day-hour-heatmap")).toBeVisible();
   await expect(page.getByTestId("heat-cell")).toHaveCount(7 * 24);
   // Three orders were just paid in the current hour: some cell holds them.
@@ -57,8 +65,7 @@ test("day-by-hour heat map renders cells, metric toggle and legend", async ({ pa
 });
 
 test("table heat map ranks busiest table first with legend", async ({ page }) => {
-  await page.goto("/reports");
-  await page.getByRole("button", { name: "Table turnover" }).click();
+  await openReport(page, "Table turnover");
   const map = page.getByTestId("table-heatmap");
   await expect(map).toBeVisible();
   await expect(map.getByText("Table 7")).toBeVisible();
