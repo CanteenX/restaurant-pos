@@ -1,4 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -314,6 +318,70 @@ export class ReferralsService {
     }
     if (rows.length)
       await tx.pointsLedger.createMany({ data: rows, skipDuplicates: true });
+  }
+
+  /** Staff view: referrals this customer made, and the code they came in through. */
+  async listForCustomer(restaurantId: string, customerId: string) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, branch: { restaurantId } },
+      select: { id: true },
+    });
+    if (!customer) throw new NotFoundException('Customer not found');
+    const select = {
+      id: true,
+      code: true,
+      status: true,
+      createdAt: true,
+      rewardedAt: true,
+      referrerPoints: true,
+      referredPoints: true,
+      referrer: { select: { id: true, name: true } },
+      referred: { select: { id: true, name: true } },
+    } as const;
+    const made = await this.prisma.referral.findMany({
+      where: { referrerId: customerId },
+      orderBy: { createdAt: 'desc' },
+      select,
+    });
+    const used = await this.prisma.referral.findMany({
+      where: { referredId: customerId },
+      take: 1,
+      select,
+    });
+    return { made, usedCode: used[0] ?? null };
+  }
+
+  /** Restaurant-wide totals for the staff screen. */
+  async stats(restaurantId: string) {
+    const branches = await this.prisma.branch.findMany({
+      where: { restaurantId },
+      select: { id: true },
+    });
+    const scope = { branchId: { in: branches.map((b) => b.id) } };
+    const total = await this.prisma.referral.count({ where: scope });
+    const rewarded = await this.prisma.referral.count({
+      where: { ...scope, status: 'REWARDED' },
+    });
+    const pts = await this.prisma.pointsLedger.aggregate({
+      where: {
+        ...scope,
+        reason: { in: ['REFERRAL_REFERRER', 'REFERRAL_REFERRED'] },
+      },
+      _sum: { delta: true },
+    });
+    return {
+      total,
+      rewarded,
+      pending: total - rewarded,
+      pointsAwarded: pts._sum.delta ?? 0,
+    };
+  }
+
+  /** Staff applies a code to a customer; refusals surface as 400 with the reason. */
+  async applyCode(restaurantId: string, customerId: string, code: string) {
+    const r = await this.attach(restaurantId, customerId, code);
+    if (!r.applied) throw new BadRequestException(r.reason);
+    return r;
   }
 
   /** Everything a customer-facing screen needs: balance, value, rewards, share link data. */
