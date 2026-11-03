@@ -1,0 +1,6 @@
+# Keep shell scripts and Dockerfiles LF regardless of core.autocrlf, so
+# install.sh runs under Git Bash/WSL on Windows and images don't inherit CRLF.
+*.sh text eol=lf
+Dockerfile text eol=lf
+**/Dockerfile text eol=lf
+updater/** text eol=lf
