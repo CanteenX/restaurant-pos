@@ -13,8 +13,9 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useCreateCustomer, type Customer } from "@/hooks/use-customers";
+import { useApplyReferralCode, useCreateCustomer, type Customer } from "@/hooks/use-customers";
 import { ApiError } from "@/lib/api";
+import { isPlausibleReferralCode, normalizeReferralCode } from "@/lib/referrals";
 
 export function AddCustomerDialog({
   branchId,
@@ -27,15 +28,31 @@ export function AddCustomerDialog({
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
+  const [referral, setReferral] = useState("");
   const createCustomer = useCreateCustomer(branchId);
+  const applyReferral = useApplyReferralCode(branchId);
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (referral && !isPlausibleReferralCode(referral)) {
+      toast.error("Referral code should be 6–12 letters or digits");
+      return;
+    }
     createCustomer.mutate(
       { name: name || undefined, phone: phone || undefined, email: email || undefined },
       {
         onSuccess: (customer) => {
           toast.success(`${name || "Customer"} added`);
+          if (referral) {
+            applyReferral.mutate(
+              { customerId: customer.id, code: normalizeReferralCode(referral) },
+              {
+                onError: (err) =>
+                  toast.error(err instanceof ApiError ? err.message : "Referral code not applied"),
+              },
+            );
+          }
+          setReferral("");
           setOpen(false);
           setName("");
           setPhone("");
@@ -71,6 +88,15 @@ export function AddCustomerDialog({
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="c-referral">Referral code (optional)</Label>
+            <Input
+              id="c-referral"
+              value={referral}
+              onChange={(e) => setReferral(e.target.value)}
+              className="font-mono uppercase"
             />
           </div>
           <DialogFooter>
