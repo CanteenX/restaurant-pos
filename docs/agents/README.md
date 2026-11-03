@@ -62,10 +62,17 @@ comment explaining why, and stop.
 Only maintainers add `agent:ready`. Never add it yourself.
 
 ## Lanes (avoid merge conflicts)
-`lane:foundation` runs alone; while any foundation issue is open, other lanes
-do not start new work. Otherwise one in-progress issue per lane at a time:
-`lane:web` (apps/web), `lane:backend` (apps/backend, packages/types),
-`lane:integrations` (payments, Tally, aggregators, i18n infra).
+All lanes run in PARALLEL. Up to two in-progress issues per lane at a time
+(the second must not touch the same files as the first):
+`lane:foundation` (rebrand, SMTP), `lane:web` (apps/web), `lane:backend`
+(apps/backend, packages/types), `lane:integrations` (payments, Tally,
+aggregators, i18n infra).
+- Conflicts are expected while the rebrand lands. Before opening or updating a
+  PR: `git fetch origin && git rebase origin/staging`, resolve conflicts, re-run
+  checks, then push (`git push --force-with-lease` on your OWN `claude/*`
+  branch is allowed only right after a rebase; never on any other branch).
+- New code always uses the names already on `staging` (package scope, image,
+  cookie, DB names) — never the old Nodedr names.
 
 ## Budgets (hard rules)
 - **Claude usage:** stop early, never loop. One issue per builder run. If a run
