@@ -162,13 +162,25 @@ BEGIN
     who := st."deviceId";
   END IF;
   br := coalesce(sync_branch_of(TG_TABLE_NAME, rec), v."branchId");
-  INSERT INTO sync_versions (tbl, "pkKey", hlc, peer, deleted, "branchId", ts)
-  VALUES (TG_TABLE_NAME, k, h, who, TG_OP = 'DELETE', br, wall)
-  -- A version never goes backwards, even if an older apply slips through.
-  ON CONFLICT (tbl, "pkKey") DO UPDATE
-    SET hlc = EXCLUDED.hlc, peer = EXCLUDED.peer, deleted = EXCLUDED.deleted,
-        "branchId" = EXCLUDED."branchId", ts = EXCLUDED.ts
-    WHERE EXCLUDED.hlc >= sync_versions.hlc;
+  IF remote IS NOT NULL THEN
+    INSERT INTO sync_versions (tbl, "pkKey", hlc, peer, deleted, "branchId", ts)
+    VALUES (TG_TABLE_NAME, k, h, who, TG_OP = 'DELETE', br, wall)
+    -- A version never goes backwards, even if an older apply slips through.
+    ON CONFLICT (tbl, "pkKey") DO UPDATE
+      SET hlc = EXCLUDED.hlc, peer = EXCLUDED.peer, deleted = EXCLUDED.deleted,
+          "branchId" = EXCLUDED."branchId", ts = EXCLUDED.ts
+      WHERE EXCLUDED.hlc >= sync_versions.hlc;
+  ELSE
+    -- v was read without a lock: an apply may have committed a newer version
+    -- while this upsert waited for it. A local write commits after that
+    -- version, so it always orders after it; the outbox entry uses that HLC.
+    INSERT INTO sync_versions (tbl, "pkKey", hlc, peer, deleted, "branchId", ts)
+    VALUES (TG_TABLE_NAME, k, h, who, TG_OP = 'DELETE', br, wall)
+    ON CONFLICT (tbl, "pkKey") DO UPDATE
+      SET hlc = greatest(EXCLUDED.hlc, sync_versions.hlc + 1), peer = EXCLUDED.peer,
+          deleted = EXCLUDED.deleted, "branchId" = EXCLUDED."branchId", ts = EXCLUDED.ts
+    RETURNING hlc INTO h;
+  END IF;
   IF origin = '__skip' THEN RETURN NULL; END IF;
   PERFORM sync_mark_inflight();
   INSERT INTO sync_changes (tbl, pk, "pkKey", op, row, ts, origin, hlc, peer, "branchId", "schemaVersion")

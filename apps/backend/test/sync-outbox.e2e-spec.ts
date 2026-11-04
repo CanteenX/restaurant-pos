@@ -781,7 +781,8 @@ describe('Sync outbox (e2e)', () => {
         const [w] = await prisma.$queryRawUnsafe<{ n: bigint }[]>(
           `SELECT count(*) AS n FROM pg_stat_activity
             WHERE datname = current_database() AND wait_event_type = 'Lock'
-              AND (query LIKE '%FROM "floors"%FOR UPDATE%' OR query LIKE '%INSERT INTO "floors"%')`,
+              AND (query LIKE '%FROM "floors"%FOR UPDATE%' OR query LIKE '%INSERT INTO "floors"%'
+                   OR query LIKE '%INSERT INTO sync_versions%' OR query LIKE '%INSERT INTO "public"."floors"%')`,
         );
         if (Number(w.n) >= 1) return;
         await new Promise((r) => setTimeout(r, 50));
@@ -808,8 +809,10 @@ describe('Sync outbox (e2e)', () => {
     };
     const version = async (pkKey: string) =>
       (
-        await prisma.$queryRawUnsafe<{ hlc: string; peer: string }[]>(
-          `SELECT hlc::text, peer FROM sync_versions WHERE tbl = 'floors' AND "pkKey" = $1`,
+        await prisma.$queryRawUnsafe<
+          { hlc: string; peer: string; deleted: boolean }[]
+        >(
+          `SELECT hlc::text, peer, deleted FROM sync_versions WHERE tbl = 'floors' AND "pkKey" = $1`,
           pkKey,
         )
       )[0];
@@ -887,6 +890,102 @@ describe('Sync outbox (e2e)', () => {
       const v = await version(key(id));
       expect(v.peer).toBe(deviceId);
       expect(BigInt(v.hlc)).toBeGreaterThan(BigInt(remote.hlc));
+    }, 30_000);
+
+    // A remote delete of a key that a local transaction is creating right
+    // now (#81 review 4): the delete must wait for it, then win or lose LWW.
+    const deleteWhileCreating = async (hlcOf: (capHlc: bigint) => bigint) => {
+      const id = randomUUID();
+      const template = await prisma.floor.create({
+        data: { branchId, name: `T-${tag}` },
+      });
+      const [cap] = await outbox([template.id]);
+      await new Promise((r) => setTimeout(r, 5));
+      const commit = await openLocal((tx) =>
+        tx.floor.create({ data: { id, branchId, name: `LocalNew-${tag}` } }),
+      );
+      const remote: SyncChange = {
+        tbl: 'floors',
+        pk: { id },
+        pkKey: key(id),
+        op: 'D',
+        row: null,
+        ts: new Date().toISOString(),
+        hlc: String(hlcOf(BigInt(cap.hlc))),
+        peer: 'branch-race',
+      };
+      const pushed = sync.push('branch-race', [remote]);
+      try {
+        await blockedApplies();
+      } finally {
+        await commit();
+      }
+      return { id, remote, r: await pushed };
+    };
+
+    it('delete: a newer remote delete removes a row created locally meanwhile', async () => {
+      const { id, remote, r } = await deleteWhileCreating(
+        () => BigInt(Date.now() + 1000) << 16n,
+      );
+      expect([r.applied, r.skipped, r.conflicts]).toEqual([1, 0, []]);
+      expect(await prisma.floor.findUnique({ where: { id } })).toBeNull();
+      expect(await version(key(id))).toEqual({
+        hlc: remote.hlc,
+        peer: 'branch-race',
+        deleted: true,
+      });
+    }, 30_000);
+
+    it('delete: an older remote delete keeps a row created locally meanwhile', async () => {
+      const { id, remote, r } = await deleteWhileCreating((h) => h + 1n);
+      expect([r.applied, r.skipped, r.conflicts]).toEqual([0, 1, []]);
+      const row = await prisma.floor.findUniqueOrThrow({ where: { id } });
+      expect(row.name).toBe(`LocalNew-${tag}`);
+      const v = await version(key(id));
+      expect([v.peer, v.deleted]).toEqual([deviceId, false]);
+      expect(BigInt(v.hlc)).toBeGreaterThan(BigInt(remote.hlc));
+    }, 30_000);
+
+    it('a local write that waits on an applied version orders after it', async () => {
+      // An apply has recorded a newer tombstone and not yet committed; a
+      // local insert of that key read the old version before it blocked.
+      const id = randomUUID();
+      const k = key(id);
+      const ahead = String(BigInt(Date.now() + 60_000) << 16n);
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let held!: () => void;
+      const isHeld = new Promise<void>((r) => (held = r));
+      const apply = prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRawUnsafe(
+            `INSERT INTO sync_versions (tbl, "pkKey", hlc, peer, deleted, ts)
+             VALUES ('floors', $1, $2::bigint, 'branch-race', true, now())`,
+            k,
+            ahead,
+          );
+          held();
+          await gate;
+        },
+        { timeout: 30_000 },
+      );
+      await isHeld;
+      // .then() starts the query now (Prisma queries are lazy).
+      const local = prisma.floor
+        .create({ data: { id, branchId, name: `After-${tag}` } })
+        .then((f) => f);
+      try {
+        await blockedApplies();
+      } finally {
+        release();
+        await apply;
+      }
+      await local;
+      const v = await version(k);
+      expect([v.peer, v.deleted]).toEqual([deviceId, false]);
+      expect(BigInt(v.hlc)).toBeGreaterThan(BigInt(ahead));
+      const [e] = await outbox([id]);
+      expect(e.hlc).toBe(v.hlc);
     }, 30_000);
   });
 

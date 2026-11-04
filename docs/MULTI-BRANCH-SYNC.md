@@ -356,6 +356,15 @@ the table list if answered differently:
   re-checks. As a backstop, neither the trigger nor apply ever lowers a
   row's `sync_versions.hlc`, and server compaction keeps each row's
   highest-HLC entry, not its highest seq.
+- **A delete waits for a row being created**: a remote delete of a row that
+  is absent when locked may race a local insert still open on that key. The
+  uncommitted row is invisible to `DELETE`, but its `sync_versions` row is
+  not, so apply upserts the tombstone first (waiting for that writer) with
+  the LWW check in its `WHERE`. If the delete still wins, apply locks and
+  deletes the row the writer committed; if not, it is skipped. A local
+  write's trigger records `greatest(its HLC, current version + 1)` under the
+  version row's lock, so a local write that commits after an applied
+  version always orders after it, in `sync_versions` and in the outbox.
 - **A PC with a wrong clock pauses, it never drops data**: HLCs come from
   each PC's own clock, so `ping` returns the server's `now` and every client
   cycle (and the settings page's connection test) compares it with this

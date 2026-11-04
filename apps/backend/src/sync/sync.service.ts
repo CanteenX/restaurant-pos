@@ -314,6 +314,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         c.hlc,
         c.peer,
       );
+      if (c.op === 'D' && !exists) return this.deleteAbsent(tx, c, t, opts);
       if (await this.writeRow(tx, c, t, exists)) break;
       if (attempt) throw new Error('row changed twice during apply');
     }
@@ -333,6 +334,39 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       c.branchId ?? null,
       c.ts,
     );
+    return true;
+  }
+
+  /**
+   * A delete of a row that was absent when locked. A local transaction may
+   * be creating it right now: its uncommitted row is invisible to DELETE, but
+   * its version row is not, so the tombstone upsert waits for it and then
+   * re-runs the LWW check against that version (#81 review 4). If the delete
+   * still wins, the row that writer committed meanwhile is locked and deleted.
+   */
+  private async deleteAbsent(
+    tx: Tx,
+    c: SyncChange,
+    t: TableMeta,
+    opts: ApplyOpts,
+  ): Promise<boolean> {
+    const won = await tx.$queryRawUnsafe<unknown[]>(
+      `INSERT INTO sync_versions AS v (tbl, "pkKey", hlc, peer, deleted, "branchId", ts)
+       VALUES ($1, $2, $3::bigint, $4, true, $5, $6::timestamptz)
+       ON CONFLICT (tbl, "pkKey") DO UPDATE SET hlc = EXCLUDED.hlc, peer = EXCLUDED.peer,
+         deleted = true, "branchId" = coalesce(EXCLUDED."branchId", v."branchId"), ts = EXCLUDED.ts
+       WHERE NOT (v.hlc > EXCLUDED.hlc OR (v.hlc = EXCLUDED.hlc AND (v.peer = EXCLUDED.peer OR NOT $7::boolean)))
+       RETURNING 1`,
+      c.tbl,
+      c.pkKey,
+      c.hlc,
+      c.peer,
+      c.branchId ?? null,
+      c.ts,
+      opts.tieWins,
+    );
+    if (!won.length) return false;
+    if (await this.lockRow(tx, c, t)) await this.writeRow(tx, c, t, true);
     return true;
   }
 
