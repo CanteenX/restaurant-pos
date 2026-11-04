@@ -244,8 +244,7 @@ containers, not just "it compiles."
       (Phase 7 territory, same as expiry alerts).
 - [x] Procurement: vendor quotations, purchase requests, vendor invoices,
       payment tracking, supplier performance — landed 2026-08-14, see
-      Session log. Automatic reorder suggestions remain out of scope for
-      this pass.
+      Session log.
 - [x] Purchase returns / debit notes API (#63): `POST|GET
       /inventory/purchase-returns`, `GET /inventory/suppliers/:id/balance`.
       Capped at received and still-in-stock batch quantity; deducts stock at
