@@ -64,10 +64,12 @@ export class NotificationsService {
     branchId: string,
     permissionKey: string,
     payload: NotifyPayload,
+    exceptUserId?: string,
   ) {
     const recipients = await this.prisma.user.findMany({
       where: {
         isActive: true,
+        ...(exceptUserId ? { id: { not: exceptUserId } } : {}),
         branches: { some: { branchId } },
         role: {
           permissions: { some: { permission: { key: permissionKey } } },
@@ -96,7 +98,12 @@ export class NotificationsService {
     );
     this.push.sendToUsers(
       recipients.map((r) => r.id),
-      { title: payload.title, body: payload.body, path: this.pathFor(payload), data: { type: payload.type } },
+      {
+        title: payload.title,
+        body: payload.body,
+        path: this.pathFor(payload),
+        data: { type: payload.type },
+      },
     );
   }
 
