@@ -11,6 +11,7 @@ import {
 } from "@/hooks/use-tables";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n/context";
 import { TableShapeIcon } from "./table-shape-icon";
 
 export function EditableTableTile({
@@ -22,6 +23,7 @@ export function EditableTableTile({
   branchId: string | null;
   onEdit: () => void;
 }) {
+  const { t } = useI18n();
   const updateLayout = useUpdateTableLayout(branchId);
   const deleteTable = useDeleteTable(branchId);
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
@@ -64,16 +66,16 @@ export function EditableTableTile({
           rotation: table.rotation,
         },
       ],
-      { onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not save position") },
+      { onError: (err) => toast.error(err instanceof ApiError ? err.message : t("tables.editTile.saveError")) },
     );
     setDragPos(null);
   };
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm(`Delete ${table.name ?? `Table ${table.number}`}?`)) return;
+    if (!confirm(t("tables.editTile.confirmDelete", { name: table.name ?? t("tables.tableLabel", { number: table.number }) }))) return;
     deleteTable.mutate(table.id, {
-      onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not delete table"),
+      onError: (err) => toast.error(err instanceof ApiError ? err.message : t("tables.editTile.deleteError")),
     });
   };
 

@@ -18,7 +18,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useBranch } from "@/hooks/use-branch";
 import { useReservations, useUpdateReservationStatus, type Reservation } from "@/hooks/use-reservations";
 import { useFloors } from "@/hooks/use-tables";
+import { useI18n } from "@/lib/i18n/context";
 import { formatDeposit } from "@/lib/reservation-deposit";
+import { RESERVATION_STATUS_KEY } from "@/lib/reservation-status-keys";
 import { cn } from "@/lib/utils";
 
 const STATUS_STYLES: Record<ReservationStatusDto, string> = {
@@ -40,6 +42,7 @@ const STATUS_FLOW: ReservationStatusDto[] = [
 ];
 
 export default function ReservationsPage() {
+  const { t, plural } = useI18n();
   const { branchId } = useBranch();
   const { data: reservations, isLoading } = useReservations(branchId);
   const { data: floors } = useFloors(branchId);
@@ -54,9 +57,9 @@ export default function ReservationsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-[32px] font-semibold tracking-tight text-foreground">
-            Reservations
+            {t("reservations.title")}
           </h1>
-          <p className="text-sm text-muted-foreground">Upcoming bookings across all floors</p>
+          <p className="text-sm text-muted-foreground">{t("reservations.subtitle")}</p>
         </div>
         <AddReservationDialog branchId={branchId} tables={tables} />
       </div>
@@ -71,9 +74,9 @@ export default function ReservationsPage() {
       <div className="flex flex-wrap gap-2">
         {(
           [
-            ["all", "All"],
-            ["ONLINE", "Online"],
-            ["STAFF", "Offline / walk-in"],
+            ["all", t("reservations.filter.all")],
+            ["ONLINE", t("reservations.filter.online")],
+            ["STAFF", t("reservations.filter.offline")],
           ] as const
         ).map(([key, label]) => (
           <button
@@ -106,7 +109,7 @@ export default function ReservationsPage() {
                 type="button"
                 onClick={() => setSelected(r)}
                 className="flex flex-col text-left transition hover:opacity-80"
-                title="Manage booking"
+                title={t("reservations.manageBooking")}
               >
                 <span className="flex items-center gap-2 text-sm font-medium text-foreground">
                   {r.customerName}
@@ -114,8 +117,8 @@ export default function ReservationsPage() {
                 </span>
                 <span className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Users className="h-3 w-3" />
-                  {r.guestCount} guests
-                  {r.table && <> · {r.table.name ?? `Table ${r.table.number}`}</>}
+                  {plural("reservations.guests", r.guestCount)}
+                  {r.table && <> · {r.table.name ?? t("tables.tableLabel", { number: r.table.number })}</>}
                   {r.phone && <> · {r.phone}</>}
                 </span>
               </button>
@@ -125,7 +128,7 @@ export default function ReservationsPage() {
                     data-testid="reservation-deposit"
                     className="rounded-full bg-secondary px-2 py-0.5 text-xs tabular-nums text-foreground"
                   >
-                    Deposit {formatDeposit(r.deposit)}
+                    {t("reservations.depositValue", { amount: formatDeposit(r.deposit) ?? "" })}
                   </span>
                 )}
                 <span className="text-sm tabular-nums text-muted-foreground">
@@ -142,7 +145,7 @@ export default function ReservationsPage() {
                       variant="secondary"
                       size="icon-sm"
                       className="text-success hover:bg-success/10"
-                      title="Accept reservation"
+                      title={t("reservations.accept")}
                       onClick={() => updateStatus.mutate({ id: r.id, status: "CONFIRMED" })}
                     >
                       <Check className="h-4 w-4" />
@@ -151,7 +154,7 @@ export default function ReservationsPage() {
                       variant="secondary"
                       size="icon-sm"
                       className="text-destructive hover:bg-destructive/10"
-                      title="Reject reservation"
+                      title={t("reservations.reject")}
                       onClick={() => updateStatus.mutate({ id: r.id, status: "CANCELLED" })}
                     >
                       <X className="h-4 w-4" />
@@ -165,7 +168,7 @@ export default function ReservationsPage() {
                       STATUS_STYLES[r.status],
                     )}
                   >
-                    {r.status.replace("_", " ")}
+                    {t(RESERVATION_STATUS_KEY[r.status])}
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     {STATUS_FLOW.map((status) => (
@@ -174,7 +177,7 @@ export default function ReservationsPage() {
                         disabled={status === r.status}
                         onClick={() => updateStatus.mutate({ id: r.id, status })}
                       >
-                        {status.replace("_", " ")}
+                        {t(RESERVATION_STATUS_KEY[status])}
                       </DropdownMenuItem>
                     ))}
                   </DropdownMenuContent>
@@ -184,9 +187,9 @@ export default function ReservationsPage() {
           ))
         ) : (
           <div className="flex flex-col items-center gap-2 py-16 text-center">
-            <p className="text-sm font-medium text-foreground">No reservations yet</p>
+            <p className="text-sm font-medium text-foreground">{t("reservations.empty")}</p>
             <p className="text-sm text-muted-foreground">
-              Add a booking to hold a table for a guest.
+              {t("reservations.emptyHint")}
             </p>
           </div>
         )}
