@@ -1,8 +1,8 @@
 # Multi-branch sync — audit and design
 
-Status: design (issue #80). Implementation follows in #81 (capture/outbox),
-#82 (apply, conflict rules, agent loop) and #83 (two-instance convergence test).
-No code changes in this document.
+Status: design (issue #80); capture and outbox implemented in #81 (see §8).
+Still to come: #82 (apply, conflict rules, agent loop) and #83 (two-instance
+convergence test).
 
 ## 1. Goal
 
@@ -287,3 +287,44 @@ the table list if answered differently:
 2. Is the menu always HQ-controlled, or may a branch manager edit items for
    their own branch? [Default: HQ-owned; a per-branch "local edits allowed"
    flag can be added later.]
+
+## 8. Implementation status
+
+### #81 — capture and outbox (done)
+
+- **Classification** lives in `apps/backend/src/sync/tables.ts`
+  (`SYNC_TABLES` with owner, rule, branch path, derived and stripped
+  columns; `LOCAL_TABLES` with a reason). `tables.spec.ts` parses
+  `schema.prisma` and fails on any unclassified or stale table. Unknown
+  tables never sync. Additions to §4.3: `integration_outbox` (delivery queue
+  for this install's connections) and the new `sync_versions` /
+  `sync_cursors` are Local; `stock_batches` is LWW with `quantityRemaining`
+  Derived, because FIFO consumption updates it in place.
+- **Capture SQL is generated** from that file at every boot
+  (`capture-sql.ts`: `sync_is_synced_table`, `sync_branch_of`,
+  `sync_capture_row`), then `sync_install_triggers()` adds the row trigger
+  to synced tables and drops it from Local ones.
+- **Outbox** (`sync_changes`, migration `20261104130000_sync_outbox`): every
+  entry carries `seq` (order), a per-row **HLC** `hlc = (ms << 16) + counter`
+  that never goes backwards for a row, the writing `peer` (device id), the
+  row's `branchId` (followed through parent rows; kept from the last version
+  for deletes) and the `schemaVersion` it was written with. Deletes are
+  tombstone entries.
+- **`sync_versions`** keeps the newest version of every row (and delete
+  tombstones). Apply compares against it, not the outbox, so pruning can't
+  let an older change win (G7). Same HLC from the same peer = replay →
+  skipped; same HLC from another peer → server wins.
+- **Pruning on acknowledgement**: the client deletes a push page in the same
+  transaction that advances `lastPushSeq`; a crash replays at most that page.
+- **Server compaction** (G8): pulls record each client's position in
+  `sync_cursors`; below the lowest position, superseded entries and
+  tombstones are dropped, while the newest upsert of each row is kept so a
+  new client can still join from 0.
+- `users.twoFactorSecret` is never captured and an incoming row never
+  overwrites it; `role_permissions` / `user_permission_overrides` travel
+  with `permissionKey` (pk and row) and are mapped to the local id on apply.
+- Fixed: outbox pages were ordered by `seq::text` (the output alias), so
+  `1000` sorted before `999` and a page boundary could skip changes.
+
+Not yet: ownership enforcement, branch-filtered pull, HLC-advance on
+receive across rows, derived-column recompute, per-peer keys (#82).
