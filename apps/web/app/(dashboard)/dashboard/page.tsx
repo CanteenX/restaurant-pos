@@ -4,6 +4,7 @@ import { BranchNotice } from "@/components/layout/branch-notice";
 import { AlertTriangle, ChefHat, SlidersHorizontal, ClipboardList, Flame, Globe, HandCoins, ReceiptText, Store, Timer, TrendingUp, Trash2, UserRound, Users, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
+import { BackupWarning } from "@/components/dashboard/backup-warning";
 import { QuickActions } from "@/components/dashboard/quick-actions";
 import { TrendChart } from "@/components/dashboard/trend-chart";
 import { OrderDetailDialog } from "@/components/orders/order-detail-dialog";
@@ -198,6 +199,8 @@ export default function DashboardPage() {
       />
 
       <BranchNotice />
+
+      <BackupWarning />
 
       <PendingOrdersBanner branchId={branchId} />
 
