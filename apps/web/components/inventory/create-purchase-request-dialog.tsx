@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useCreatePurchaseRequest, useIngredients } from "@/hooks/use-inventory";
 import { ApiError } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 
 interface Row {
   ingredientId: string;
@@ -26,6 +27,7 @@ interface Row {
 const emptyRow: Row = { ingredientId: "", quantityRequested: "" };
 
 export function CreatePurchaseRequestDialog({ branchId }: { branchId: string | null }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [notes, setNotes] = useState("");
   const [rows, setRows] = useState<Row[]>([{ ...emptyRow }]);
@@ -52,28 +54,28 @@ export function CreatePurchaseRequestDialog({ branchId }: { branchId: string | n
       },
       {
         onSuccess: (request) => {
-          toast.success(`${request.requestNumber} created`);
+          toast.success(t("inv.pr.createdToast", { number: request.requestNumber }));
           setOpen(false);
           setNotes("");
           setRows([{ ...emptyRow }]);
         },
         onError: (err) =>
-          toast.error(err instanceof ApiError ? err.message : "Could not create purchase request"),
+          toast.error(err instanceof ApiError ? err.message : t("inv.pr.createFailed")),
       },
     );
   };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button size="sm">New request</Button>} />
+      <DialogTrigger render={<Button size="sm">{t("inv.pr.new")}</Button>} />
       <DialogContent className="sm:max-w-lg">
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>New purchase request</DialogTitle>
+            <DialogTitle>{t("inv.pr.dialogTitle")}</DialogTitle>
           </DialogHeader>
 
           <div className="flex flex-col gap-2">
-            <Label>Items</Label>
+            <Label>{t("inv.col.items")}</Label>
             <div className="flex flex-col gap-2">
               {rows.map((row, index) => (
                 <div key={index} className="flex items-center gap-2">
@@ -82,7 +84,7 @@ export function CreatePurchaseRequestDialog({ branchId }: { branchId: string | n
                     onValueChange={(v) => updateRow(index, { ingredientId: v ?? "" })}
                   >
                     <SelectTrigger className="flex-1">
-                      <SelectValue placeholder="Ingredient" />
+                      <SelectValue placeholder={t("inv.col.ingredient")} />
                     </SelectTrigger>
                     <SelectContent>
                       {ingredients?.map((i) => (
@@ -96,7 +98,7 @@ export function CreatePurchaseRequestDialog({ branchId }: { branchId: string | n
                     type="number"
                     min="0"
                     step="0.001"
-                    placeholder="Qty"
+                    placeholder={t("inv.qty")}
                     className="w-24"
                     value={row.quantityRequested}
                     onChange={(e) => updateRow(index, { quantityRequested: e.target.value })}
@@ -121,18 +123,18 @@ export function CreatePurchaseRequestDialog({ branchId }: { branchId: string | n
               onClick={() => setRows((prev) => [...prev, { ...emptyRow }])}
             >
               <Plus className="h-4 w-4" />
-              Add item
+              {t("inv.addItem")}
             </Button>
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label>Notes</Label>
-            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional" />
+            <Label>{t("inv.pr.notes")}</Label>
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t("inv.optional")} />
           </div>
 
           <DialogFooter>
             <Button type="submit" disabled={!canSubmit || createRequest.isPending}>
-              {createRequest.isPending ? "Creating…" : "Create request"}
+              {createRequest.isPending ? t("inv.creating") : t("inv.pr.create")}
             </Button>
           </DialogFooter>
         </form>

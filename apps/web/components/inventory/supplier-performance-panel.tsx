@@ -4,9 +4,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { QueryError } from "@/components/ui/query-error";
 import { useSupplierPerformance } from "@/hooks/use-inventory";
 import { formatCurrency } from "@/lib/format";
+import { useI18n } from "@/lib/i18n/context";
 import {
   describePerformance,
-  formatLeadTime,
   formatOnTimeRate,
   onTimeTone,
 } from "@/lib/supplier-performance";
@@ -35,6 +35,7 @@ export function SupplierPerformancePanel({
   branchId: string | null;
   supplierId: string;
 }) {
+  const { t, plural } = useI18n();
   const { data, isLoading, error, refetch, isFetching } = useSupplierPerformance(branchId, supplierId);
 
   if (isLoading) {
@@ -49,7 +50,7 @@ export function SupplierPerformancePanel({
   if (error) {
     return (
       <div className="p-4">
-        <QueryError error={error} what="supplier performance" onRetry={() => refetch()} retrying={isFetching} />
+        <QueryError error={error} what={t("inv.perf.what")} onRetry={() => refetch()} retrying={isFetching} />
       </div>
     );
   }
@@ -59,18 +60,18 @@ export function SupplierPerformancePanel({
   return (
     <div className="flex flex-col gap-3 p-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Metric label="Purchase orders" value={String(data.totalPurchaseOrders)} />
-        <Metric label="Total spend" value={formatCurrency(data.totalSpend)} />
+        <Metric label={t("inv.perf.purchaseOrders")} value={String(data.totalPurchaseOrders)} />
+        <Metric label={t("inv.perf.totalSpend")} value={formatCurrency(data.totalSpend)} />
         <Metric
-          label="On-time delivery"
+          label={t("inv.perf.onTime")}
           value={formatOnTimeRate(data.onTimeDeliveryRate)}
           className={TONE_CLASS[onTimeTone(data.onTimeDeliveryRate)]}
         />
-        <Metric label="Avg lead time" value={formatLeadTime(data.avgLeadTimeDays)} />
+        <Metric label={t("inv.perf.leadTime")} value={data.avgLeadTimeDays === null ? "—" : plural("inv.perf.days", data.avgLeadTimeDays)} />
       </div>
       {!hasDeliveries && (
         <p className="text-sm text-muted-foreground" data-testid="supplier-no-deliveries">
-          No deliveries received yet. On-time and lead-time figures appear after the first goods receipt.
+          {t("inv.perf.noDeliveries")}
         </p>
       )}
     </div>

@@ -16,6 +16,7 @@ import { PaymentMethodButtons } from "@/components/pos/payment-method-buttons";
 import { Label } from "@/components/ui/label";
 import { useRecordSupplierPayment, type SupplierInvoice } from "@/hooks/use-inventory";
 import { ApiError } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 import { formatCurrency } from "@/lib/format";
 
 const METHODS = ["CASH", "CARD", "UPI", "BANK_TRANSFER", "WALLET", "OTHER"] as const;
@@ -27,6 +28,7 @@ export function RecordPaymentDialog({
   branchId: string | null;
   invoice: SupplierInvoice;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const remaining = Number(invoice.totalAmount) - Number(invoice.amountPaid);
   const [amount, setAmount] = useState(() => String(remaining));
@@ -46,32 +48,35 @@ export function RecordPaymentDialog({
       },
       {
         onSuccess: () => {
-          toast.success("Payment recorded");
+          toast.success(t("inv.payment.done"));
           setOpen(false);
           setReference("");
         },
         onError: (err) =>
-          toast.error(err instanceof ApiError ? err.message : "Could not record payment"),
+          toast.error(err instanceof ApiError ? err.message : t("inv.payment.failed")),
       },
     );
   };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button size="sm" variant="outline">Record payment</Button>} />
+      <DialogTrigger render={<Button size="sm" variant="outline">{t("inv.payment.record")}</Button>} />
       <DialogContent className="sm:max-w-sm">
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>Record a payment</DialogTitle>
+            <DialogTitle>{t("inv.payment.title")}</DialogTitle>
           </DialogHeader>
 
           <p className="text-sm text-muted-foreground">
-            {invoice.invoiceNumber} — {formatCurrency(remaining)} remaining of{" "}
-            {formatCurrency(Number(invoice.totalAmount))}
+            {t("inv.payment.summary", {
+              number: invoice.invoiceNumber,
+              remaining: formatCurrency(remaining),
+              total: formatCurrency(Number(invoice.totalAmount)),
+            })}
           </p>
 
           <div className="flex flex-col gap-2">
-            <Label>Amount</Label>
+            <Label>{t("inv.payment.amount")}</Label>
             <Input
               type="number"
               min="0"
@@ -83,22 +88,22 @@ export function RecordPaymentDialog({
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label>Method</Label>
-            <PaymentMethodButtons methods={METHODS} value={method} onChange={setMethod} label="Payment method" />
+            <Label>{t("inv.payment.method")}</Label>
+            <PaymentMethodButtons methods={METHODS} value={method} onChange={setMethod} label={t("inv.payment.methodLabel")} />
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label>Reference</Label>
+            <Label>{t("inv.payment.reference")}</Label>
             <Input
               value={reference}
               onChange={(e) => setReference(e.target.value)}
-              placeholder="UTR / cheque no. (optional)"
+              placeholder={t("inv.payment.referencePlaceholder")}
             />
           </div>
 
           <DialogFooter>
             <Button type="submit" disabled={!canSubmit || recordPayment.isPending}>
-              {recordPayment.isPending ? "Recording…" : "Record payment"}
+              {recordPayment.isPending ? t("inv.recording") : t("inv.payment.record")}
             </Button>
           </DialogFooter>
         </form>
