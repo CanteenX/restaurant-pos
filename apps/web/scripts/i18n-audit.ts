@@ -3,9 +3,10 @@
 //   pnpm --filter ./apps/web i18n:audit inventory  # every hit in one area
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { areaOf, findHardcodedStrings } from "../lib/i18n/audit.ts";
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const only = process.argv[2];
 
 function* tsxFiles(dir: string): Generator<string> {

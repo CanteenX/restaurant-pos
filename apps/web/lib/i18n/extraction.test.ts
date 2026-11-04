@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { findHardcodedStrings } from "./audit.ts";
 
-const webRoot = new URL("../../", import.meta.url).pathname;
+const webRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 function* tsxFiles(dir: string): Generator<string> {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
