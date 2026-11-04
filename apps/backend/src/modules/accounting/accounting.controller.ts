@@ -14,9 +14,13 @@ import { ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import {
   cashClosingSchema,
+  EXPENSE_STATUSES,
+  expenseDecisionSchema,
   expenseSchema,
   type CashClosingDto,
+  type ExpenseDecisionDto,
   type ExpenseDto,
+  type ExpenseStatus,
   type SessionUser,
 } from '@nventra/types';
 import { Auth } from '../../common/decorators/auth.decorator';
@@ -50,9 +54,68 @@ export class AccountingController {
     @Query('branchId') branchId: string,
     @Query('from') from: string,
     @Query('to') to: string,
+    @Query('status') status?: string,
+  ) {
+    if (status && !EXPENSE_STATUSES.includes(status as ExpenseStatus))
+      throw new BadRequestException('Unknown expense status');
+    await this.access(u, branchId);
+    return this.accounting.listExpenses(
+      branchId,
+      from,
+      to,
+      status as ExpenseStatus | undefined,
+    );
+  }
+
+  /** Approver queue: every PENDING expense for the branch. */
+  @Auth('expenses.approve')
+  @Get('expenses/pending')
+  async pendingExpenses(
+    @CurrentUser() u: SessionUser,
+    @Query('branchId') branchId: string,
   ) {
     await this.access(u, branchId);
-    return this.accounting.listExpenses(branchId, from, to);
+    return this.accounting.listPendingExpenses(branchId);
+  }
+
+  @Auth('expenses.approve')
+  @AuditAction('expense.approved', 'Expense')
+  @Post('expenses/:id/approve')
+  async approveExpense(
+    @CurrentUser() u: SessionUser,
+    @Query('branchId') branchId: string,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(expenseDecisionSchema))
+    body: ExpenseDecisionDto,
+  ) {
+    await this.access(u, branchId);
+    return this.accounting.decideExpense(
+      branchId,
+      id,
+      u.id,
+      'APPROVED',
+      body.note,
+    );
+  }
+
+  @Auth('expenses.approve')
+  @AuditAction('expense.rejected', 'Expense')
+  @Post('expenses/:id/reject')
+  async rejectExpense(
+    @CurrentUser() u: SessionUser,
+    @Query('branchId') branchId: string,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(expenseDecisionSchema))
+    body: ExpenseDecisionDto,
+  ) {
+    await this.access(u, branchId);
+    return this.accounting.decideExpense(
+      branchId,
+      id,
+      u.id,
+      'REJECTED',
+      body.note,
+    );
   }
 
   @Auth('accounting.manage')

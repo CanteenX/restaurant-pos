@@ -18,7 +18,7 @@ describe('AccountingService day windows', () => {
     };
     const time = { tzForBranch: jest.fn().mockResolvedValue('Asia/Kolkata') };
     return {
-      svc: new AccountingService(prisma as never, time as never),
+      svc: new AccountingService(prisma as never, time as never, {} as never),
       prisma,
     };
   }
