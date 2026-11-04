@@ -1,3 +1,4 @@
+import type { TranslationKey } from "@/lib/i18n/context";
 export interface SupplierPerformanceLike {
   totalPurchaseOrders: number;
   onTimeDeliveryRate: number | null;
@@ -26,4 +27,11 @@ export function onTimeTone(rate: number | null): OnTimeTone {
 /** A supplier has "deliveries" once any lead-time or on-time data exists. */
 export function describePerformance(p: SupplierPerformanceLike): { hasDeliveries: boolean } {
   return { hasDeliveries: p.onTimeDeliveryRate !== null || p.avgLeadTimeDays !== null };
+}
+
+/** Dictionary key for the text label shown next to the on-time %, or null with no data. */
+export function onTimeLabelKey(rate: number | null): TranslationKey | null {
+  const tone = onTimeTone(rate);
+  if (tone === "none") return null;
+  return tone === "good" ? "inventory.supplier.good" : tone === "warn" ? "inventory.supplier.atRisk" : "inventory.supplier.poor";
 }

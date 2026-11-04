@@ -7,10 +7,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { IssueGiftCardDialog } from "@/components/gift-cards/issue-gift-card-dialog";
 import { useBranch } from "@/hooks/use-branch";
 import { useGiftCards } from "@/hooks/use-gift-cards";
-import { formatCurrency } from "@/lib/format";
-import { giftCardStatus } from "@/lib/gift-card-format";
+import { useI18n } from "@/lib/i18n/context";
+import { GIFT_CARD_STATUS_KEY, giftCardBadgeVariant, giftCardStatus } from "@/lib/gift-card-format";
 
 export default function GiftCardsPage() {
+  const { t, formatCurrency, formatDate } = useI18n();
   const { branchId } = useBranch();
   const { data: cards, isLoading, error, refetch, isFetching } = useGiftCards(branchId);
 
@@ -18,8 +19,8 @@ export default function GiftCardsPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[32px] font-semibold tracking-tight text-foreground">Gift cards</h1>
-          <p className="text-sm text-muted-foreground">Issue cards and track their balances</p>
+          <h1 className="text-[32px] font-semibold tracking-tight text-foreground">{t("giftCards.title")}</h1>
+          <p className="text-sm text-muted-foreground">{t("giftCards.subtitle")}</p>
         </div>
         <IssueGiftCardDialog branchId={branchId} />
       </div>
@@ -39,19 +40,19 @@ export default function GiftCardsPage() {
               <div className="flex flex-col">
                 <span className="font-mono text-sm font-medium text-foreground">{c.code}</span>
                 <span className="text-xs text-muted-foreground">
-                  Issued {new Date(c.createdAt).toLocaleDateString()} · initial {formatCurrency(c.initialValue)}
+                  {t("giftCards.issued", { date: formatDate(c.createdAt), amount: formatCurrency(c.initialValue) })}
                 </span>
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-sm font-semibold text-foreground">{formatCurrency(c.balance)}</span>
-                <Badge variant="secondary">{giftCardStatus(c)}</Badge>
+                <Badge variant={giftCardBadgeVariant(giftCardStatus(c))}>{t(GIFT_CARD_STATUS_KEY[giftCardStatus(c)])}</Badge>
               </div>
             </div>
           ))
         ) : (
           <div className="flex flex-col items-center gap-2 py-16 text-center">
-            <p className="text-sm font-medium text-foreground">No gift cards yet</p>
-            <p className="text-sm text-muted-foreground">Issue a card to sell prepaid credit.</p>
+            <p className="text-sm font-medium text-foreground">{t("giftCards.emptyTitle")}</p>
+            <p className="text-sm text-muted-foreground">{t("giftCards.emptyBody")}</p>
           </div>
         )}
       </Card>

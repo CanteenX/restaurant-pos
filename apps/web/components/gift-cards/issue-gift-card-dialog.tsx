@@ -13,21 +13,24 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useCustomers } from "@/hooks/use-customers";
+import { CustomerPicker } from "@/components/pos/customer-picker";
+import type { Customer } from "@/hooks/use-customers";
+import { useI18n } from "@/lib/i18n/context";
 import { useIssueGiftCard } from "@/hooks/use-gift-cards";
 import { ApiError } from "@/lib/api";
-import { issueAmountHint, parseIssueAmount } from "@/lib/gift-card-format";
+import { issueAmountHintCode, parseIssueAmount } from "@/lib/gift-card-format";
 
 export function IssueGiftCardDialog({ branchId }: { branchId: string | null }) {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
-  const [customerId, setCustomerId] = useState("");
+  const { t } = useI18n();
+  const [customer, setCustomer] = useState<Customer | null>(null);
   const [issuedCode, setIssuedCode] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const issue = useIssueGiftCard(branchId);
-  const { data: customers } = useCustomers(open ? branchId : null);
   const parsed = parseIssueAmount(amount);
-  const hint = issueAmountHint(amount);
+  const hintCode = issueAmountHintCode(amount);
+  const hint = hintCode === null ? null : t(hintCode === "positive" ? "giftCards.hint.positive" : "giftCards.hint.number");
 
   const close = () => {
     setOpen(false);
@@ -41,7 +44,7 @@ export function IssueGiftCardDialog({ branchId }: { branchId: string | null }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      toast.error("Could not copy — select the code and copy it manually");
+      toast.error(t("giftCards.copyFailed"));
     }
   };
 
@@ -49,45 +52,45 @@ export function IssueGiftCardDialog({ branchId }: { branchId: string | null }) {
     e.preventDefault();
     if (parsed === null) return;
     issue.mutate(
-      { initialValue: parsed, customerId: customerId || undefined },
+      { initialValue: parsed, customerId: customer?.id },
       {
         onSuccess: (card) => {
           setIssuedCode(card.code);
           setAmount("");
-          setCustomerId("");
+          setCustomer(null);
         },
-        onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not issue gift card"),
+        onError: (err) => toast.error(err instanceof ApiError ? err.message : t("giftCards.issueFailed")),
       },
     );
   };
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
-      <DialogTrigger render={<Button size="sm" disabled={!branchId}>Issue gift card</Button>} />
+      <DialogTrigger render={<Button size="sm" disabled={!branchId}>{t("giftCards.issueButton")}</Button>} />
       <DialogContent className="sm:max-w-sm">
         {issuedCode ? (
           <div className="flex flex-col gap-4">
             <DialogHeader>
-              <DialogTitle>Card issued</DialogTitle>
+              <DialogTitle>{t("giftCards.cardIssued")}</DialogTitle>
             </DialogHeader>
-            <p className="text-sm text-muted-foreground">Hand this code to the guest.</p>
+            <p className="text-sm text-muted-foreground">{t("giftCards.handCode")}</p>
             <p data-testid="issued-gift-card-code" className="rounded-lg border bg-muted px-3 py-2 text-center font-mono text-lg tracking-wider select-all">
               {issuedCode}
             </p>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={onCopy}>
-                {copied ? "Copied" : "Copy code"}
+                {copied ? t("giftCards.copied") : t("giftCards.copyCode")}
               </Button>
-              <Button type="button" onClick={close}>Done</Button>
+              <Button type="button" onClick={close}>{t("giftCards.done")}</Button>
             </DialogFooter>
           </div>
         ) : (
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>Issue gift card</DialogTitle>
+            <DialogTitle>{t("giftCards.issueButton")}</DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="gc-amount">Amount</Label>
+            <Label htmlFor="gc-amount">{t("giftCards.amount")}</Label>
             <Input
               id="gc-amount"
               inputMode="decimal"
@@ -104,24 +107,12 @@ export function IssueGiftCardDialog({ branchId }: { branchId: string | null }) {
             )}
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="gc-customer">Customer (optional)</Label>
-            <select
-              id="gc-customer"
-              value={customerId}
-              onChange={(e) => setCustomerId(e.target.value)}
-              className="h-9 rounded-lg border border-input bg-background px-3 text-sm"
-            >
-              <option value="">No customer</option>
-              {customers?.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name ?? c.phone ?? c.email ?? c.id}
-                </option>
-              ))}
-            </select>
+            <Label>{t("giftCards.customerOptional")}</Label>
+            <CustomerPicker branchId={branchId} customer={customer} onSelect={setCustomer} />
           </div>
           <DialogFooter>
             <Button type="submit" disabled={parsed === null || issue.isPending}>
-              {issue.isPending ? "Issuing…" : "Issue card"}
+              {issue.isPending ? t("giftCards.issuing") : t("giftCards.issueCard")}
             </Button>
           </DialogFooter>
         </form>

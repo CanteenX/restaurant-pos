@@ -92,3 +92,8 @@ export function guestShares(input: {
   const taxes = apportion(input.bill.taxAmount, subtotals);
   return subtotals.map((subtotal, g) => ({ guest: g + 1, subtotal, tax: taxes[g], total: totals[g] }));
 }
+
+/** Guest count from the text field, kept within 2..12 (junk falls back to 2). */
+export function clampGuests(text: string): number {
+  return Math.min(12, Math.max(2, Math.floor(Number(text) || 2)));
+}

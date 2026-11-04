@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { apportion, guestShares, splitEqually, unassignedLines, type SplitLine } from "./split-bill.ts";
+import { apportion, clampGuests, guestShares, splitEqually, unassignedLines, type SplitLine } from "./split-bill.ts";
 
 const sum = (xs: number[]) => Math.round(xs.reduce((a, b) => a + b, 0) * 100) / 100;
 
@@ -83,4 +83,12 @@ test("is deterministic for equal inputs", () => {
   };
   assert.deepEqual(guestShares(input), guestShares(input));
   assert.equal(sum(guestShares(input).map((s) => s.total)), 247.77);
+});
+
+test("clampGuests keeps the guest count within 2..12 and defaults junk to 2", () => {
+  assert.equal(clampGuests("1"), 2);
+  assert.equal(clampGuests("99"), 12);
+  assert.equal(clampGuests(""), 2);
+  assert.equal(clampGuests("abc"), 2);
+  assert.equal(clampGuests("5.9"), 5);
 });

@@ -8,6 +8,7 @@ import { useI18n } from "@/lib/i18n/context";
 import {
   describePerformance,
   formatOnTimeRate,
+  onTimeLabelKey,
   onTimeTone,
 } from "@/lib/supplier-performance";
 import { cn } from "@/lib/utils";
@@ -57,6 +58,7 @@ export function SupplierPerformancePanel({
   if (!data) return null;
 
   const { hasDeliveries } = describePerformance(data);
+  const labelKey = onTimeLabelKey(data.onTimeDeliveryRate);
   return (
     <div className="flex flex-col gap-3 p-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -64,7 +66,7 @@ export function SupplierPerformancePanel({
         <Metric label={t("inv.perf.totalSpend")} value={formatCurrency(data.totalSpend)} />
         <Metric
           label={t("inv.perf.onTime")}
-          value={formatOnTimeRate(data.onTimeDeliveryRate)}
+          value={labelKey ? `${formatOnTimeRate(data.onTimeDeliveryRate)} · ${t(labelKey)}` : formatOnTimeRate(data.onTimeDeliveryRate)}
           className={TONE_CLASS[onTimeTone(data.onTimeDeliveryRate)]}
         />
         <Metric label={t("inv.perf.leadTime")} value={data.avgLeadTimeDays === null ? "—" : plural("inv.perf.days", data.avgLeadTimeDays)} />
