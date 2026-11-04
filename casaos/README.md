@@ -29,6 +29,10 @@ don't need to wait for this to land in the official app store:
    password (must match identically between the `postgres` service's
    `POSTGRES_PASSWORD` and the `backend` service's `DATABASE_URL`). Leaving
    the shipped placeholders is not safe beyond a quick local trial.
+   For the in-app **Update now** button, also set `UPDATER_TOKEN` to the
+   same long random value (`openssl rand -hex 32`) in the `backend` and
+   `updater` services. The updater refuses the placeholder, so in-app
+   updates stay off until you change it.
 4. Install. CasaOS pulls the pre-built
    `ghcr.io/canteenx/nventra-pos-backend` and `...-web` images —
    there is no build step, so it works even though CasaOS never touches
