@@ -212,3 +212,37 @@ describe('PettyCashService', () => {
     expect(state.entries).toHaveLength(0);
   });
 });
+
+describe('petty cash schemas', () => {
+  const base = { businessDate: '2026-11-04', reason: 'x' };
+  it('rejects amounts that round to zero paisa', () => {
+    const { pettyCashEntrySchema: s } =
+      jest.requireActual<typeof import('@nventra/types')>('@nventra/types');
+    expect(
+      s.safeParse({ ...base, kind: 'TOP_UP', amount: 0.001 }).success,
+    ).toBe(false);
+    expect(
+      s.safeParse({ ...base, kind: 'PAYOUT', amount: 0.004, category: 'Gas' })
+        .success,
+    ).toBe(false);
+    expect(
+      s.safeParse({ ...base, kind: 'ADJUST', amount: -0.004 }).success,
+    ).toBe(false);
+    expect(s.safeParse({ ...base, kind: 'TOP_UP', amount: 0.01 }).success).toBe(
+      true,
+    );
+    expect(
+      s.safeParse({ ...base, kind: 'ADJUST', amount: -0.01 }).success,
+    ).toBe(true);
+  });
+  it('trims the reconcile note', () => {
+    const { pettyCashReconcileSchema: s } =
+      jest.requireActual<typeof import('@nventra/types')>('@nventra/types');
+    const r = s.parse({
+      businessDate: '2026-11-04',
+      countedCash: 5,
+      note: '  short  ',
+    });
+    expect(r.note).toBe('short');
+  });
+});
