@@ -193,6 +193,7 @@ model Branch {
   suppliers       Supplier[]
   purchaseOrders  PurchaseOrder[]
   goodsReceipts   GoodsReceipt[]
+  purchaseReturns PurchaseReturn[]
   stockBatches    StockBatch[]
   stockMovements  StockMovement[]
   wasteLogs       WasteLog[]
@@ -338,19 +339,20 @@ model User {
   notifications Notification[] @relation("NotificationRecipient")
   deviceTokens  DeviceToken[]
 
-  purchaseOrdersCreated PurchaseOrder[] @relation("PurchaseOrderCreatedBy")
-  goodsReceiptsReceived GoodsReceipt[]  @relation("GoodsReceiptReceivedBy")
-  stockMovementsCreated StockMovement[] @relation("StockMovementCreatedBy")
-  wasteLogsCreated      WasteLog[]      @relation("WasteLogCreatedBy")
-  attendance            Attendance[]
-  deliveriesDriven      Order[]         @relation("OrderDriver")
-  shifts                Shift[]
-  leaveRequests         LeaveRequest[]  @relation("LeaveRequester")
-  leaveDecided          LeaveRequest[]  @relation("LeaveDecider")
-  payProfile            StaffPay?
-  payrollLines          PayrollLine[]
-  expensesCreated       Expense[]
-  expensesDecided       Expense[]       @relation("ExpenseDecider")
+  purchaseOrdersCreated  PurchaseOrder[]  @relation("PurchaseOrderCreatedBy")
+  goodsReceiptsReceived  GoodsReceipt[]   @relation("GoodsReceiptReceivedBy")
+  stockMovementsCreated  StockMovement[]  @relation("StockMovementCreatedBy")
+  wasteLogsCreated       WasteLog[]       @relation("WasteLogCreatedBy")
+  purchaseReturnsCreated PurchaseReturn[] @relation("PurchaseReturnCreatedBy")
+  attendance             Attendance[]
+  deliveriesDriven       Order[]          @relation("OrderDriver")
+  shifts                 Shift[]
+  leaveRequests          LeaveRequest[]   @relation("LeaveRequester")
+  leaveDecided           LeaveRequest[]   @relation("LeaveDecider")
+  payProfile             StaffPay?
+  payrollLines           PayrollLine[]
+  expensesCreated        Expense[]
+  expensesDecided        Expense[]        @relation("ExpenseDecider")
 
   purchaseRequestsRequested PurchaseRequest[]   @relation("PurchaseRequestRequestedBy")
   purchaseRequestsApproved  PurchaseRequest[]   @relation("PurchaseRequestApprovedBy")
@@ -739,13 +741,14 @@ model Ingredient {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  recipeLines        RecipeIngredient[]
-  directMenuItems    MenuItem[]          @relation("DirectStockItem")
-  purchaseOrderItems PurchaseOrderItem[]
-  goodsReceiptItems  GoodsReceiptItem[]
-  stockBatches       StockBatch[]
-  stockMovements     StockMovement[]
-  wasteLogs          WasteLog[]
+  recipeLines         RecipeIngredient[]
+  directMenuItems     MenuItem[]           @relation("DirectStockItem")
+  purchaseOrderItems  PurchaseOrderItem[]
+  goodsReceiptItems   GoodsReceiptItem[]
+  stockBatches        StockBatch[]
+  stockMovements      StockMovement[]
+  wasteLogs           WasteLog[]
+  purchaseReturnItems PurchaseReturnItem[]
 
   purchaseRequestItems   PurchaseRequestItem[]
   supplierQuotationItems SupplierQuotationItem[]
@@ -794,6 +797,7 @@ model Supplier {
 
   quotations SupplierQuotation[]
   invoices   SupplierInvoice[]
+  returns    PurchaseReturn[]
 
   preferredFor Ingredient[] @relation("IngredientPreferredSupplier")
 
@@ -874,6 +878,7 @@ model GoodsReceipt {
 
   items    GoodsReceiptItem[]
   invoices SupplierInvoice[]
+  returns  PurchaseReturn[]
 
   @@unique([branchId, grnNumber])
   @@index([branchId])
@@ -896,7 +901,8 @@ model GoodsReceiptItem {
   expiryDate  DateTime?
   createdAt   DateTime  @default(now())
 
-  stockBatch StockBatch?
+  stockBatch  StockBatch?
+  returnItems PurchaseReturnItem[]
 
   @@index([goodsReceiptId])
   @@map("goods_receipt_items")
@@ -1077,9 +1083,72 @@ model StockBatch {
 
   stockMovements StockMovement[]
   wasteLogs      WasteLog[]
+  returnItems    PurchaseReturnItem[]
 
   @@index([branchId, ingredientId, receivedAt])
   @@map("stock_batches")
+}
+
+// Goods sent back to a supplier (damaged / wrong / expired), always against
+// one goods receipt so the returned quantity can be capped at what was
+// received. `totalAmount` is the debit note value: server-computed from each
+// line's received batch unit cost, never from client input. The supplier's
+// payable balance (invoices - payments - returns) is derived on demand.
+enum PurchaseReturnReason {
+  DAMAGED
+  WRONG_ITEM
+  EXPIRED
+  QUALITY
+  EXCESS
+  OTHER
+}
+
+model PurchaseReturn {
+  id       String @id @default(cuid())
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  supplierId     String
+  supplier       Supplier     @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  goodsReceiptId String
+  goodsReceipt   GoodsReceipt @relation(fields: [goodsReceiptId], references: [id], onDelete: Restrict)
+
+  returnNumber String // also the debit note number, e.g. DN-0001
+  reason       PurchaseReturnReason
+  notes        String?
+  totalAmount  Decimal              @db.Decimal(12, 2)
+
+  createdById String
+  createdBy   User     @relation("PurchaseReturnCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  items PurchaseReturnItem[]
+
+  @@unique([branchId, returnNumber])
+  @@index([branchId, supplierId])
+  @@index([goodsReceiptId])
+  @@map("purchase_returns")
+}
+
+model PurchaseReturnItem {
+  id               String         @id @default(cuid())
+  purchaseReturnId String
+  purchaseReturn   PurchaseReturn @relation(fields: [purchaseReturnId], references: [id], onDelete: Cascade)
+
+  goodsReceiptItemId String
+  goodsReceiptItem   GoodsReceiptItem @relation(fields: [goodsReceiptItemId], references: [id], onDelete: Restrict)
+  ingredientId       String
+  ingredient         Ingredient       @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+  stockBatchId       String?
+  stockBatch         StockBatch?      @relation(fields: [stockBatchId], references: [id], onDelete: SetNull)
+
+  quantity  Decimal @db.Decimal(12, 3)
+  unitCost  Decimal @db.Decimal(12, 4)
+  lineTotal Decimal @db.Decimal(12, 2)
+
+  @@index([purchaseReturnId])
+  @@index([goodsReceiptItemId])
+  @@map("purchase_return_items")
 }
 
 enum StockMovementType {
@@ -1088,6 +1157,7 @@ enum StockMovementType {
   ADJUSTMENT
   CONSUMPTION
   REVERSAL // compensating +qty when sold items are physically returned
+  PURCHASE_RETURN // -qty sent back to the supplier (debit note)
 }
 
 // How selling a menu item moves inventory.

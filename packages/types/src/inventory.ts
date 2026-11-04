@@ -130,6 +130,33 @@ export const goodsReceiptSchema = z.object({
 });
 export type GoodsReceiptDto = z.infer<typeof goodsReceiptSchema>;
 
+// Purchase returns (debit notes): goods sent back to the supplier against a
+// specific goods receipt. Amounts are never taken from the client — each
+// line is valued at the received batch's own unit cost on the server.
+export const purchaseReturnReasonSchema = z.enum([
+  "DAMAGED",
+  "WRONG_ITEM",
+  "EXPIRED",
+  "QUALITY",
+  "EXCESS",
+  "OTHER",
+]);
+export type PurchaseReturnReason = z.infer<typeof purchaseReturnReasonSchema>;
+
+export const purchaseReturnItemSchema = z.object({
+  goodsReceiptItemId: z.string().min(1),
+  quantity: z.coerce.number().positive().max(1_000_000),
+});
+export type PurchaseReturnItemDto = z.infer<typeof purchaseReturnItemSchema>;
+
+export const purchaseReturnSchema = z.object({
+  goodsReceiptId: z.string().min(1),
+  reason: purchaseReturnReasonSchema,
+  notes: z.string().trim().max(500).optional(),
+  items: z.array(purchaseReturnItemSchema).min(1).max(200),
+});
+export type PurchaseReturnDto = z.infer<typeof purchaseReturnSchema>;
+
 export const wasteReasonSchema = z.enum([
   "EXPIRED",
   "SPOILED",
