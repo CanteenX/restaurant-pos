@@ -29,6 +29,7 @@ import {
 import { useFloors, type RestaurantTable } from "@/hooks/use-tables";
 import { ApiError } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
+import { useI18n } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 
 export default function PosPage() {
@@ -40,6 +41,7 @@ export default function PosPage() {
 }
 
 function PosPageInner() {
+  const { t } = useI18n();
   const { branchId, isLoading: branchLoading } = useBranch();
   const { note, clear: clearNote, toast } = useNoteToast();
   const floorsQuery = useFloors(branchId);
@@ -271,17 +273,17 @@ function PosPageInner() {
           className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <Scale className="h-3.5 w-3.5" />
-          Weigh item
+          {t("pos.page.weigh")}
         </button>
         <a
           href="/customer-display"
           target="_blank"
           rel="noreferrer"
           className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          title="Opens the customer-facing screen in a new window — drag it to the second monitor"
+          title={t("pos.page.customerDisplayHint")}
         >
           <MonitorSmartphone className="h-3.5 w-3.5" />
-          Customer display
+          {t("pos.page.customerDisplay")}
         </a>
         <PairDisplayButton branchId={branchId} />
       </div>
@@ -326,7 +328,7 @@ function PosPageInner() {
               className="mb-3 -ml-1 flex items-center gap-1 text-sm font-medium text-muted-foreground lg:hidden"
             >
               <ChevronLeft className="h-4 w-4" />
-              Back to menu
+              {t("pos.page.backToMenu")}
             </button>
             {activeOrder ? (
               <CheckoutPanel

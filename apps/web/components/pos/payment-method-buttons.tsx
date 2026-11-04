@@ -10,17 +10,18 @@ import {
   Wallet,
   type LucideIcon,
 } from "lucide-react";
+import { useI18n, type TranslationKey } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 
-const META: Record<string, { label: string; Icon: LucideIcon }> = {
-  CASH: { label: "Cash", Icon: Banknote },
-  CARD: { label: "Card", Icon: CreditCard },
-  UPI: { label: "UPI", Icon: QrCode },
-  WALLET: { label: "Wallet", Icon: Wallet },
-  BANK_TRANSFER: { label: "Bank", Icon: Building2 },
-  GIFT_CARD: { label: "Gift card", Icon: Gift },
-  STORE_CREDIT: { label: "Store credit", Icon: Undo2 },
-  OTHER: { label: "Other", Icon: Wallet },
+const META: Record<string, { label: TranslationKey | null; Icon: LucideIcon }> = {
+  CASH: { label: "pos.pay.cash", Icon: Banknote },
+  CARD: { label: "pos.pay.card", Icon: CreditCard },
+  UPI: { label: null, Icon: QrCode },
+  WALLET: { label: "pos.pay.wallet", Icon: Wallet },
+  BANK_TRANSFER: { label: "pos.pay.bank", Icon: Building2 },
+  GIFT_CARD: { label: "pos.pay.giftCard", Icon: Gift },
+  STORE_CREDIT: { label: "pos.pay.storeCredit", Icon: Undo2 },
+  OTHER: { label: "pos.pay.other", Icon: Wallet },
 };
 
 // One-tap payment method picker (replaces the dropdowns): big icon buttons
@@ -29,21 +30,24 @@ export function PaymentMethodButtons<T extends string>({
   methods,
   value,
   onChange,
-  label = "Payment method",
+  label,
 }: {
   methods: readonly T[];
   value: T;
   onChange: (m: T) => void;
   label?: string;
 }) {
+  const { t } = useI18n();
   return (
     <div
       className={cn("grid gap-2", methods.length > 4 ? "grid-cols-3" : "grid-cols-4")}
       role="radiogroup"
-      aria-label={label}
+      aria-label={label ?? t("pos.checkout.paymentMethod")}
     >
       {methods.map((m) => {
-        const { label: text, Icon } = META[m] ?? { label: m, Icon: Wallet };
+        const meta = META[m] ?? { label: null, Icon: Wallet };
+        const { Icon } = meta;
+        const text = meta.label ? t(meta.label) : m;
         const active = value === m;
         return (
           <button

@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { MenuItem } from "@/hooks/use-menu";
-import { formatCurrency } from "@/lib/format";
+import { useI18n } from "@/lib/i18n/context";
 import {
   SimulatedScale,
   StableWeightDetector,
@@ -25,6 +25,7 @@ interface Props {
 // Sell-by-weight flow. Reads the software scale simulator; real adapters
 // (serial / HID / network) plug in through ScaleAdapter.
 export function ScaleDialog({ open, items, onClose, onConfirm }: Props) {
+  const { t, formatCurrency } = useI18n();
   const scale = useMemo(() => new SimulatedScale(), []);
   const detector = useRef(new StableWeightDetector({ readings: 3, toleranceGrams: 2 }));
   const [itemId, setItemId] = useState("");
@@ -52,11 +53,11 @@ export function ScaleDialog({ open, items, onClose, onConfirm }: Props) {
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Weigh item</DialogTitle>
+          <DialogTitle>{t("pos.scale.title")}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1">
-            <Label htmlFor="scale-item">Item</Label>
+            <Label htmlFor="scale-item">{t("pos.scale.item")}</Label>
             <select
               id="scale-item"
               className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
@@ -67,7 +68,7 @@ export function ScaleDialog({ open, items, onClose, onConfirm }: Props) {
                 setPricePerKg(it ? String(Number(it.price)) : "");
               }}
             >
-              <option value="">Select an item…</option>
+              <option value="">{t("pos.scale.selectItem")}</option>
               {items.map((i) => (
                 <option key={i.id} value={i.id}>
                   {i.name}
@@ -77,15 +78,15 @@ export function ScaleDialog({ open, items, onClose, onConfirm }: Props) {
           </div>
           <div className="grid grid-cols-3 gap-2">
             <div className="space-y-1">
-              <Label htmlFor="scale-price">Price / kg</Label>
+              <Label htmlFor="scale-price">{t("pos.scale.pricePerKg")}</Label>
               <Input id="scale-price" inputMode="decimal" value={pricePerKg} onChange={(e) => setPricePerKg(e.target.value)} />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="scale-tare">Tare (g)</Label>
+              <Label htmlFor="scale-tare">{t("pos.scale.tare")}</Label>
               <Input id="scale-tare" inputMode="numeric" value={tare} onChange={(e) => setTare(e.target.value)} />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="scale-sim">Simulator (g)</Label>
+              <Label htmlFor="scale-sim">{t("pos.scale.simulator")}</Label>
               <Input
                 id="scale-sim"
                 inputMode="numeric"
@@ -100,18 +101,18 @@ export function ScaleDialog({ open, items, onClose, onConfirm }: Props) {
           </div>
           <div className="rounded-lg border border-border p-3 text-sm" data-testid="scale-readout">
             {settled === null ? (
-              <span className="text-muted-foreground">Settling…</span>
+              <span className="text-muted-foreground">{t("pos.scale.settling")}</span>
             ) : (
               <>
-                <div>Net weight: <span data-testid="scale-net">{formatNetWeight(net)}</span></div>
-                <div>Price: <span data-testid="scale-price-total">{formatCurrency(price)}</span></div>
+                <div>{t("pos.scale.netWeight")} <span data-testid="scale-net">{formatNetWeight(net)}</span></div>
+                <div>{t("pos.scale.price")} <span data-testid="scale-price-total">{formatCurrency(price)}</span></div>
               </>
             )}
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button
             disabled={!item || settled === null || net <= 0 || price <= 0}
@@ -121,7 +122,7 @@ export function ScaleDialog({ open, items, onClose, onConfirm }: Props) {
               onClose();
             }}
           >
-            Add to cart
+            {t("pos.addToCart")}
           </Button>
         </DialogFooter>
       </DialogContent>
