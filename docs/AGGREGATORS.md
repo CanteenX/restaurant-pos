@@ -224,3 +224,36 @@ Canonical `order.created` gains optional fields; nothing monetary is trusted:
   map; "Retry failed" button.
 - Per-partner mappers (UrbanPiper, Petpooja, ...) are a new issue each, opened
   only once a restaurant supplies sandbox credentials.
+
+## 6. Running the mock partner (#57)
+
+`apps/backend/test/mocks/aggregator-mock.ts` is a dependency-free fake of a
+partner API. It implements the four calls from 4.2 (`GET /v1/ping`,
+`POST /v1/orders/{id}/status`, `POST /v1/items/availability`, `PUT /v1/menu`),
+checks `Authorization: Bearer <apiKey>`, verifies the request signature
+(same HMAC as `signAggregatorBody`), honours `Idempotency-Key`, and records
+every call in `mock.calls`.
+
+Start it standalone:
+
+```bash
+MOCK_API_KEY=mock_api_key MOCK_WEBHOOK_SECRET=mock_webhook_secret_123 \
+  pnpm --filter ./apps/backend mock:aggregator      # http://127.0.0.1:4010
+```
+
+Use it from a test:
+
+```ts
+const mock = new AggregatorMock({ apiKey, webhookSecret });
+const baseUrl = await mock.start();           // ephemeral port
+await mock.push(webhookUrl, orderCreated, { secret: webhookSecret });
+mock.failNext('429', { times: 2, path: '/v1/orders/zc-1/status' });
+mock.orderStatuses('zc-1');                   // ['ACCEPTED', 'READY']
+await mock.stop();
+```
+
+Simulated conditions: `failNext('500' | '401' | '429' | 'timeout')`
+(optionally limited by `times` / `path`; 429 sends `Retry-After: 1`),
+duplicate delivery (`push(..., { times: 2 })`), out-of-order delivery
+(`pushSequence(..., { reverse: true })`), bad signature (`badSignature`) and
+stale timestamp (`ageSeconds`). Its unit tests run with `pnpm test`.
