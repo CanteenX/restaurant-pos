@@ -16,6 +16,21 @@ const r = (
 });
 
 describe('computePriceVariance', () => {
+  it('keeps the 6dp per-base-unit cost scale (#69)', () => {
+    // ₹123.45/kg received into a G item is 0.12345/g, not 0.1235
+    const [row] = computePriceVariance(
+      [r(0.12345, 1, { unit: 'G' }), r(0.123456, 2, { unit: 'G' })],
+      [],
+    );
+    expect(row).toMatchObject({
+      lastCost: 0.123456,
+      previousCost: 0.12345,
+      minCost: 0.12345,
+      maxCost: 0.123456,
+      avgCost: 0.123453,
+    });
+  });
+
   it('computes last, avg, min, max and variance vs previous receipt', () => {
     const rows = computePriceVariance([r(100, 3), r(80, 1), r(120, 2)], []);
     expect(rows).toHaveLength(1);

@@ -68,12 +68,14 @@ export function toBaseQuantity(
   base: Unit,
   packs: PackSizes,
 ): number {
-  if (!from || from === base) return quantity;
-  const exact = new D(quantity).mul(conversionFactor(from, base, packs));
+  // Base-unit entries go through the same rounding as converted ones.
+  const factor =
+    !from || from === base ? new D(1) : conversionFactor(from, base, packs);
+  const exact = new D(quantity).mul(factor);
   const rounded = exact.toDecimalPlaces(3, D.ROUND_HALF_UP);
   if (rounded.isZero() && !exact.isZero()) {
     throw new UnitConversionError(
-      `${quantity} ${from} is too small to record in ${base} (3 decimal places)`,
+      `${quantity} ${from ?? base} is too small to record in ${base} (3 decimal places)`,
     );
   }
   return rounded.toNumber();

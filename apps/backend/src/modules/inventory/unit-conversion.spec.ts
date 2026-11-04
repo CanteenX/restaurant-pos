@@ -1,3 +1,4 @@
+import { unitConversionSchema } from '@nventra/types';
 import {
   UnitConversionError,
   conversionFactor,
@@ -163,5 +164,35 @@ describe('unit conversion', () => {
         validatePackSizes('KG', [{ unit: 'PACK', factor: 0 }]),
       ).toThrow(/positive/);
     });
+  });
+});
+
+describe('unitConversionSchema factor', () => {
+  // ingredient_unit_conversions.factor is DECIMAL(14,6): the stored factor
+  // must be exactly what the user entered, never rounded or zeroed.
+  const parse = (factor: unknown) =>
+    unitConversionSchema.safeParse({ unit: 'PACK', factor });
+
+  it.each([25, 0.5, 0.000001, '0.020000', 1_000_000])('accepts %p', (f) => {
+    expect(parse(f).success).toBe(true);
+  });
+
+  it.each([0, -1, 0.0000004, 0.0000333, 1.1234567, 1_000_001])(
+    'rejects %p',
+    (f) => {
+      expect(parse(f).success).toBe(false);
+    },
+  );
+});
+
+describe('base-unit identity path', () => {
+  it('rounds base-unit entries to 3dp like converted ones', () => {
+    expect(toBaseQuantity(1.23456, undefined, 'KG', none)).toBe(1.235);
+    expect(toBaseQuantity(1.23456, 'KG', 'KG', none)).toBe(1.235);
+  });
+  it('rejects a base-unit entry too small to store', () => {
+    expect(() => toBaseQuantity(0.0004, undefined, 'KG', none)).toThrow(
+      UnitConversionError,
+    );
   });
 });

@@ -8,6 +8,8 @@
 --    each affected table (ingredients, stock_batches, goods_receipt_items,
 --    waste_logs, stock_transfers) under an ACCESS EXCLUSIVE lock, so on a
 --    large install those tables are briefly locked while this migration runs.
+--    Not cleanly reversible: narrowing back to DECIMAL(12,4) would round any
+--    6dp cost written since, so rolling back means restoring from a backup.
 --  * New nullable "entered*" columns record what the user typed; NULL means
 --    the base unit (every existing row).
 --  * New per-ingredient pack-size table.

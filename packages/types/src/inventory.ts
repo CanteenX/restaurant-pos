@@ -51,8 +51,16 @@ const enteredUnit = ingredientUnitSchema.optional();
 
 export const unitConversionSchema = z.object({
   unit: ingredientUnitSchema,
-  // How many base units one `unit` holds, e.g. PACK = 25 (KG).
-  factor: z.coerce.number().positive().max(1_000_000),
+  // How many base units one `unit` holds, e.g. PACK = 25 (KG). Stored as
+  // DECIMAL(14,6), so at most 6 decimal places: anything finer would be
+  // rounded (or zeroed) silently and skew every later conversion.
+  factor: z.coerce
+    .number()
+    .min(0.000001)
+    .max(1_000_000)
+    .refine((v) => Number(v.toFixed(6)) === v, {
+      message: "Use at most 6 decimal places",
+    }),
 });
 export type UnitConversionDto = z.infer<typeof unitConversionSchema>;
 
@@ -209,7 +217,9 @@ export const supplierQuotationItemSchema = z.object({
   quantityQuoted: z.coerce.number().positive(),
   unitPrice: z.coerce.number().nonnegative(),
 });
-export type SupplierQuotationItemDto = z.infer<typeof supplierQuotationItemSchema>;
+export type SupplierQuotationItemDto = z.infer<
+  typeof supplierQuotationItemSchema
+>;
 
 export const supplierQuotationSchema = z.object({
   supplierId: z.string(),
