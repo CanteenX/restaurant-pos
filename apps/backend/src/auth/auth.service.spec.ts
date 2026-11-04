@@ -1,5 +1,9 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
-import { HttpException, HttpStatus } from '@nestjs/common';
+import {
+  HttpException,
+  HttpStatus,
+  UnauthorizedException,
+} from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import type { AuditService } from '../audit/audit.service';
 import {
@@ -7,6 +11,7 @@ import {
   PIN_MAX_FAILURES,
   PIN_IP_MAX_FAILURES,
 } from './auth.service';
+import { DUMMY_PASSWORD_HASH } from './dummy-hash';
 import { FailureLockout } from './failure-lockout';
 
 // Real bcrypt, but cheap rounds (the dummy hash is cost 12) and a spy-able compare.
@@ -191,7 +196,8 @@ describe('AuthService.pinLogin', () => {
     expect((await attempt(svc, '0000', '10.9.9.8', 'fresh-user')).status).toBe(
       401,
     );
-  });
+    // Each unknown-user attempt is a real cost-12 compare on the dummy hash.
+  }, 30_000);
 
   it('gives two-factor accounts the generic failure for right and wrong PINs', async () => {
     const u = makeUser({ twoFactorEnabled: true });
@@ -241,5 +247,117 @@ describe('AuthService session tokens', () => {
       auth_time: expect.any(Number) as number,
     });
     expect(out.token).toBe('token-1');
+  });
+});
+
+// --- Login timing (#20): every failed credential check costs one bcrypt compare.
+
+const COST = 12;
+const loginCompare = bcrypt.compare as unknown as jest.Mock;
+const hashesCompared = () =>
+  loginCompare.mock.calls.map((c: unknown[]) => c[1] as string);
+
+function makeLoginUser() {
+  return {
+    ...makeUser({ role: { name: 'CASHIER', permissions: [] } }),
+    phone: '+91 98765 43210',
+    passwordHash: bcrypt.hashSync('right-password', 4),
+  };
+}
+
+function loginSetup(user: ReturnType<typeof makeLoginUser> | null) {
+  const prisma = {
+    user: {
+      findFirst: jest.fn().mockResolvedValue(user),
+      findMany: jest.fn().mockResolvedValue(user ? [user] : []),
+      findUnique: jest.fn().mockResolvedValue(user),
+    },
+  };
+  const jwt = { signAsync: jest.fn().mockResolvedValue('token') };
+  const audit = { record: jest.fn().mockResolvedValue(undefined) };
+  const svc = new AuthService(
+    prisma as never,
+    jwt as never,
+    { verifyLogin: jest.fn() } as never,
+    audit as unknown as AuditService,
+  );
+  return { svc };
+}
+
+describe('dummy hash', () => {
+  it('is a real bcrypt hash with the same cost as stored passwords', () => {
+    expect(bcrypt.getRounds(DUMMY_PASSWORD_HASH)).toBe(COST);
+    expect(DUMMY_PASSWORD_HASH).toHaveLength(60);
+  });
+});
+
+describe('AuthService.login timing', () => {
+  const known = makeLoginUser();
+  beforeEach(() => loginCompare.mockClear());
+
+  it('unknown email: compares once against the dummy hash, same error', async () => {
+    const { svc } = loginSetup(null);
+    const err = await svc
+      .login({ email: 'nobody@x.test', password: 'whatever' })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UnauthorizedException);
+    expect((err as Error).message).toBe('Invalid login ID or password');
+    expect(hashesCompared()).toEqual([DUMMY_PASSWORD_HASH]);
+  });
+
+  it('known email, wrong password: compares exactly once, same error', async () => {
+    const { svc } = loginSetup(known);
+    const err = await svc
+      .login({ email: 'asha@x.test', password: 'wrong' })
+      .catch((e: unknown) => e);
+    expect((err as Error).message).toBe('Invalid login ID or password');
+    expect(hashesCompared()).toEqual([known.passwordHash]);
+  });
+
+  it('known email, right password: compares exactly once and logs in', async () => {
+    const { svc } = loginSetup(known);
+    await expect(
+      svc.login({ email: 'asha@x.test', password: 'right-password' }),
+    ).resolves.toMatchObject({ token: 'token' });
+    expect(loginCompare).toHaveBeenCalledTimes(1);
+  });
+
+  it('unknown phone: still compares once against the dummy hash', async () => {
+    const { svc } = loginSetup(null);
+    await expect(
+      svc.login({ email: '9876543210', password: 'whatever' }),
+    ).rejects.toThrow('Invalid login ID or password');
+    expect(hashesCompared()).toEqual([DUMMY_PASSWORD_HASH]);
+  });
+
+  it('too-short phone ID: still compares once', async () => {
+    const { svc } = loginSetup(null);
+    await expect(
+      svc.login({ email: '123', password: 'whatever' }),
+    ).rejects.toThrow('Invalid login ID or password');
+    expect(hashesCompared()).toEqual([DUMMY_PASSWORD_HASH]);
+  });
+
+  it('known phone, wrong password: compares exactly once', async () => {
+    const { svc } = loginSetup(known);
+    await expect(
+      svc.login({ email: '98765 43210', password: 'wrong' }),
+    ).rejects.toThrow('Invalid login ID or password');
+    expect(hashesCompared()).toEqual([known.passwordHash]);
+  });
+});
+
+describe('AuthService.pinLogin timing', () => {
+  beforeEach(() => loginCompare.mockClear());
+
+  it.each([
+    ['unknown user', null],
+    ['user without a PIN', makeUser({ pinHash: null })],
+  ])('%s: compares once against the dummy hash', async (_label, user) => {
+    const { svc } = setup(user);
+    await expect(
+      svc.pinLogin({ userId: 'u1', pin: '1234' }, '10.9.9.9'),
+    ).rejects.toThrow('PIN login not available');
+    expect(hashesCompared()).toEqual([DUMMY_PASSWORD_HASH]);
   });
 });
