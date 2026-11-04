@@ -1,11 +1,13 @@
 "use client";
 
+import type { IngredientUnit } from "@nventra/types";
 import { Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { UnitSelect, usePackSizes } from "@/components/inventory/unit-select";
 import {
   useIngredients,
   useRecipe,
@@ -25,6 +27,8 @@ const MODES: { value: InventoryTracking; label: string; hint: string }[] = [
 interface Line {
   ingredientId: string;
   quantity: string;
+  /** Entered unit; undefined = the ingredient's base unit. */
+  unit?: IngredientUnit;
 }
 
 const selectClass =
@@ -82,6 +86,7 @@ function TrackingForm({
   const [directQty, setDirectQty] = useState(initialDirectQty);
   const [lines, setLines] = useState<Line[]>(initialLines);
 
+  const base = (id: string) => ingredients?.find((i) => i.id === id)?.unit;
   const unit = (id: string) => ingredients?.find((i) => i.id === id)?.unit.toLowerCase() ?? "";
   const incomplete =
     (mode === "DIRECT" && !directId) || (mode === "RECIPE" && lines.filter((l) => l.ingredientId).length === 0);
@@ -91,7 +96,11 @@ function TrackingForm({
       if (mode === "RECIPE") {
         const clean = lines
           .filter((l) => l.ingredientId && Number(l.quantity) > 0)
-          .map((l) => ({ ingredientId: l.ingredientId, quantity: Number(l.quantity) }));
+          .map((l) => ({
+            ingredientId: l.ingredientId,
+            quantity: Number(l.quantity),
+            unit: l.unit && l.unit !== base(l.ingredientId) ? l.unit : undefined,
+          }));
         await setRecipe.mutateAsync(clean);
         await setTracking.mutateAsync({ inventoryTracking: "RECIPE" });
       } else if (mode === "DIRECT") {
@@ -154,12 +163,12 @@ function TrackingForm({
       {mode === "RECIPE" && (
         <div className="flex flex-col gap-2">
           {lines.map((line, idx) => (
-            <div key={idx} className="grid grid-cols-[1fr_88px_40px] items-end gap-2">
+            <div key={idx} className="grid grid-cols-[1fr_88px_88px_40px] items-start gap-2">
               <select
                 aria-label="Ingredient"
                 className={selectClass}
                 value={line.ingredientId}
-                onChange={(e) => setLines(lines.map((l, i) => (i === idx ? { ...l, ingredientId: e.target.value } : l)))}
+                onChange={(e) => setLines(lines.map((l, i) => (i === idx ? { ...l, ingredientId: e.target.value, unit: undefined } : l)))}
               >
                 <option value="">Ingredient…</option>
                 {ingredients?.map((i) => (
@@ -175,6 +184,13 @@ function TrackingForm({
                 step="0.001"
                 value={line.quantity}
                 onChange={(e) => setLines(lines.map((l, i) => (i === idx ? { ...l, quantity: e.target.value } : l)))}
+              />
+              <RecipeLineUnit
+                branchId={branchId}
+                ingredientId={line.ingredientId}
+                base={base(line.ingredientId)}
+                line={line}
+                onChange={(u) => setLines(lines.map((l, i) => (i === idx ? { ...l, unit: u } : l)))}
               />
               <Button type="button" variant="ghost" size="icon" aria-label="Remove ingredient" onClick={() => setLines(lines.filter((_, i) => i !== idx))}>
                 <Trash2 className="h-4 w-4" />
@@ -193,4 +209,22 @@ function TrackingForm({
       </Button>
     </section>
   );
+}
+
+function RecipeLineUnit({
+  branchId,
+  ingredientId,
+  base,
+  line,
+  onChange,
+}: {
+  branchId: string | null;
+  ingredientId: string;
+  base: IngredientUnit | undefined;
+  line: Line;
+  onChange: (unit: IngredientUnit) => void;
+}) {
+  const packs = usePackSizes(branchId, ingredientId || null);
+  if (!base) return <span />;
+  return <UnitSelect base={base} packs={packs} value={line.unit ?? base} onChange={onChange} quantity={line.quantity} />;
 }

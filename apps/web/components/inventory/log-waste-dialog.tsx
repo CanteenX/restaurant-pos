@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { toast } from "@/lib/toast";
-import type { WasteReason } from "@nventra/types";
+import type { IngredientUnit, WasteReason } from "@nventra/types";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useIngredients, useLogWaste } from "@/hooks/use-inventory";
+import { UnitSelect, usePackSizes } from "@/components/inventory/unit-select";
 import { ApiError } from "@/lib/api";
 import { useI18n } from "@/lib/i18n/context";
 
@@ -26,24 +27,28 @@ export function LogWasteDialog({ branchId }: { branchId: string | null }) {
   const [open, setOpen] = useState(false);
   const [ingredientId, setIngredientId] = useState("");
   const [quantity, setQuantity] = useState("");
+  const [enteredUnit, setEnteredUnit] = useState<IngredientUnit | null>(null);
   const [reason, setReason] = useState<WasteReason>("SPOILED");
   const [notes, setNotes] = useState("");
   const { data: ingredients } = useIngredients(branchId);
   const logWaste = useLogWaste(branchId);
 
   const selected = ingredients?.find((i) => i.id === ingredientId);
+  const packs = usePackSizes(branchId, ingredientId || null);
+  const unit = enteredUnit ?? selected?.unit ?? "KG";
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!ingredientId || !Number(quantity)) return;
     logWaste.mutate(
-      { ingredientId, quantity: Number(quantity), reason, notes: notes || undefined },
+      { ingredientId, quantity: Number(quantity), unit: selected && unit !== selected.unit ? unit : undefined, reason, notes: notes || undefined },
       {
         onSuccess: () => {
           toast.success(t("inv.waste.logged"));
           setOpen(false);
           setIngredientId("");
           setQuantity("");
+          setEnteredUnit(null);
           setNotes("");
         },
         onError: (err) => toast.error(err instanceof ApiError ? err.message : t("inv.waste.logFailed")),
@@ -61,7 +66,10 @@ export function LogWasteDialog({ branchId }: { branchId: string | null }) {
           </DialogHeader>
           <div className="flex flex-col gap-2">
             <Label>{t("inv.col.ingredient")}</Label>
-            <Select value={ingredientId} onValueChange={(v) => setIngredientId(v ?? "")}>
+            <Select value={ingredientId} onValueChange={(v) => {
+                setIngredientId(v ?? "");
+                setEnteredUnit(null);
+              }}>
               <SelectTrigger>
                 <SelectValue placeholder={t("inv.waste.selectIngredient")} />
               </SelectTrigger>
@@ -75,7 +83,7 @@ export function LogWasteDialog({ branchId }: { branchId: string | null }) {
             </Select>
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="w-qty">{selected ? t("inv.transfers.quantityUnit", { unit: selected.unit }) : t("inv.col.quantity")}</Label>
+            <Label htmlFor="w-qty">{selected ? t("inv.transfers.quantityUnit", { unit }) : t("inv.col.quantity")}</Label>
             <Input
               id="w-qty"
               type="number"
@@ -85,6 +93,9 @@ export function LogWasteDialog({ branchId }: { branchId: string | null }) {
               onChange={(e) => setQuantity(e.target.value)}
               required
             />
+            {selected && (
+              <UnitSelect base={selected.unit} packs={packs} value={unit} onChange={setEnteredUnit} quantity={quantity} />
+            )}
           </div>
           <div className="flex flex-col gap-2">
             <Label>{t("inv.col.reason")}</Label>

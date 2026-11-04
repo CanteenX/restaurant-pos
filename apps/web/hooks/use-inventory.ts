@@ -267,7 +267,7 @@ export function useRecipe(branchId: string | null, menuItemId: string | null) {
 export function useSetRecipe(branchId: string | null, menuItemId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (lines: { ingredientId: string; quantity: number }[]) =>
+    mutationFn: (lines: { ingredientId: string; quantity: number; unit?: IngredientUnit }[]) =>
       api.patch<Recipe>(`/inventory/menu-items/${menuItemId}/recipe?branchId=${branchId}`, {
         lines,
       }),
@@ -555,5 +555,18 @@ export function useSupplierPerformance(branchId: string | null, supplierId: stri
     queryFn: () =>
       api.get<SupplierPerformance>(`/inventory/suppliers/${supplierId}/performance?branchId=${branchId}`),
     enabled: !!branchId && !!supplierId,
+  });
+}
+
+// --- Unit conversions (pack sizes) -----------------------------------------------
+
+export function useIngredientConversions(branchId: string | null, ingredientId: string | null) {
+  return useQuery({
+    queryKey: ["inventory", "conversions", branchId, ingredientId],
+    queryFn: () =>
+      api.get<{ unit: IngredientUnit; factor: string }[]>(
+        `/inventory/ingredients/${ingredientId}/conversions?branchId=${branchId}`,
+      ),
+    enabled: !!branchId && !!ingredientId,
   });
 }

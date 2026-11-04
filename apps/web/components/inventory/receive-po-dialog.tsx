@@ -13,6 +13,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import type { IngredientUnit } from "@nventra/types";
+import { UnitSelect, usePackSizes } from "@/components/inventory/unit-select";
 import { useCreateGoodsReceipt, type PurchaseOrderDetail } from "@/hooks/use-inventory";
 import { ApiError } from "@/lib/api";
 import { useI18n } from "@/lib/i18n/context";
@@ -21,7 +23,8 @@ interface ReceiveRow {
   purchaseOrderItemId: string;
   ingredientId: string;
   name: string;
-  unit: string;
+  unit: IngredientUnit;
+  enteredUnit: IngredientUnit;
   remaining: number;
   quantity: string;
   unitCost: string;
@@ -39,7 +42,8 @@ export function ReceivePoDialog({ branchId, po }: { branchId: string | null; po:
       purchaseOrderItemId: item.id,
       ingredientId: item.ingredientId,
       name: item.ingredient?.name ?? item.ingredientId,
-      unit: item.ingredient?.unit ?? "",
+      unit: item.ingredient?.unit ?? "KG",
+      enteredUnit: item.ingredient?.unit ?? "KG",
       remaining: Number(item.quantityOrdered) - Number(item.quantityReceived),
       quantity: String(Number(item.quantityOrdered) - Number(item.quantityReceived)),
       unitCost: item.unitCost,
@@ -66,6 +70,7 @@ export function ReceivePoDialog({ branchId, po }: { branchId: string | null; po:
           ingredientId: r.ingredientId,
           purchaseOrderItemId: r.purchaseOrderItemId,
           quantity: Number(r.quantity),
+          unit: r.enteredUnit !== r.unit ? r.enteredUnit : undefined,
           unitCost: Number(r.unitCost),
           expiryDate: r.expiryDate ? new Date(r.expiryDate) : undefined,
         })),
@@ -103,6 +108,7 @@ export function ReceivePoDialog({ branchId, po }: { branchId: string | null; po:
                     {t("inv.receive.outstanding", { remaining: row.remaining, unit: row.unit })}
                   </span>
                 </div>
+                <ReceiveUnit branchId={branchId} row={row} onChange={(u) => updateRow(index, { enteredUnit: u })} />
                 <div className="grid grid-cols-3 gap-2">
                   <div className="flex flex-col gap-1">
                     <Label className="text-xs">{t("inv.receive.qtyReceived")}</Label>
@@ -144,5 +150,22 @@ export function ReceivePoDialog({ branchId, po }: { branchId: string | null; po:
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ReceiveUnit({
+  branchId,
+  row,
+  onChange,
+}: {
+  branchId: string | null;
+  row: ReceiveRow;
+  onChange: (unit: IngredientUnit) => void;
+}) {
+  const packs = usePackSizes(branchId, row.ingredientId);
+  return (
+    <div className="mb-2 max-w-40">
+      <UnitSelect base={row.unit} packs={packs} value={row.enteredUnit} onChange={onChange} quantity={row.quantity} />
+    </div>
   );
 }
