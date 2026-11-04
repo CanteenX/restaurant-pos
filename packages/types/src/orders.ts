@@ -184,6 +184,10 @@ export const checkoutSchema = z.object({
   // One per checkout attempt; a repeat of the same key is answered with the
   // original result instead of charging again.
   requestId: z.string().min(8).max(64).optional(),
+  // Take this payment although a gateway QR (Razorpay) is still payable on
+  // the bill: the cashier confirmed the guest is paying another way. Audited;
+  // if the QR is paid after all, that payment is flagged for review.
+  overrideOpenGatewayQr: z.boolean().optional(),
 });
 export type CheckoutDto = z.infer<typeof checkoutSchema>;
 

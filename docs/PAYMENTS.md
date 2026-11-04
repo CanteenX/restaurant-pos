@@ -113,6 +113,7 @@ All under `/api/v1/payment-gateway`; staff endpoints need `bills.print`
 |---|---|---|
 | POST | `/orders/:orderId/attempts?branchId=` | `{ provider, method?, idempotencyKey, amount? }` (`createGatewayPaymentSchema`) |
 | GET | `/attempts/:id` | Attempt view |
+| GET | `/orders/:orderId/attempts/open?branchId=` | `{ attempt }`: the bill's still-payable QR (checked with the gateway first), or `null` |
 | GET | `/available` | Connected gateways the till may offer: `[{ key, name }]` (enabled, keys saved, last test passed) |
 | POST | `/attempts/:id/refresh` | Poll the gateway, settle if it succeeded |
 | POST | `/webhook/:restaurantId/:provider` | Public; adapter-verified signature |
@@ -140,9 +141,21 @@ logged). Use test-mode keys (`rzp_test_…`) to try it without moving money.
   signature verification lands) and refunds (refused; refund from the
   Razorpay dashboard). Until webhooks land, the till polls
   `/attempts/:id/refresh` every 3 s while the QR is shown.
+- **One live QR per bill (server-enforced):** before creating an attempt
+  the service checks every open (CREATED/PENDING) attempt of the order with
+  the gateway. One still payable for the same amount is returned as is (a
+  reloaded till sends a new key and gets the same QR back); one for a
+  different amount → `409` until it is paid or expires. `orders.checkout`
+  also refuses (`409`) while such a QR is open, unless the request sets
+  `overrideOpenGatewayQr: true` (the cashier confirmed the guest pays another
+  way; audited as `payment.gateway_qr_overridden`). If that QR is paid
+  anyway, settlement fails on the closed bill and it is flagged for review.
 - **Till:** when a gateway is available, choosing UPI at checkout offers
   "Show Razorpay UPI QR"; the QR shows the server-locked amount and the bill
-  closes by itself once paid. With no connected gateway the till keeps the
+  closes by itself once paid. On load the till asks for the bill's open
+  QR and resumes it, so a reload, table switch or method switch never loses
+  it; manual payment stays held (with a "Guest is paying another way"
+  override) until it is paid or expires. With no connected gateway the till keeps the
   static UPI QR from Settings → Restaurant.
 - **Mock server:** `apps/backend/test/razorpay-mock-server.ts`
   (`pnpm exec ts-node test/razorpay-mock-server.ts`, port 4010) implements

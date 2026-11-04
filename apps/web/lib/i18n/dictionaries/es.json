@@ -1437,12 +1437,13 @@
   "pos.gatewayQr.paid": "Pago recibido · {amount}",
   "pos.gatewayQr.scan": "Escanea con cualquier app UPI · {amount} fijado por {gateway}",
   "pos.gatewayQr.waiting": "Esperando el pago · también en la pantalla del cliente",
-  "pos.gatewayQr.stale": "El importe cambió: crea un nuevo QR por {amount}",
-  "pos.gatewayQr.staleOld": "El QR de {old} ya no se muestra. No dejes que el cliente lo pague.",
-  "pos.gatewayQr.newFor": "Nuevo QR · {amount}",
+  "pos.gatewayQr.stale": "El importe cambió a {amount}. El QR del importe anterior ya no se muestra al cliente.",
+  "pos.gatewayQr.staleOld": "Ese QR de {old} aún puede pagarse hasta que caduque, así que todavía no se puede crear otro.",
   "pos.gatewayQr.review": "El dinero llegó pero no se pudo aplicar a esta cuenta: {error}. Revísalo en {gateway} antes de reembolsar.",
   "pos.gatewayQr.expired": "Este QR caducó antes de pagarse.",
   "pos.gatewayQr.failed": "No se pudo crear el QR.",
   "pos.gatewayQr.newQr": "Nuevo QR",
-  "pos.gatewayQr.manualHeld": "Hay un QR de {gateway} abierto: la cuenta se cierra sola cuando el cliente paga. Para cobrar de otra forma, elige el método arriba."
+  "pos.gatewayQr.manualHeld": "Hay un QR de {gateway} abierto en esta cuenta: se cierra sola cuando el cliente paga.",
+  "pos.gatewayQr.override": "El cliente paga de otra forma",
+  "pos.gatewayQr.overrideOn": "Cobrando de otra forma. Si el QR también se paga, se marcará para reembolso."
 }

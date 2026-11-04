@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { gatewayQrBlocksManualUpi, gatewayQrPhase, gatewayQrUri, type GatewayAttemptView } from "./gateway-qr.ts";
+import { gatewayQrBlocksManualUpi, gatewayQrIsLive, gatewayQrPhase, gatewayQrUri, type GatewayAttemptView } from "./gateway-qr.ts";
 
 const attempt = (over: Partial<GatewayAttemptView> = {}): GatewayAttemptView => ({
   id: "att_1",
@@ -67,4 +67,18 @@ test("the manual UPI Complete is held while a gateway QR can still be paid", () 
   for (const p of [null, "starting", "paid", "failed", "expired", "review"] as const) {
     assert.equal(gatewayQrBlocksManualUpi(p), false, String(p));
   }
+});
+
+test("a QR the server still holds open blocks manual payment with nothing on screen", () => {
+  // After a reload or a switch to Cash the till has no local phase.
+  assert.equal(gatewayQrIsLive(null, attempt()), true);
+  assert.equal(gatewayQrIsLive(null, attempt({ status: "CREATED" })), true);
+  assert.equal(gatewayQrIsLive(null, null), false);
+  assert.equal(gatewayQrIsLive(null, undefined), false);
+  assert.equal(gatewayQrIsLive(null, attempt({ status: "EXPIRED" })), false);
+  assert.equal(gatewayQrIsLive(null, attempt({ status: "SUCCEEDED", settled: true })), false);
+  assert.equal(gatewayQrIsLive(null, attempt({ settlementError: "x" })), false);
+  // The QR on screen counts until the server catches up.
+  assert.equal(gatewayQrIsLive("waiting", null), true);
+  assert.equal(gatewayQrIsLive("paid", null), false);
 });

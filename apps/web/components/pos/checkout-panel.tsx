@@ -13,8 +13,8 @@ import { PaymentMethodButtons } from "@/components/pos/payment-method-buttons";
 import { CustomerPicker } from "@/components/pos/customer-picker";
 import { SplitBillDialog } from "@/components/pos/split-bill-dialog";
 import { GatewayUpiQr } from "@/components/pos/gateway-upi-qr";
-import { useAvailableGateways } from "@/hooks/use-payment-gateway";
-import { gatewayQrBlocksManualUpi, type GatewayQrPhase } from "@/lib/gateway-qr";
+import { useAvailableGateways, useOpenGatewayAttempt } from "@/hooks/use-payment-gateway";
+import { gatewayQrIsLive, type GatewayQrPhase } from "@/lib/gateway-qr";
 import type { Customer } from "@/hooks/use-customers";
 import { lookupGiftCard } from "@/hooks/use-gift-cards";
 import { CancelOrderDialog, useCanCancelOrders } from "@/components/orders/cancel-order-dialog";
@@ -217,12 +217,19 @@ export function CheckoutPanel({
   const upiVpa = settings?.restaurant.upiVpa;
   const upiName = settings?.restaurant.upiPayeeName || settings?.restaurant.name;
   // A connected gateway (Razorpay) replaces the static QR with a dynamic one.
-  const { data: gateways } = useAvailableGateways(method === "UPI");
+  const { data: gateways } = useAvailableGateways();
   const gateway = gateways?.[0] ?? null;
-  // While a gateway QR can still be paid, a manual UPI "Complete" would book
-  // money that never arrived; the gateway settles the bill itself.
+  // The server is the source of truth for an open QR (survives reloads and
+  // method switches); the mounted QR's own phase covers the moment before.
+  const { data: openQr } = useOpenGatewayAttempt(branchId, order.id, !!gateway && remainingDue > 0);
+  const openAttempt = openQr?.attempt ?? null;
   const [gatewayPhase, setGatewayPhase] = useState<GatewayQrPhase | null>(null);
-  const manualUpiHeld = method === "UPI" && !!gateway && gatewayQrBlocksManualUpi(gatewayPhase);
+  const gatewayQrLive = !!gateway && gatewayQrIsLive(gatewayPhase, openAttempt);
+  // While a gateway QR can still be paid, any manual payment could collect the
+  // bill twice; the server refuses it too unless the cashier overrides.
+  const [overrideFor, setOverrideFor] = useState<string | null>(null);
+  const overrideQr = gatewayQrLive && overrideFor === order.id;
+  const manualUpiHeld = gatewayQrLive && !overrideQr;
   const upiUri =
     method !== "UPI" || gateway || !upiVpa || !(upiAmount > 0)
       ? null
@@ -275,6 +282,7 @@ export function CheckoutPanel({
       giftCardCode: giftCardBalance !== null ? giftCardCode : undefined,
       payments,
       allowPartial: plan.partial || undefined,
+      ...(overrideQr ? { overrideOpenGatewayQr: true } : {}),
     };
     checkout.mutate(
       { orderId: order.id, dto: { ...dto, requestId: requestIdFor(dto) } },
@@ -708,6 +716,7 @@ export function CheckoutPanel({
                   orderId={order.id}
                   amount={upiAmount}
                   isPartial={upiAmount < remainingDue}
+                  resume={openAttempt}
                   onPhaseChange={setGatewayPhase}
                 />
               )}
@@ -804,10 +813,17 @@ export function CheckoutPanel({
 
       {/* Pinned to the bottom of the scrolling panel on phones, so billing is always one tap away. */}
       <div className="sticky bottom-0 z-10 -mx-1 bg-card px-1 pb-1 pt-2 max-lg:border-t max-lg:border-border max-lg:shadow-[0_-8px_12px_-10px_rgba(0,0,0,0.25)]">
-        {manualUpiHeld && gateway && (
-          <p id="manual-upi-held" className="mb-2 text-center text-xs text-muted-foreground" role="status">
-            {t("pos.gatewayQr.manualHeld", { gateway: gateway.name })}
-          </p>
+        {gatewayQrLive && gateway && (
+          <div className="mb-2 flex flex-col items-center gap-1 text-center" data-testid="gateway-qr-hold">
+            <p id="manual-upi-held" className="text-xs text-muted-foreground" role="status">
+              {overrideQr ? t("pos.gatewayQr.overrideOn") : t("pos.gatewayQr.manualHeld", { gateway: gateway.name })}
+            </p>
+            {!overrideQr && method !== "UPI" && (
+              <Button variant="outline" size="sm" onClick={() => setOverrideFor(order.id)}>
+                {t("pos.gatewayQr.override")}
+              </Button>
+            )}
+          </div>
         )}
         <Button
           className="h-12 w-full text-base"

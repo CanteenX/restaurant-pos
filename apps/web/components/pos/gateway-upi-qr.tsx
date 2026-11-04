@@ -30,6 +30,7 @@ export function GatewayUpiQr({
   orderId,
   amount,
   isPartial,
+  resume,
   onPhaseChange,
 }: {
   gateway: AvailableGateway;
@@ -38,12 +39,19 @@ export function GatewayUpiQr({
   /** What the till wants to collect now (server re-checks against the balance). */
   amount: number;
   isPartial: boolean;
+  /** The bill's QR the server still holds open (after a reload or table switch). */
+  resume?: GatewayAttemptView | null;
   /** Lets the checkout hold its manual "Complete" while this QR can be paid. */
   onPhaseChange?: (phase: GatewayQrPhase | null) => void;
 }) {
   const { t, formatCurrency } = useI18n();
   const start = useStartGatewayAttempt(branchId, orderId);
-  const [created, setCreated] = useState<GatewayAttemptView | null>(null);
+  const [mine, setCreated] = useState<GatewayAttemptView | null>(null);
+  // Prefer the server's open QR over a "Show QR" button: never a second one.
+  // Keep following the server's open QR once seen, so "paid" still shows after
+  // the server stops listing it as open. (Guarded set-during-render.)
+  if (resume && !mine) setCreated(resume);
+  const created = mine ?? resume ?? null;
   const { data: attempt } = useGatewayAttempt(created);
   // One key per amount: a double tap or retry reuses the same attempt.
   const key = useRef<{ amount: number; id: string } | null>(null);
@@ -117,10 +125,6 @@ export function GatewayUpiQr({
         <p className="text-[11px] text-neutral-500">
           {t("pos.gatewayQr.staleOld", { old: formatCurrency(locked) })}
         </p>
-        <Button className="h-11" onClick={() => begin(false)} disabled={start.isPending || !(amount > 0)}>
-          {start.isPending ? <Loader2 className="size-4 animate-spin" /> : <QrCode className="size-4" />}
-          {t("pos.gatewayQr.newFor", { amount: formatCurrency(amount) })}
-        </Button>
       </div>
     );
   }

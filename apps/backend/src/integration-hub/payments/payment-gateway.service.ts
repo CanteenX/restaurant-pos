@@ -134,7 +134,22 @@ export class PaymentGatewayService {
     });
     if (prior) return this.replay(prior, branchId, dto);
 
+    // One payable QR per bill: a reloaded till (new key) gets the same QR
+    // back, and a different amount waits until the old QR is paid or expires.
+    const live = await this.refreshOpen(user.restaurantId, branchId, orderId);
     const amount = await this.chargeableAmount(branchId, orderId, dto.amount);
+    if (live.length > 0) {
+      const same = live.find(
+        (a) =>
+          a.provider === gateway.key &&
+          a.method === dto.method &&
+          a.amount.equals(amount),
+      );
+      if (same) return this.view(same);
+      throw new ConflictException(
+        `A payment QR for ${live[0].amount.toFixed(2)} is still open on this bill - wait for it to be paid or to expire`,
+      );
+    }
     let attempt: GatewayPayment;
     try {
       attempt = await this.prisma.gatewayPayment.create({
@@ -168,6 +183,65 @@ export class PaymentGatewayService {
       throw e;
     }
     return this.view(await this.startAtGateway(gateway, ctx, attempt));
+  }
+
+  /** The bill's payable QR, checked with the gateway first (for a reloaded till). */
+  async openAttempt(restaurantId: string, branchId: string, orderId: string) {
+    const live = await this.refreshOpen(restaurantId, branchId, orderId);
+    return { attempt: live[0] ? this.view(live[0]) : null };
+  }
+
+  /**
+   * Attempts on the order that can still be paid at the gateway, after asking
+   * the gateway about each (so a paid one settles, an expired one drops out).
+   * If the gateway cannot be reached the attempt is kept: it may be payable.
+   */
+  private async refreshOpen(
+    restaurantId: string,
+    branchId: string,
+    orderId: string,
+  ): Promise<GatewayPayment[]> {
+    const rows = await this.prisma.gatewayPayment.findMany({
+      where: {
+        restaurantId,
+        branchId,
+        orderId,
+        status: { in: ['CREATED', 'PENDING'] },
+        externalId: { not: null },
+        settlementError: null,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    const live: GatewayPayment[] = [];
+    for (const row of rows) {
+      const after = await this.tryRefresh(restaurantId, row);
+      if (
+        (after.status === 'CREATED' || after.status === 'PENDING') &&
+        !after.settlementError
+      ) {
+        live.push(after);
+      }
+    }
+    return live;
+  }
+
+  private async tryRefresh(
+    restaurantId: string,
+    row: GatewayPayment,
+  ): Promise<GatewayPayment> {
+    const ctx = await this.context(restaurantId, row.provider);
+    const p = getProvider(row.provider);
+    if (!ctx || !isPaymentGateway(p) || !row.externalId) return row;
+    try {
+      const report = await p.fetchStatus(ctx, row.externalId);
+      return await this.applyReport(row, report);
+    } catch (e) {
+      if (e instanceof HttpException) throw e;
+      this.logger.warn(
+        `gateway ${row.provider} status check failed: ${mapGatewayError(e).code}`,
+      );
+      return row;
+    }
   }
 
   private replay(
@@ -396,6 +470,8 @@ export class PaymentGatewayService {
         attempt.orderId,
         attempt.createdById,
         req,
+        false,
+        true,
       );
     } catch (e) {
       if (!(e instanceof HttpException)) throw e;

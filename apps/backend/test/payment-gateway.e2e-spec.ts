@@ -258,6 +258,14 @@ describe('Payment gateway (e2e)', () => {
     await owner
       .post(`/api/v1/orders/${orderId}/checkout${q}`)
       .send({ payments: [{ method: 'CASH', amount: 80 }] })
+      .expect(409);
+    // The cashier confirms the guest paid cash; the QR stays tracked.
+    await owner
+      .post(`/api/v1/orders/${orderId}/checkout${q}`)
+      .send({
+        payments: [{ method: 'CASH', amount: 80 }],
+        overrideOpenGatewayQr: true,
+      })
       .expect(201);
     await webhook({ externalId: a.externalId, status: 'SUCCEEDED' }).expect(
       200,

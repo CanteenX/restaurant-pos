@@ -19,13 +19,43 @@ export function useAvailableGateways(enabled = true) {
   });
 }
 
+const openKey = (orderId: string) => ["payment-gateway", "open", orderId];
+
 export function useStartGatewayAttempt(branchId: string | null, orderId: string) {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (dto: { provider: string; idempotencyKey: string; amount?: number }) =>
       api.post<GatewayAttemptView>(
         `/payment-gateway/orders/${orderId}/attempts?branchId=${branchId}`,
         { method: "UPI", ...dto },
       ),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: openKey(orderId) }),
+  });
+}
+
+/**
+ * The bill's still-payable gateway QR, as the server sees it (it checks with
+ * the gateway on every call). This survives a reload, a table switch or a
+ * method switch, so the till can resume the QR and hold manual payment.
+ */
+export function useOpenGatewayAttempt(branchId: string | null, orderId: string, enabled: boolean) {
+  const queryClient = useQueryClient();
+  return useQuery({
+    queryKey: openKey(orderId),
+    queryFn: async () => {
+      const before = queryClient.getQueryData<{ attempt: GatewayAttemptView | null }>(openKey(orderId));
+      const r = await api.get<{ attempt: GatewayAttemptView | null }>(
+        `/payment-gateway/orders/${orderId}/attempts/open?branchId=${branchId}`,
+      );
+      // It was open and now is not: it was paid (and settled) or expired.
+      if (before?.attempt && !r.attempt) {
+        queryClient.invalidateQueries({ queryKey: ["orders"] });
+        queryClient.invalidateQueries({ queryKey: ["floors"] });
+      }
+      return r;
+    },
+    enabled: enabled && !!branchId,
+    refetchInterval: (q) => (q.state.data?.attempt ? 4_000 : false),
   });
 }
 

@@ -4,7 +4,7 @@ import { openDashboard } from "./helpers";
 // Dynamic UPI QR through the Razorpay adapter, against the local Razorpay
 // mock (apps/backend/test/razorpay-mock-server.ts) that scripts/agent/qa-native.sh
 // starts on :4010 and points the backend at (RAZORPAY_API_BASE). Never the
-// real Razorpay API. Uses Tables 1 and 2 so it never collides with other specs, and
+// real Razorpay API. Uses Tables 1, 2 and 7 so it never collides with other specs, and
 // disconnects Razorpay afterwards so other specs keep the static UPI QR.
 const MOCK = process.env.RAZORPAY_MOCK_URL ?? "http://127.0.0.1:4010";
 // Test-only keys the mock accepts (see razorpay-mock-server.ts).
@@ -85,19 +85,61 @@ test("a gateway QR is withdrawn when the amount to collect changes", async ({ pa
   // The cashier takes only part of the bill now: the ₹280 QR must go.
   await page.getByLabel("Amount to pay now").fill("100");
   const stale = page.getByTestId("gateway-qr-stale");
-  await expect(stale).toContainText("Amount changed — create a new QR for ₹100.00");
+  await expect(stale).toContainText("Amount changed to ₹100.00");
   await expect(page.getByTestId("gateway-qr")).toHaveCount(0);
   // Still held: the old QR might be paid from a phone that already scanned it.
   await expect(page.getByRole("button", { name: /Record partial payment · ₹100\.00/ })).toBeDisabled();
+  // And no second QR: the server refuses one while the ₹280 QR can be paid.
+  await expect(stale.getByRole("button")).toHaveCount(0);
   await page.screenshot({ path: "test-results/upi-qr-razorpay-stale.png" });
 
-  // A new QR is locked to the new amount.
-  await stale.getByRole("button", { name: /New QR · ₹100\.00/ }).click();
-  await expect(page.getByTestId("gateway-qr-amount")).toHaveText(/₹100\.00 locked by Razorpay/);
-  const created = (await (await api.get(`${MOCK}/__mock/qr_codes`)).json()) as MockQr[];
-  expect(created.some((q) => q.payment_amount === 10_000)).toBe(true);
-
-  // Switching to cash releases the manual Complete.
+  // Switching to cash keeps the hold until the cashier confirms another way.
   await page.getByRole("radio", { name: "Cash" }).click();
-  await expect(page.getByRole("button", { name: /Record partial payment · ₹100\.00/ })).toBeEnabled();
+  const record = page.getByRole("button", { name: /Record partial payment · ₹100\.00/ });
+  await expect(record).toBeDisabled();
+  await page.getByRole("button", { name: "Guest is paying another way" }).click();
+  await expect(record).toBeEnabled();
+  await expect(page.getByText(/If the QR is paid too, it is flagged/)).toBeVisible();
+});
+
+test("an open gateway QR survives a reload and still holds manual payment", async ({ page }) => {
+  const up = await page.request.get(`${MOCK}/__mock/qr_codes`).catch(() => null);
+  test.skip(!up?.ok(), `Razorpay mock not running at ${MOCK} (start it via scripts/agent/qa-native.sh)`);
+
+  const api = page.request;
+  await api.put("/api/v1/integration-hub/razorpay", { data: { credentials: KEYS } });
+  await api.post("/api/v1/integration-hub/razorpay/test");
+
+  await openDashboard(page);
+  await page.goto("/pos");
+  await page.getByRole("button", { name: "Table 7" }).click();
+  await page.getByRole("button", { name: /Paneer\s*Tikka/ }).first().click();
+  await page.getByRole("button", { name: /send to kitchen/i }).click();
+  await page.getByRole("radio", { name: "UPI" }).click();
+  await page.getByRole("button", { name: /Show Razorpay UPI QR · ₹280\.00/ }).click();
+  await expect(page.getByTestId("gateway-qr")).toBeVisible();
+  const before = (await (await api.get(`${MOCK}/__mock/qr_codes`)).json()) as MockQr[];
+
+  // The till forgets everything; the server still knows the QR is open.
+  await page.reload();
+  await page.getByRole("button", { name: "Table 7" }).click();
+  await page.getByRole("button", { name: "View & pay" }).click();
+  await page.getByRole("radio", { name: "UPI" }).click();
+  await expect(page.getByTestId("gateway-qr-amount")).toHaveText(/₹280\.00 locked by Razorpay/);
+  await expect(page.getByRole("button", { name: /Show Razorpay UPI QR/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Complete payment · ₹280\.00/ })).toBeDisabled();
+  // Same QR, nothing new at Razorpay.
+  const after = (await (await api.get(`${MOCK}/__mock/qr_codes`)).json()) as MockQr[];
+  expect(after.length).toBe(before.length);
+  await page.screenshot({ path: "test-results/upi-qr-razorpay-resumed.png" });
+
+  // Off UPI the hold stays: the guest can still pay that QR.
+  await page.getByRole("radio", { name: "Cash" }).click();
+  await expect(page.getByRole("button", { name: /Complete payment · ₹280\.00/ })).toBeDisabled();
+  await expect(page.getByText(/A Razorpay QR is open on this bill/)).toBeVisible();
+
+  // The guest pays the original QR; the bill closes itself.
+  await page.getByRole("radio", { name: "UPI" }).click();
+  await api.post(`${MOCK}/__mock/qr_codes/${before[0].id}/pay`, { data: {} });
+  await expect(page.getByText(/Payment received · ₹280\.00|already paid/)).toBeVisible({ timeout: 15_000 });
 });

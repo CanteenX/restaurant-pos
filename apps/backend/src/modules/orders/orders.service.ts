@@ -1521,6 +1521,8 @@ export class OrdersService {
     userId: string,
     dto: CheckoutDto,
     mayExceedDiscountCap = false,
+    /** Set only by PaymentGatewayService when settling money that already moved. */
+    fromGatewaySettlement = false,
   ) {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, branchId },
@@ -1544,6 +1546,9 @@ export class OrdersService {
       throw new ConflictException(
         'This order has not been accepted yet - accept it before taking payment',
       );
+    }
+    if (!fromGatewaySettlement) {
+      await this.assertNoLiveGatewayQr(orderId, userId, dto);
     }
 
     const branch = await this.prisma.branch.findUniqueOrThrow({
@@ -1888,6 +1893,43 @@ export class OrdersService {
   }
 
   // Current settlement state of an order, for answering a replayed request.
+  /**
+   * A gateway QR that can still be paid means the guest may be paying right
+   * now; recording another payment would collect the bill twice. The server
+   * holds the line whatever the till shows, unless the cashier overrides.
+   */
+  private async assertNoLiveGatewayQr(
+    orderId: string,
+    userId: string,
+    dto: CheckoutDto,
+  ) {
+    const live = await this.prisma.gatewayPayment.findMany({
+      where: {
+        orderId,
+        status: { in: ['CREATED', 'PENDING'] },
+        externalId: { not: null },
+        settlementError: null,
+      },
+      select: { id: true, provider: true, amount: true },
+    });
+    if (live.length === 0) return;
+    if (!dto.overrideOpenGatewayQr) {
+      throw new ConflictException(
+        `A payment QR for ${live[0].amount.toFixed(2)} is still open on this bill - wait for it to be paid or to expire, or confirm the guest is paying another way`,
+      );
+    }
+    await this.audit.record({
+      userId,
+      action: 'payment.gateway_qr_overridden',
+      entity: 'Order',
+      entityId: orderId,
+      metadata: {
+        attemptIds: live.map((a) => a.id),
+        amounts: live.map((a) => a.amount.toFixed(2)),
+      },
+    });
+  }
+
   private async checkoutResult(branchId: string, orderId: string) {
     const updated = await this.prisma.order.findFirstOrThrow({
       where: { id: orderId, branchId },

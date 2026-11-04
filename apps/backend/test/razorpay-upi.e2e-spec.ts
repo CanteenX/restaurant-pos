@@ -204,6 +204,89 @@ describe('Razorpay UPI QR (e2e, mock server)', () => {
     expect(order.status).toBe('PAID');
   });
 
+  describe('one live QR per bill (server-authoritative)', () => {
+    const open = (orderId: string) =>
+      owner.get(`${P}/orders/${orderId}/attempts/open${q}`).expect(200);
+    const cash = (orderId: string, amount: number, extra = {}) =>
+      owner
+        .post(`/api/v1/orders/${orderId}/checkout${q}`)
+        .send({ payments: [{ method: 'CASH', amount }], ...extra });
+
+    it('resumes the open QR instead of creating a second one', async () => {
+      const orderId = await newOrder(280);
+      const first = (await attempt(orderId).expect(201)).body;
+      const before = mock.qrs.length;
+      // A reloaded till sends a fresh key: same QR back, nothing new at Razorpay.
+      const again = (await attempt(orderId).expect(201)).body;
+      expect(again.id).toBe(first.id);
+      expect(mock.qrs.length).toBe(before);
+
+      expect((await open(orderId)).body.attempt).toMatchObject({
+        id: first.id,
+        status: 'PENDING',
+        amount: '280.00',
+      });
+    });
+
+    it('refuses a QR for a different amount while one is open', async () => {
+      const orderId = await newOrder(300);
+      await attempt(orderId).expect(201);
+      const before = mock.qrs.length;
+      const r = await owner
+        .post(`${P}/orders/${orderId}/attempts${q}`)
+        .send({
+          provider: 'razorpay',
+          idempotencyKey: randomUUID(),
+          amount: 100,
+        })
+        .expect(409);
+      expect(r.body.message).toMatch(/still open/i);
+      expect(mock.qrs.length).toBe(before);
+    });
+
+    it('refuses a manual checkout while a QR is open, unless overridden', async () => {
+      const orderId = await newOrder(150);
+      const a = (await attempt(orderId).expect(201)).body;
+      const refused = await cash(orderId, 150).expect(409);
+      expect(refused.body.message).toMatch(/QR/);
+      expect(await prisma.payment.count({ where: { orderId } })).toBe(0);
+
+      await cash(orderId, 150, { overrideOpenGatewayQr: true }).expect(201);
+      expect(await prisma.payment.count({ where: { orderId } })).toBe(1);
+      const audit = await prisma.auditLog.findFirst({
+        where: { entityId: orderId, action: 'payment.gateway_qr_overridden' },
+      });
+      expect(audit?.metadata).toMatchObject({ attemptIds: [a.id] });
+    });
+
+    it('settles a QR paid after a reload once the till asks for open attempts', async () => {
+      const orderId = await newOrder(220);
+      const a = (await attempt(orderId).expect(201)).body;
+      await request(mock.url)
+        .post(`/__mock/qr_codes/${a.externalId}/pay`)
+        .send({})
+        .expect(200);
+      // The till lost the attempt id; loading the bill's open attempts checks
+      // with Razorpay and settles it.
+      expect((await open(orderId)).body).toEqual({ attempt: null });
+      const order = await prisma.order.findUniqueOrThrow({
+        where: { id: orderId },
+      });
+      expect(order.status).toBe('PAID');
+      expect(await prisma.payment.count({ where: { orderId } })).toBe(1);
+    });
+
+    it('lets a new QR be created once the old one has expired', async () => {
+      const orderId = await newOrder(90);
+      const a = (await attempt(orderId).expect(201)).body;
+      mock.qrs.find((x) => x.id === a.externalId)!.status = 'closed';
+      const b = (await attempt(orderId).expect(201)).body;
+      expect(b.id).not.toBe(a.id);
+      expect(b.externalId).not.toBe(a.externalId);
+      await cash(orderId, 90).expect(409);
+    });
+  });
+
   it('never settles a short payment', async () => {
     const orderId = await newOrder(99);
     const a = (await attempt(orderId).expect(201)).body;

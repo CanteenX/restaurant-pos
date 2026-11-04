@@ -54,6 +54,18 @@ export class PaymentGatewayController {
     return this.svc.createAttempt(user, branchId, orderId, body);
   }
 
+  /** The bill's still-payable gateway QR, so a reloaded till can resume it. */
+  @Auth('bills.print')
+  @Get('orders/:orderId/attempts/open')
+  async open(
+    @CurrentUser() user: SessionUser,
+    @Query('branchId') branchId: string,
+    @Param('orderId') orderId: string,
+  ) {
+    await this.branchAccess.assertAccess(user.restaurantId, branchId);
+    return this.svc.openAttempt(user.restaurantId, branchId, orderId);
+  }
+
   @Auth('bills.print')
   @Get('attempts/:id')
   get(@CurrentUser() user: SessionUser, @Param('id') id: string) {

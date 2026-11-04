@@ -55,3 +55,16 @@ export function gatewayQrPhase(a: GatewayAttemptView | undefined, amount?: numbe
 export function gatewayQrBlocksManualUpi(phase: GatewayQrPhase | null): boolean {
   return phase === "waiting" || phase === "stale";
 }
+
+/**
+ * Whether a gateway QR is still payable on the bill: either the one this till
+ * has on screen, or the one the server reports open (after a reload, a table
+ * switch or a method switch, when nothing is on screen any more).
+ */
+export function gatewayQrIsLive(
+  localPhase: GatewayQrPhase | null,
+  serverOpen: GatewayAttemptView | null | undefined,
+): boolean {
+  if (gatewayQrBlocksManualUpi(localPhase)) return true;
+  return !!serverOpen && gatewayQrBlocksManualUpi(gatewayQrPhase(serverOpen));
+}
