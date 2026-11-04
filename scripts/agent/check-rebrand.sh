@@ -56,7 +56,7 @@ while IFS= read -r l; do
   l="${l%%#*}"; l="${l%"${l##*[![:space:]]}"}"
   [ -n "$l" ] && specs+=(":(exclude,literal)$l")
 done < "$ALLOW_FILE"
-ATTRIBUTION='(https?://)?(github\.com|raw\.githubusercontent\.com)/Raktim94/nodedr-[a-z-]+|nodedr-(pos|ecommerce-template)|(fork of|based on|forked from|derived from|upstream) (the )?\[?Nodedr( OrderRestro)?|official Nodedr release|Nodedr Infotech Private Limited|https?://www\.nodedr\.com/?'
+ATTRIBUTION='(https?://)?(github\.com|raw\.githubusercontent\.com)/Raktim94/nodedr-[a-z-]+|nodedr-(pos|ecommerce-template)|(fork of|based on|forked from|derived from|upstream) (the )?\[?Nodedr( OrderRestro)?|official Nodedr release|Nodedr Infotech Private Limited|<upstream>Nodedr( OrderRestro)?</upstream>|https?://www\.nodedr\.com/?'
 left=$(git grep -n -i -I nodedr -- . "${specs[@]}" | while IFS= read -r hit; do
   printf %s "$hit" | sed -E "s#^[^:]+:[0-9]+:##; s#${ATTRIBUTION}##Ig" | grep -qi nodedr && printf '%s\n' "$hit"
 done)
