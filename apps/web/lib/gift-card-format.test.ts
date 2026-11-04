@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { giftCardStatus, parseIssueAmount } from "./gift-card-format.ts";
+import { giftCardStatus, issueAmountHint, parseIssueAmount } from "./gift-card-format.ts";
 
 test("inactive card is Disabled, zero balance is Used up, else Active", () => {
   assert.equal(giftCardStatus({ isActive: false, balance: "50.00" }), "Disabled");
@@ -15,4 +15,13 @@ test("parseIssueAmount accepts positive amounts rounded to 2 dp", () => {
 
 test("parseIssueAmount rejects empty, zero, negative and non-numeric", () => {
   for (const v of ["", "0", "-5", "abc", "NaN"]) assert.equal(parseIssueAmount(v), null);
+});
+
+test("issueAmountHint is empty for blank or valid input, explains invalid input", () => {
+  assert.equal(issueAmountHint(""), null);
+  assert.equal(issueAmountHint("  "), null);
+  assert.equal(issueAmountHint("500"), null);
+  assert.match(issueAmountHint("abc") ?? "", /number/i);
+  assert.match(issueAmountHint("0") ?? "", /greater than 0/i);
+  assert.match(issueAmountHint("-5") ?? "", /greater than 0/i);
 });
