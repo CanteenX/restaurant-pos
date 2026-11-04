@@ -16,6 +16,10 @@ import { PrismaService } from './../src/prisma/prisma.service';
 const tag = randomUUID().slice(0, 8);
 const email = `cookie-${tag}@example.com`;
 const password = 'Password123!';
+const doomedEmail = `cookie-del-${tag}@example.com`;
+// Built from parts so the repo-wide grep for the legacy name stays empty.
+const legacyCookie = ['nodedr', 'session'].join('_');
+const legacyHeader = `${legacyCookie}=stale-pre-rebrand-token`;
 
 function setCookies(res: request.Response): string[] {
   const raw = res.headers['set-cookie'] as unknown;
@@ -64,6 +68,15 @@ describe('Session cookie (e2e)', () => {
         passwordHash: await bcrypt.hash(password, 4),
       },
     });
+    await prisma.user.create({
+      data: {
+        restaurantId,
+        roleId: role.id,
+        name: 'Cookie Deleter',
+        email: doomedEmail,
+        passwordHash: await bcrypt.hash(password, 4),
+      },
+    });
   });
 
   afterAll(async () => {
@@ -85,8 +98,6 @@ describe('Session cookie (e2e)', () => {
     expect(session).toBeDefined();
     expect(session).toMatch(/;\s*HttpOnly/i);
     expect(session).toMatch(/;\s*SameSite=Lax/i);
-    // Built from parts so the repo-wide grep for the legacy name stays empty.
-    const legacyCookie = ['nodedr', 'session'].join('_');
     expect(cookies.some((c) => c.startsWith(`${legacyCookie}=`))).toBe(false);
   });
 
@@ -109,5 +120,85 @@ describe('Session cookie (e2e)', () => {
     );
     expect(cleared).toBeDefined();
     expect(cleared).toMatch(/Expires=Thu, 01 Jan 1970/i);
+  });
+  // #147: the pre-rebrand cookie is cleared for one release, without
+  // touching a valid nventra_session.
+  const clearsLegacy = (res: request.Response) =>
+    expect(
+      setCookies(res).find((c) => c.startsWith(`${legacyCookie}=`)),
+    ).toMatch(/Expires=Thu, 01 Jan 1970/i);
+
+  it('login clears a leftover legacy cookie and still sets nventra_session', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .set('Cookie', legacyHeader)
+      .send({ email, password })
+      .expect(201);
+    clearsLegacy(res);
+    const session = setCookies(res).find((c) =>
+      c.startsWith('nventra_session='),
+    );
+    expect(session).not.toMatch(/Expires=Thu, 01 Jan 1970/i);
+  });
+
+  it('/auth/me clears the legacy cookie and keeps the current session working', async () => {
+    const login = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email, password })
+      .expect(201);
+    const current = setCookies(login)
+      .find((c) => c.startsWith('nventra_session='))!
+      .split(';')[0];
+    const me = await request(app.getHttpServer())
+      .get('/api/v1/auth/me')
+      .set('Cookie', `${current}; ${legacyHeader}`)
+      .expect(200);
+    expect(me.body.user.restaurantId).toBe(restaurantId);
+    clearsLegacy(me);
+    expect(
+      setCookies(me).some(
+        (c) =>
+          c.startsWith('nventra_session=') &&
+          /Expires=Thu, 01 Jan 1970/i.test(c),
+      ),
+    ).toBe(false);
+    await request(app.getHttpServer())
+      .get('/api/v1/auth/me')
+      .set('Cookie', current)
+      .expect(200);
+  });
+
+  it('a legacy cookie alone does not authenticate', async () => {
+    await request(app.getHttpServer())
+      .get('/api/v1/auth/me')
+      .set('Cookie', legacyHeader)
+      .expect(401);
+  });
+
+  it('logout clears both the current and the legacy cookie', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/auth/logout')
+      .set('Cookie', legacyHeader)
+      .expect(201);
+    clearsLegacy(res);
+    expect(
+      setCookies(res).find((c) => c.startsWith('nventra_session=')),
+    ).toMatch(/Expires=Thu, 01 Jan 1970/i);
+  });
+
+  it('deleting my account clears the legacy cookie too', async () => {
+    const login = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: doomedEmail, password })
+      .expect(201);
+    const current = setCookies(login)
+      .find((c) => c.startsWith('nventra_session='))!
+      .split(';')[0];
+    const res = await request(app.getHttpServer())
+      .delete('/api/v1/auth/me')
+      .set('Cookie', `${current}; ${legacyHeader}`)
+      .send({ password })
+      .expect(200);
+    clearsLegacy(res);
   });
 });

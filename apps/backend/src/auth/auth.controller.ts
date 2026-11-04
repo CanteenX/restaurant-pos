@@ -31,6 +31,7 @@ import { TwoFactorService } from './two-factor.service';
 import { SessionService } from './session.service';
 import {
   SESSION_COOKIE,
+  clearLegacySessionCookie,
   sessionCookieOptions,
   sessionIdleSeconds,
 } from './session';
@@ -56,10 +57,11 @@ export class AuthController {
   @UsePipes(new ZodValidationPipe(registerSchema))
   async register(
     @Body() body: unknown,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
     const { token, user } = await this.authService.register(body as never);
-    this.setSessionCookie(res, token);
+    this.setSessionCookie(req, res, token);
     return { user };
   }
 
@@ -70,10 +72,11 @@ export class AuthController {
   @UsePipes(new ZodValidationPipe(loginSchema))
   async login(
     @Body() body: unknown,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
     const { token, user } = await this.authService.login(body as never);
-    this.setSessionCookie(res, token);
+    this.setSessionCookie(req, res, token);
     return { user };
   }
 
@@ -97,7 +100,7 @@ export class AuthController {
       body as never,
       req.ip ?? 'unknown',
     );
-    this.setSessionCookie(res, token);
+    this.setSessionCookie(req, res, token);
     return { user };
   }
 
@@ -108,19 +111,20 @@ export class AuthController {
   async deleteMe(
     @CurrentUser() user: SessionUser,
     @Body() body: { password?: string },
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
     await this.authService.deleteOwnAccount(
       user.id,
       String(body?.password ?? ''),
     );
-    res.clearCookie(SESSION_COOKIE, sessionCookieOptions());
+    this.clearSessionCookies(req, res);
     return { ok: true };
   }
 
   @Post('logout')
-  logout(@Res({ passthrough: true }) res: Response) {
-    res.clearCookie(SESSION_COOKIE, sessionCookieOptions());
+  logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    this.clearSessionCookies(req, res);
     return { ok: true };
   }
 
@@ -131,10 +135,11 @@ export class AuthController {
   @Post('sessions/revoke')
   async revokeMySessions(
     @CurrentUser() user: SessionUser,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
     await this.sessions.revokeAll(user.id);
-    res.clearCookie(SESSION_COOKIE, sessionCookieOptions());
+    this.clearSessionCookies(req, res);
     return { ok: true };
   }
 
@@ -194,7 +199,13 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('me')
-  me(@CurrentUser() user: unknown) {
+  me(
+    @CurrentUser() user: unknown,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    // Only the legacy cookie: the current session stays as it is.
+    clearLegacySessionCookie(req, res);
     return { user };
   }
 
@@ -209,11 +220,17 @@ export class AuthController {
     return { isSetup };
   }
 
-  private setSessionCookie(res: Response, token: string) {
+  private setSessionCookie(req: Request, res: Response, token: string) {
+    clearLegacySessionCookie(req, res);
     res.cookie(
       SESSION_COOKIE,
       token,
       sessionCookieOptions(this.cookieMaxAgeMs),
     );
+  }
+
+  private clearSessionCookies(req: Request, res: Response) {
+    res.clearCookie(SESSION_COOKIE, sessionCookieOptions());
+    clearLegacySessionCookie(req, res);
   }
 }
