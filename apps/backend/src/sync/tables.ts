@@ -111,6 +111,8 @@ export const SYNC_TABLES: Readonly<Record<string, SyncTable>> = {
   purchase_order_items: br(via('purchase_orders', 'purchaseOrderId')),
   goods_receipts: br(col()),
   goods_receipt_items: br(via('goods_receipts', 'goodsReceiptId')),
+  purchase_returns: br(col()),
+  purchase_return_items: br(via('purchase_returns', 'purchaseReturnId')),
   supplier_quotations: br(col()),
   supplier_quotation_items: br(
     via('supplier_quotations', 'supplierQuotationId'),
@@ -139,6 +141,7 @@ export const LOCAL_TABLES: Readonly<Record<string, string>> = {
   sync_changes: 'the outbox itself',
   sync_versions: 'per-row version registry of this install',
   sync_cursors: 'pull positions of this server’s clients',
+  sync_rejected: 'changes a peer rejected, kept for review on this install',
   verifactu_records: 'append-only hash chain per installation',
   backups: 'backups belong to the machine',
   backup_config: 'backup target of this machine',

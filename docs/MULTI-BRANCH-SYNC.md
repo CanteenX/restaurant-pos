@@ -299,7 +299,8 @@ the table list if answered differently:
   tables never sync. Additions to §4.3: `integration_outbox` (delivery queue
   for this install's connections) and the new `sync_versions` /
   `sync_cursors` are Local; `stock_batches` is LWW with `quantityRemaining`
-  Derived, because FIFO consumption updates it in place.
+  Derived, because FIFO consumption updates it in place; `purchase_returns` /
+  `purchase_return_items` (#63) are Branch-owned LWW like goods receipts.
 - **Capture SQL is generated** from that file at every boot
   (`capture-sql.ts`: `sync_is_synced_table`, `sync_branch_of`,
   `sync_capture_row`), then `sync_install_triggers()` adds the row trigger
@@ -316,6 +317,19 @@ the table list if answered differently:
   skipped; same HLC from another peer → server wins.
 - **Pruning on acknowledgement**: the client deletes a push page in the same
   transaction that advances `lastPushSeq`; a crash replays at most that page.
+- **Rejected changes are kept, not pruned**: conflicts carry the change's
+  `seq`. Whatever the server rejected on push (malformed, unknown table, FK
+  still failing after the retry passes), and whatever this install rejected
+  on pull before moving `lastPullSeq` past it, is written to the local
+  `sync_rejected` table (`side` = `push` / `pull`, the full change and the
+  error) in the same transaction. `GET /sync/status` reports the count as
+  `rejectedChanges`. Replaying them is an admin action (#82).
+- **Upgrade path**: entries queued before this migration (no HLC, no peer)
+  are backfilled by `sync_backfill_legacy()`: HLC from their `ts`, strictly
+  increasing per row in outbox order; peer = this device for local entries,
+  the sending device for entries relayed on a server; and each row's newest
+  version is recorded in `sync_versions`. Old seed entries keep HLC 0 and get
+  peer `seed`.
 - **Server compaction** (G8): pulls record each client's position in
   `sync_cursors`; below the lowest position, superseded entries and
   tombstones are dropped, while the newest upsert of each row is kept so a
@@ -328,3 +342,12 @@ the table list if answered differently:
 
 Not yet: ownership enforcement, branch-filtered pull, HLC-advance on
 receive across rows, derived-column recompute, per-peer keys (#82).
+
+Known limits, to address in #82:
+- A stale `sync_cursors` row (decommissioned or reset device) pins the
+  compaction floor, so the server log stops compacting. Cursors need to
+  expire by `seenAt`, or an admin needs to be able to drop a device.
+- `sync_versions` tombstones are never pruned.
+- Compaction drops tombstones below the floor, so a device that joins later
+  in `merge` mode with its own copy of a deleted row never receives that
+  delete and will push the row back.

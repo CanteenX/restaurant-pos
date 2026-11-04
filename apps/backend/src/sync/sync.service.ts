@@ -10,7 +10,10 @@ import { captureSql } from './capture-sql';
 import {
   assertWellFormed,
   compact,
+  Conflict,
   localizePermission,
+  Rejected,
+  rejectedChanges,
   SyncChange,
 } from './outbox';
 import { syncTable } from './tables';
@@ -33,7 +36,7 @@ const toWire = (r: ChangeRow): SyncChange => {
 export interface ApplyResult {
   applied: number;
   skipped: number;
-  conflicts: { tbl: string; pk: string; error: string }[];
+  conflicts: Conflict[];
 }
 
 interface TableMeta {
@@ -147,6 +150,9 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       `SELECT count(*) AS n FROM sync_changes WHERE seq > $1`,
       s.lastPushSeq,
     );
+    const rejected = await this.prisma.$queryRawUnsafe<{ n: bigint }[]>(
+      `SELECT count(*) AS n FROM sync_rejected`,
+    );
     return {
       enabled: s.enabled,
       role: s.role,
@@ -155,6 +161,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       lastSyncAt: s.lastSyncAt,
       lastError: s.lastError,
       pendingChanges: s.role === 'client' ? Number(pending[0].n) : 0,
+      rejectedChanges: Number(rejected[0].n),
       conflicts: s.conflicts,
     };
   }
@@ -220,6 +227,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         pending.push(c);
       } catch (e) {
         result.conflicts.push({
+          seq: typeof c?.seq === 'string' ? c.seq : undefined,
           tbl: String(c?.tbl),
           pk: String(c?.pkKey),
           error: e instanceof Error ? e.message : String(e),
@@ -258,6 +266,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
                   retry.push(c);
                 else
                   result.conflicts.push({
+                    seq: c.seq,
                     tbl: c.tbl,
                     pk: c.pkKey,
                     error: msg.split('\n').pop() ?? msg,
@@ -386,6 +395,17 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ---- client side -------------------------------------------------------
+
+  /** Dead-letters rejected changes so pruning or a cursor move can't lose them. */
+  private keepRejected(side: 'push' | 'pull', rejected: Rejected[]) {
+    return this.prisma.$executeRawUnsafe(
+      `INSERT INTO sync_rejected (side, tbl, "pkKey", change, error)
+       SELECT $1, x.tbl, x."pkKey", x.change, x.error
+         FROM jsonb_to_recordset($2::jsonb) AS x(tbl text, "pkKey" text, change jsonb, error text)`,
+      side,
+      JSON.stringify(rejected),
+    );
+  }
 
   private async call<T>(
     s: { serverUrl: string | null; apiKey: string | null },
@@ -531,10 +551,14 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         pulled += r.applied;
         conflicts.push(...r.conflicts);
         since = BigInt(page.nextSeq);
-        await this.prisma.$executeRawUnsafe(
-          `UPDATE sync_state SET "lastPullSeq" = $1 WHERE id = 1`,
-          since,
-        );
+        // The cursor moves past rejected server changes: keep them first.
+        await this.prisma.$transaction([
+          this.keepRejected('pull', rejectedChanges(page.changes, r.conflicts)),
+          this.prisma.$executeRawUnsafe(
+            `UPDATE sync_state SET "lastPullSeq" = $1 WHERE id = 1`,
+            since,
+          ),
+        ]);
         if (!page.hasMore) break;
       }
 
@@ -554,9 +578,11 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         pushed += r.applied;
         conflicts.push(...r.conflicts);
         pushedTo = BigInt(rows[rows.length - 1].seq);
-        // Acknowledged by the server: advance the cursor and drop the page
-        // together, so a crash replays at most this page (idempotent).
+        // Acknowledged by the server: keep what it rejected, then advance the
+        // cursor and drop the page together, so a crash replays at most this
+        // page (idempotent).
         await this.prisma.$transaction([
+          this.keepRejected('push', rejectedChanges(changes, r.conflicts)),
           this.prisma.$executeRawUnsafe(
             `UPDATE sync_state SET "lastPushSeq" = $1 WHERE id = 1`,
             pushedTo,

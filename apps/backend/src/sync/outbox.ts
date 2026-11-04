@@ -114,3 +114,42 @@ export function assertWellFormed(c: SyncChange): void {
   if (c.op === 'U' && (!c.row || typeof c.row !== 'object'))
     throw new Error('update without a row');
 }
+
+export interface Conflict {
+  /** Outbox position of the rejected change on the sender, when known. */
+  seq?: string;
+  tbl: string;
+  pk: string;
+  error: string;
+}
+
+export interface Rejected {
+  tbl: string;
+  pkKey: string;
+  /** The change as sent, or null when the conflict can't be matched to one. */
+  change: SyncChange | null;
+  error: string;
+}
+
+/**
+ * Pairs the conflicts a peer reported with the changes that were sent, so a
+ * rejected change is kept (sync_rejected) instead of being pruned with the
+ * acknowledged page. Matches by seq, else by table + row.
+ */
+export function rejectedChanges(
+  sent: SyncChange[],
+  conflicts: Conflict[],
+): Rejected[] {
+  return conflicts.map((k) => {
+    const change =
+      (k.seq !== undefined && sent.find((c) => c.seq === k.seq)) ||
+      sent.find((c) => c.tbl === k.tbl && c.pkKey === k.pk) ||
+      null;
+    return {
+      tbl: change?.tbl ?? k.tbl,
+      pkKey: change?.pkKey ?? k.pk,
+      change,
+      error: k.error,
+    };
+  });
+}

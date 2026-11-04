@@ -37,6 +37,21 @@ CREATE TABLE "sync_cursors" (
   CONSTRAINT "sync_cursors_pkey" PRIMARY KEY ("device")
 );
 
+-- Changes a peer rejected (malformed, unknown table, FK still failing). They
+-- are kept here instead of vanishing with the acknowledged page (#81 review).
+-- side = 'push': the server rejected one of ours; 'pull': we rejected one of
+-- the server's. change is NULL only if the conflict matched nothing sent.
+CREATE TABLE "sync_rejected" (
+  "id" BIGSERIAL NOT NULL,
+  "side" TEXT NOT NULL,
+  "tbl" TEXT NOT NULL,
+  "pkKey" TEXT NOT NULL,
+  "change" JSONB,
+  "error" TEXT NOT NULL,
+  "at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "sync_rejected_pkey" PRIMARY KEY ("id")
+);
+
 -- Starting classification; replaced at boot from tables.ts. Device-local and
 -- per-install-sealed tables stop syncing (G5, G10, G11).
 CREATE OR REPLACE FUNCTION sync_is_synced_table(t text) RETURNS boolean
@@ -174,4 +189,39 @@ BEGIN
   UPDATE sync_state SET seeded = true WHERE id = 1;
 END $$;
 
+-- Entries queued before this migration have hlc 0 and peer '' (G7 upgrade
+-- path): give them the HLC their timestamp implies (strictly increasing per
+-- row, in outbox order), the writing device as peer, and record each row's
+-- newest version so later local edits order after them. Seed entries keep
+-- hlc 0 so any real edit wins; they get peer 'seed' like new seeds do.
+CREATE OR REPLACE FUNCTION sync_backfill_legacy() RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE sync_changes SET peer = 'seed' WHERE peer = '' AND origin = 'seed';
+  WITH legacy AS (
+    SELECT seq,
+           max(floor(extract(epoch FROM ts) * 1000)::bigint * 65536)
+             OVER (PARTITION BY tbl, "pkKey" ORDER BY seq ROWS UNBOUNDED PRECEDING)
+           + row_number() OVER (PARTITION BY tbl, "pkKey" ORDER BY seq) AS h
+      FROM sync_changes WHERE peer = ''
+  ), upd AS (
+    UPDATE sync_changes c
+       SET hlc = l.h,
+           peer = CASE WHEN c.origin IN ('local', '')
+                       THEN (SELECT "deviceId" FROM sync_state WHERE id = 1)
+                       ELSE c.origin END,
+           "branchId" = coalesce(c."branchId", sync_branch_of(c.tbl, c.row))
+      FROM legacy l WHERE c.seq = l.seq
+    RETURNING c.seq, c.tbl, c."pkKey", c.op, c.hlc, c.peer, c."branchId", c.ts
+  )
+  INSERT INTO sync_versions (tbl, "pkKey", hlc, peer, deleted, "branchId", ts)
+  SELECT DISTINCT ON (tbl, "pkKey") tbl, "pkKey", hlc, peer, op = 'D', "branchId", ts
+    FROM upd ORDER BY tbl, "pkKey", seq DESC
+  ON CONFLICT (tbl, "pkKey") DO UPDATE
+    SET hlc = EXCLUDED.hlc, peer = EXCLUDED.peer, deleted = EXCLUDED.deleted,
+        "branchId" = coalesce(EXCLUDED."branchId", sync_versions."branchId"), ts = EXCLUDED.ts
+    WHERE EXCLUDED.hlc > sync_versions.hlc;
+END $$;
+
+SELECT sync_backfill_legacy();
 SELECT sync_install_triggers();

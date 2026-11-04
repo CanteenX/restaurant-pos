@@ -6,6 +6,7 @@ import {
   isNewer,
   localizePermission,
   nextHlc,
+  rejectedChanges,
   SyncChange,
 } from './outbox';
 
@@ -151,5 +152,42 @@ describe('wire validation', () => {
       /row/,
     );
     expect(() => assertWellFormed(ch(1, 'a', 1, 'D'))).not.toThrow();
+  });
+});
+
+describe('rejectedChanges', () => {
+  const sent = [ch(1, 'a', 10), ch(2, 'b', 20), ch(3, 'c', 30, 'D')];
+
+  it('matches conflicts to the changes that were sent, by seq first', () => {
+    const out = rejectedChanges(sent, [
+      { seq: '3', tbl: 'menu_items', pk: 'c', error: 'fk' },
+      { seq: '1', tbl: 'menu_items', pk: 'zzz', error: 'unknown table' },
+    ]);
+    expect(out.map((r) => [r.change?.seq, r.error])).toEqual([
+      ['3', 'fk'],
+      ['1', 'unknown table'],
+    ]);
+  });
+
+  it('falls back to table + row when the conflict carries no seq', () => {
+    const out = rejectedChanges(sent, [
+      { tbl: 'menu_items', pk: 'b', error: 'malformed change' },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].change?.seq).toBe('2');
+  });
+
+  it('keeps an unmatched conflict as a stub so nothing is silently dropped', () => {
+    const out = rejectedChanges(sent, [
+      { tbl: 'orders', pk: 'x', error: 'malformed change' },
+    ]);
+    expect(out).toEqual([
+      {
+        tbl: 'orders',
+        pkKey: 'x',
+        change: null,
+        error: 'malformed change',
+      },
+    ]);
   });
 });

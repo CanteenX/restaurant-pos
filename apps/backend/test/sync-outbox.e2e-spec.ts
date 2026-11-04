@@ -107,6 +107,7 @@ describe('Sync outbox (e2e)', () => {
     await prisma.$executeRawUnsafe('DELETE FROM sync_changes');
     await prisma.$executeRawUnsafe('DELETE FROM sync_versions');
     await prisma.$executeRawUnsafe('DELETE FROM sync_cursors');
+    await prisma.$executeRawUnsafe('DELETE FROM sync_rejected');
     await prisma.permission.deleteMany({ where: { key: `sync.test.${tag}` } });
     process.env.ALLOW_PUBLIC_SIGNUP = previousSignup;
     await app.close();
@@ -330,5 +331,157 @@ describe('Sync outbox (e2e)', () => {
     await sync.compactOutbox();
     const kept = await outbox([floor.id]);
     expect(kept.map((r) => r.row?.name)).toEqual([`C3-${tag}`]);
+  });
+
+  /** HQ stand-in: ping ok, `pull` from the given page, `push` via handler. */
+  const fakeHq = async (
+    pull: { changes: SyncChange[]; nextSeq: string },
+    push: (changes: SyncChange[]) => Promise<unknown>,
+  ) => {
+    const schema = await sync.schemaVersion();
+    global.fetch = async (url: string, init?: RequestInit) => {
+      const path = new URL(url).pathname.split('/').pop();
+      const reply = (body: unknown) =>
+        new Response(JSON.stringify(body), { status: 200 });
+      if (path === 'ping') return reply({ ok: true, role: 'server', schema });
+      if (path === 'pull') return reply({ ...pull, hasMore: false });
+      const body = JSON.parse(init?.body as string) as {
+        changes: SyncChange[];
+      };
+      return reply(await push(body.changes));
+    };
+  };
+
+  it('upgrade: entries queued before the migration are backfilled and pushed', async () => {
+    const floor = await prisma.floor.create({
+      data: { branchId, name: `L-${tag}` },
+    });
+    await prisma.floor.update({
+      where: { id: floor.id },
+      data: { name: `L2-${tag}` },
+    });
+    const [first] = await outbox([floor.id]);
+    // Make them look like pre-#81 entries: same ms, no clock, no peer.
+    await prisma.$executeRawUnsafe(
+      `UPDATE sync_changes SET hlc = 0, peer = '', "branchId" = NULL, ts = $2::timestamptz
+        WHERE pk ->> 'id' = $1`,
+      floor.id,
+      '2026-11-01T10:00:00.000Z',
+    );
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM sync_versions WHERE "pkKey" = $1`,
+      first.pkKey,
+    );
+    // Relayed (server-side) and seed entries from before the upgrade.
+    const relayed = randomUUID();
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO sync_changes (tbl, pk, "pkKey", op, row, ts, origin)
+       VALUES ('floors', $1::jsonb, $2, 'D', NULL, now(), 'branch-q'),
+              ('floors', $1::jsonb, $2, 'U', '{}'::jsonb, 'epoch', 'seed')`,
+      JSON.stringify({ id: relayed }),
+      key(relayed),
+    );
+
+    await prisma.$executeRawUnsafe('SELECT sync_backfill_legacy()');
+
+    const rows = await outbox([floor.id, relayed]);
+    const mine = rows.filter((r) => r.pk.id === floor.id);
+    const ms = Date.parse('2026-11-01T10:00:00.000Z');
+    expect(mine.map((r) => r.peer)).toEqual([deviceId, deviceId]);
+    expect(mine.map((r) => BigInt(r.hlc))).toEqual([
+      BigInt(ms) * 65536n + 1n,
+      BigInt(ms) * 65536n + 2n,
+    ]);
+    expect(mine.every((r) => r.branchId === branchId)).toBe(true);
+    const other = rows.filter((r) => r.pk.id === relayed);
+    expect(other.map((r) => [r.peer, BigInt(r.hlc) > 0n])).toEqual([
+      ['branch-q', true],
+      ['seed', false],
+    ]);
+    // The newest backfilled version is registered, so a later edit orders after it.
+    const [v] = await prisma.$queryRawUnsafe<{ hlc: string; peer: string }[]>(
+      `SELECT hlc::text, peer FROM sync_versions WHERE tbl = 'floors' AND "pkKey" = $1`,
+      first.pkKey,
+    );
+    expect(v).toEqual({ hlc: mine[1].hlc, peer: deviceId });
+
+    // HQ holds an older version of the row from another branch: ours wins.
+    const results: Awaited<ReturnType<SyncService['push']>>[] = [];
+    await fakeHq({ changes: [], nextSeq: '0' }, async (changes) => {
+      await prisma.$executeRawUnsafe(
+        `UPDATE sync_versions SET hlc = $2::bigint, peer = 'hq' WHERE tbl = 'floors' AND "pkKey" = $1`,
+        first.pkKey,
+        String(BigInt(ms - 60_000) * 65536n),
+      );
+      const r = await sync.push('legacy-client', changes);
+      results.push(r);
+      return r;
+    });
+    await sync.runOnce();
+    const conflicts = results.flatMap((r) => r.conflicts);
+    expect(conflicts.filter((c) => c.pk === first.pkKey)).toEqual([]);
+    expect(results.reduce((n, r) => n + r.applied, 0)).toBeGreaterThan(0);
+    const [after] = await prisma.$queryRawUnsafe<
+      { hlc: string; peer: string }[]
+    >(
+      `SELECT hlc::text, peer FROM sync_versions WHERE tbl = 'floors' AND "pkKey" = $1`,
+      first.pkKey,
+    );
+    expect(after).toEqual({ hlc: mine[1].hlc, peer: deviceId });
+    const rejected = await prisma.$queryRawUnsafe<{ n: bigint }[]>(
+      `SELECT count(*) AS n FROM sync_rejected WHERE "pkKey" = $1`,
+      first.pkKey,
+    );
+    expect(Number(rejected[0].n)).toBe(0);
+  });
+
+  it('rejected changes are kept in sync_rejected, not pruned with the page', async () => {
+    await prisma.$executeRawUnsafe('DELETE FROM sync_changes');
+    const floor = await prisma.floor.create({
+      data: { branchId, name: `X-${tag}` },
+    });
+    const [queued] = await outbox([floor.id]);
+    const bad: SyncChange = {
+      seq: '987654',
+      tbl: 'floors',
+      pk: { id: `bad-${tag}` },
+      pkKey: key(`bad-${tag}`),
+      op: 'U',
+      row: { id: `bad-${tag}` },
+      ts: new Date().toISOString(),
+      hlc: '1',
+      peer: '',
+    };
+    await fakeHq({ changes: [bad], nextSeq: '987654' }, (changes) =>
+      Promise.resolve({
+        applied: 0,
+        skipped: 0,
+        conflicts: changes.map((c) => ({
+          seq: c.seq,
+          tbl: c.tbl,
+          pk: c.pkKey,
+          error: 'violates foreign key constraint',
+        })),
+      }),
+    );
+    const r = await sync.runOnce();
+    expect(r?.conflicts).toBe(2);
+    expect(await outbox([floor.id])).toHaveLength(0);
+
+    const kept = await prisma.$queryRawUnsafe<
+      { side: string; pkKey: string; change: SyncChange; error: string }[]
+    >(
+      `SELECT side, "pkKey", change, error FROM sync_rejected WHERE "pkKey" = ANY ($1::text[]) ORDER BY id`,
+      [queued.pkKey, bad.pkKey],
+    );
+    expect(kept.map((k) => [k.side, k.pkKey, k.error])).toEqual([
+      ['pull', bad.pkKey, 'change without a peer'],
+      ['push', queued.pkKey, 'violates foreign key constraint'],
+    ]);
+    expect(kept[1].change.seq).toBe(queued.seq);
+    expect(kept[1].change.row?.name).toBe(`X-${tag}`);
+    expect((await sync.publicStatus()).rejectedChanges).toBeGreaterThanOrEqual(
+      2,
+    );
   });
 });

@@ -2666,6 +2666,19 @@ model SyncVersion {
   @@map("sync_versions")
 }
 
+// Changes a peer rejected; kept instead of pruned with the acknowledged page.
+model SyncRejected {
+  id     BigInt   @id @default(autoincrement())
+  side   String
+  tbl    String
+  pkKey  String
+  change Json?
+  error  String
+  at     DateTime @default(now()) @db.Timestamptz(3)
+
+  @@map("sync_rejected")
+}
+
 // Server side: how far each client has pulled (for outbox compaction).
 model SyncCursor {
   device String   @id
