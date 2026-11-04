@@ -297,66 +297,34 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     const t = meta.get(wire.tbl);
     if (!t || !t.pk.length) throw new Error(`unknown table ${wire.tbl}`);
     assertRowMatchesPk(wire, t.pk);
-    // Recompute the row key exactly as the sender's trigger did (sync_pk on
-    // the wire pk) and serialise every apply of this row until commit, so
-    // two concurrent pushes can't both pass the LWW check below (#81 audit).
-    // Two-int advisory locks (objsubid 2) are ignored by sync_safe_seq().
-    const [{ k }] = await tx.$queryRawUnsafe<{ k: string }[]>(
-      `SELECT x.k FROM (SELECT sync_pk($1::text[], $2::jsonb)::text AS k) x,
-         LATERAL (SELECT pg_advisory_xact_lock(hashtext('sync_row'), hashtext($3 || chr(1) || x.k))) l`,
-      t.pk,
-      JSON.stringify(wire.pk),
-      wire.tbl,
-    );
-    if (k !== wire.pkKey) throw new Error('pkKey does not match pk');
+    await this.lockApplyKey(tx, wire, t);
     const c = localizePermission(wire, opts.permissionId);
-    const newer = await tx.$queryRawUnsafe<{ ok: boolean }[]>(
-      `SELECT NOT EXISTS (
-         SELECT 1 FROM sync_versions WHERE tbl = $1 AND "pkKey" = $2
-            AND (hlc > $3::bigint OR (hlc = $3::bigint AND (peer = $4 OR NOT $5::boolean)))) AS ok`,
-      c.tbl,
-      c.pkKey,
-      c.hlc,
-      c.peer,
-      opts.tieWins,
-    );
-    if (!newer[0].ok) return false;
-    await tx.$queryRawUnsafe(
-      `SELECT set_config('app.sync_origin', $1, true), set_config('app.sync_ts', $2, true),
-              set_config('app.sync_hlc', $3, true), set_config('app.sync_peer', $4, true)`,
-      opts.origin,
-      c.ts,
-      c.hlc,
-      c.peer,
-    );
-    const tbl = this.q(c.tbl);
-    const pkCols = t.pk.map((p) => this.q(p)).join(', ');
-    if (c.op === 'D') {
-      await tx.$executeRawUnsafe(
-        `DELETE FROM ${tbl} WHERE (${pkCols}) = (SELECT ${pkCols} FROM jsonb_populate_record(NULL::${tbl}, $1::jsonb))`,
-        JSON.stringify(c.pk),
+    // A local writer of this row commits before the LWW check reads its
+    // version (#81 audit): the row lock is taken first, as the writer's own
+    // UPDATE does before its trigger, so the two can't deadlock. A row a
+    // local writer inserts meanwhile is seen when our insert hits it.
+    for (let attempt = 0; ; attempt++) {
+      const exists = await this.lockRow(tx, c, t);
+      if (!(await this.isNewer(tx, c, opts))) return false;
+      await tx.$queryRawUnsafe(
+        `SELECT set_config('app.sync_origin', $1, true), set_config('app.sync_ts', $2, true),
+                set_config('app.sync_hlc', $3, true), set_config('app.sync_peer', $4, true)`,
+        opts.origin,
+        c.ts,
+        c.hlc,
+        c.peer,
       );
-    } else {
-      // Stripped columns never arrive; keep this install's value.
-      const keep = new Set(syncTable(c.tbl)?.strip ?? []);
-      const sets = t.cols
-        .filter((x) => !t.pk.includes(x) && !keep.has(x))
-        .map((x) => `${this.q(x)} = EXCLUDED.${this.q(x)}`);
-      const onConflict = sets.length
-        ? `ON CONFLICT (${pkCols}) DO UPDATE SET ${sets.join(', ')}`
-        : `ON CONFLICT (${pkCols}) DO NOTHING`;
-      await tx.$executeRawUnsafe(
-        `INSERT INTO ${tbl} SELECT * FROM jsonb_populate_record(NULL::${tbl}, $1::jsonb) ${onConflict}`,
-        JSON.stringify(c.row),
-      );
+      if (await this.writeRow(tx, c, t, exists)) break;
+      if (attempt) throw new Error('row changed twice during apply');
     }
     // The trigger records the version when a row changed; a delete of a row
-    // this install never had still needs its tombstone.
+    // this install never had still needs its tombstone. Never lowers it.
     await tx.$executeRawUnsafe(
       `INSERT INTO sync_versions (tbl, "pkKey", hlc, peer, deleted, "branchId", ts)
        VALUES ($1, $2, $3::bigint, $4, $5, $6, $7::timestamptz)
        ON CONFLICT (tbl, "pkKey") DO UPDATE SET hlc = EXCLUDED.hlc, peer = EXCLUDED.peer,
-         deleted = EXCLUDED.deleted, "branchId" = coalesce(EXCLUDED."branchId", sync_versions."branchId"), ts = EXCLUDED.ts`,
+         deleted = EXCLUDED.deleted, "branchId" = coalesce(EXCLUDED."branchId", sync_versions."branchId"), ts = EXCLUDED.ts
+       WHERE EXCLUDED.hlc >= sync_versions.hlc`,
       c.tbl,
       c.pkKey,
       c.hlc,
@@ -366,6 +334,84 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       c.ts,
     );
     return true;
+  }
+
+  /**
+   * Recomputes the row key exactly as the sender's trigger did (sync_pk on
+   * the wire pk) and serialises every apply of this row until commit, so two
+   * concurrent pushes can't both pass the LWW check (#81 audit). Two-int
+   * advisory locks (objsubid 2) are ignored by sync_safe_seq().
+   */
+  private async lockApplyKey(tx: Tx, wire: SyncChange, t: TableMeta) {
+    const [{ k }] = await tx.$queryRawUnsafe<{ k: string }[]>(
+      `SELECT x.k FROM (SELECT sync_pk($1::text[], $2::jsonb)::text AS k) x,
+         LATERAL (SELECT pg_advisory_xact_lock(hashtext('sync_row'), hashtext($3 || chr(1) || x.k))) l`,
+      t.pk,
+      JSON.stringify(wire.pk),
+      wire.tbl,
+    );
+    if (k !== wire.pkKey) throw new Error('pkKey does not match pk');
+  }
+
+  /** Locks the target row (waiting out any open writer); false if absent. */
+  private async lockRow(tx: Tx, c: SyncChange, t: TableMeta) {
+    const tbl = this.q(c.tbl);
+    const pkCols = t.pk.map((p) => this.q(p)).join(', ');
+    const r = await tx.$queryRawUnsafe<unknown[]>(
+      `SELECT 1 FROM ${tbl} WHERE (${pkCols}) = (SELECT ${pkCols} FROM jsonb_populate_record(NULL::${tbl}, $1::jsonb)) FOR UPDATE`,
+      JSON.stringify(c.pk),
+    );
+    return r.length > 0;
+  }
+
+  private async isNewer(tx: Tx, c: SyncChange, opts: ApplyOpts) {
+    const r = await tx.$queryRawUnsafe<{ ok: boolean }[]>(
+      `SELECT NOT EXISTS (
+         SELECT 1 FROM sync_versions WHERE tbl = $1 AND "pkKey" = $2
+            AND (hlc > $3::bigint OR (hlc = $3::bigint AND (peer = $4 OR NOT $5::boolean)))) AS ok`,
+      c.tbl,
+      c.pkKey,
+      c.hlc,
+      c.peer,
+      opts.tieWins,
+    );
+    return r[0].ok;
+  }
+
+  /**
+   * Writes the change. An upsert of a row that was absent when locked only
+   * inserts; false means a concurrent writer created it first, so the caller
+   * locks it and re-checks LWW against that writer's version.
+   */
+  private async writeRow(
+    tx: Tx,
+    c: SyncChange,
+    t: TableMeta,
+    exists: boolean,
+  ): Promise<boolean> {
+    const tbl = this.q(c.tbl);
+    const pkCols = t.pk.map((p) => this.q(p)).join(', ');
+    if (c.op === 'D') {
+      await tx.$executeRawUnsafe(
+        `DELETE FROM ${tbl} WHERE (${pkCols}) = (SELECT ${pkCols} FROM jsonb_populate_record(NULL::${tbl}, $1::jsonb))`,
+        JSON.stringify(c.pk),
+      );
+      return true;
+    }
+    // Stripped columns never arrive; keep this install's value.
+    const keep = new Set(syncTable(c.tbl)?.strip ?? []);
+    const sets = t.cols
+      .filter((x) => !t.pk.includes(x) && !keep.has(x))
+      .map((x) => `${this.q(x)} = EXCLUDED.${this.q(x)}`);
+    const onConflict =
+      exists && sets.length
+        ? `ON CONFLICT (${pkCols}) DO UPDATE SET ${sets.join(', ')}`
+        : `ON CONFLICT (${pkCols}) DO NOTHING`;
+    const n = await tx.$executeRawUnsafe(
+      `INSERT INTO ${tbl} SELECT * FROM jsonb_populate_record(NULL::${tbl}, $1::jsonb) ${onConflict}`,
+      JSON.stringify(c.row),
+    );
+    return exists || n > 0;
   }
 
   /**
@@ -410,7 +456,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   /**
    * Server-side compaction (G8): every client has pulled past `min(cursor)`,
    * so below it an entry superseded by a newer one for the same row, and any
-   * tombstone, is no longer needed. The newest upsert of each row is kept so
+   * tombstone, is no longer needed. The newest upsert of each row (highest HLC) is kept so
    * a newly joining client still gets every row. Returns entries removed.
    */
   async compactOutbox(): Promise<number> {
@@ -420,7 +466,8 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         WHERE c.seq <= floor.s
           AND (c.op = 'D' OR EXISTS (
                 SELECT 1 FROM sync_changes n
-                 WHERE n.tbl = c.tbl AND n."pkKey" = c."pkKey" AND n.seq > c.seq))`,
+                 WHERE n.tbl = c.tbl AND n."pkKey" = c."pkKey"
+                   AND (n.hlc > c.hlc OR (n.hlc = c.hlc AND n.seq > c.seq))))`,
     );
   }
 

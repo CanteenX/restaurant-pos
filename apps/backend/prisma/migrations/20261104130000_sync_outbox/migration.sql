@@ -164,9 +164,11 @@ BEGIN
   br := coalesce(sync_branch_of(TG_TABLE_NAME, rec), v."branchId");
   INSERT INTO sync_versions (tbl, "pkKey", hlc, peer, deleted, "branchId", ts)
   VALUES (TG_TABLE_NAME, k, h, who, TG_OP = 'DELETE', br, wall)
+  -- A version never goes backwards, even if an older apply slips through.
   ON CONFLICT (tbl, "pkKey") DO UPDATE
     SET hlc = EXCLUDED.hlc, peer = EXCLUDED.peer, deleted = EXCLUDED.deleted,
-        "branchId" = EXCLUDED."branchId", ts = EXCLUDED.ts;
+        "branchId" = EXCLUDED."branchId", ts = EXCLUDED.ts
+    WHERE EXCLUDED.hlc >= sync_versions.hlc;
   IF origin = '__skip' THEN RETURN NULL; END IF;
   PERFORM sync_mark_inflight();
   INSERT INTO sync_changes (tbl, pk, "pkKey", op, row, ts, origin, hlc, peer, "branchId", "schemaVersion")

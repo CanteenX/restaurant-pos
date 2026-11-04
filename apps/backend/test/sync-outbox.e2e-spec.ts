@@ -724,7 +724,8 @@ describe('Sync outbox (e2e)', () => {
         const [w] = await prisma.$queryRawUnsafe<{ n: bigint }[]>(
           `SELECT count(*) AS n FROM pg_stat_activity
             WHERE datname = current_database() AND wait_event_type = 'Lock'
-              AND (query LIKE '%INSERT INTO "floors"%' OR query LIKE '%pg_advisory_xact_lock(hashtext(''sync_row'')%')`,
+              AND (query LIKE '%INSERT INTO "floors"%' OR query LIKE '%FROM "floors"%FOR UPDATE%'
+                   OR query LIKE '%pg_advisory_xact_lock(hashtext(''sync_row'')%')`,
         );
         if (Number(w.n) >= n) return;
         await new Promise((r) => setTimeout(r, 50));
@@ -771,6 +772,123 @@ describe('Sync outbox (e2e)', () => {
     );
     expect(v).toEqual({ hlc: at(2000n, '', '').hlc, peer: 'branch-new' });
   }, 30_000);
+
+  // A local POS write still open while a peer's older change is applied
+  // (#81 audit 2): the apply must wait for it and then lose the LWW check.
+  describe('an apply racing an open local write of the same row', () => {
+    const blockedApplies = async () => {
+      for (let i = 0; i < 200; i++) {
+        const [w] = await prisma.$queryRawUnsafe<{ n: bigint }[]>(
+          `SELECT count(*) AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'
+              AND (query LIKE '%FROM "floors"%FOR UPDATE%' OR query LIKE '%INSERT INTO "floors"%')`,
+        );
+        if (Number(w.n) >= 1) return;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      throw new Error('expected the apply to wait for the local write');
+    };
+    const openLocal = async (
+      write: (tx: Parameters<Parameters<PrismaService['$transaction']>[0]>[0]) => Promise<unknown>,
+    ) => {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let wrote!: () => void;
+      const written = new Promise<void>((r) => (wrote = r));
+      const done = prisma.$transaction(
+        async (tx) => {
+          await write(tx);
+          wrote();
+          await gate;
+        },
+        { timeout: 30_000 },
+      );
+      await written;
+      return async () => (release(), done);
+    };
+    const version = async (pkKey: string) =>
+      (
+        await prisma.$queryRawUnsafe<{ hlc: string; peer: string }[]>(
+          `SELECT hlc::text, peer FROM sync_versions WHERE tbl = 'floors' AND "pkKey" = $1`,
+          pkKey,
+        )
+      )[0];
+
+    it('update: the newer local edit and its version survive', async () => {
+      const floor = await prisma.floor.create({
+        data: { branchId, name: `R-${tag}` },
+      });
+      const [cap] = await outbox([floor.id]);
+      await new Promise((r) => setTimeout(r, 5));
+      const commit = await openLocal((tx) =>
+        tx.floor.update({
+          where: { id: floor.id },
+          data: { name: `Local-${tag}` },
+        }),
+      );
+      // v0 < H_R < H_L: the peer's change is older than the open local edit.
+      const remote: SyncChange = {
+        tbl: 'floors',
+        pk: { id: floor.id },
+        pkKey: cap.pkKey,
+        op: 'U',
+        row: { ...cap.row, name: `Remote-${tag}` },
+        ts: new Date().toISOString(),
+        hlc: String(BigInt(cap.hlc) + 1n),
+        peer: 'branch-race',
+      };
+      const pushed = sync.push('branch-race', [remote]);
+      try {
+        await blockedApplies();
+      } finally {
+        await commit();
+      }
+      const r = await pushed;
+      expect([r.applied, r.skipped, r.conflicts]).toEqual([0, 1, []]);
+      const row = await prisma.floor.findUniqueOrThrow({
+        where: { id: floor.id },
+      });
+      expect(row.name).toBe(`Local-${tag}`);
+      const v = await version(cap.pkKey);
+      expect(v.peer).toBe(deviceId);
+      expect(BigInt(v.hlc)).toBeGreaterThan(BigInt(remote.hlc));
+    }, 30_000);
+
+    it('insert: a row created locally while the apply waits is not overwritten', async () => {
+      const id = randomUUID();
+      const template = await prisma.floor.create({
+        data: { branchId, name: `T-${tag}` },
+      });
+      const [cap] = await outbox([template.id]);
+      const remote: SyncChange = {
+        tbl: 'floors',
+        pk: { id },
+        pkKey: key(id),
+        op: 'U',
+        row: { ...cap.row, id, name: `RemoteNew-${tag}` },
+        ts: new Date().toISOString(),
+        hlc: String(BigInt(cap.hlc) + 1n),
+        peer: 'branch-race',
+      };
+      await new Promise((r) => setTimeout(r, 5));
+      const commit = await openLocal((tx) =>
+        tx.floor.create({ data: { id, branchId, name: `LocalNew-${tag}` } }),
+      );
+      const pushed = sync.push('branch-race', [remote]);
+      try {
+        await blockedApplies();
+      } finally {
+        await commit();
+      }
+      const r = await pushed;
+      expect([r.applied, r.skipped, r.conflicts]).toEqual([0, 1, []]);
+      const row = await prisma.floor.findUniqueOrThrow({ where: { id } });
+      expect(row.name).toBe(`LocalNew-${tag}`);
+      const v = await version(key(id));
+      expect(v.peer).toBe(deviceId);
+      expect(BigInt(v.hlc)).toBeGreaterThan(BigInt(remote.hlc));
+    }, 30_000);
+  });
 
   it('an open writer in another database on the cluster does not stall sync', async () => {
     const url = new URL(process.env.DATABASE_URL!);

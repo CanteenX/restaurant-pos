@@ -346,6 +346,16 @@ the table list if answered differently:
   until commit, so two concurrent pushes of one row are serialised and the
   older HLC is skipped instead of overwriting the newer one. A deadlock
   between two such pushes is retried in the next pass.
+- **An apply never beats an open local write**: local POS writes don't take
+  that advisory lock, so apply also locks the target row (`FOR UPDATE`)
+  before the LWW check. A local edit still open on the row commits first,
+  and the check then sees its version. The lock order (row, then
+  `sync_versions` in the trigger) is the same as a local `UPDATE`'s, so the
+  two can't deadlock. A row that was absent is only inserted (`ON CONFLICT
+  DO NOTHING`); if a local writer created it meanwhile, apply locks it and
+  re-checks. As a backstop, neither the trigger nor apply ever lowers a
+  row's `sync_versions.hlc`, and server compaction keeps each row's
+  highest-HLC entry, not its highest seq.
 - **A PC with a wrong clock pauses, it never drops data**: HLCs come from
   each PC's own clock, so `ping` returns the server's `now` and every client
   cycle (and the settings page's connection test) compares it with this
