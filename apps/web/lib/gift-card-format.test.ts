@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { giftCardStatus, issueAmountHint, parseIssueAmount } from "./gift-card-format.ts";
+import { giftCardBadgeVariant, giftCardStatus, issueAmountHint, issueAmountHintCode, parseIssueAmount } from "./gift-card-format.ts";
 
 test("inactive card is Disabled, zero balance is Used up, else Active", () => {
   assert.equal(giftCardStatus({ isActive: false, balance: "50.00" }), "Disabled");
@@ -24,4 +24,17 @@ test("issueAmountHint is empty for blank or valid input, explains invalid input"
   assert.match(issueAmountHint("abc") ?? "", /number/i);
   assert.match(issueAmountHint("0") ?? "", /greater than 0/i);
   assert.match(issueAmountHint("-5") ?? "", /greater than 0/i);
+});
+
+test("giftCardBadgeVariant differs per status", () => {
+  assert.equal(giftCardBadgeVariant("Active"), "default");
+  assert.equal(giftCardBadgeVariant("Used up"), "secondary");
+  assert.equal(giftCardBadgeVariant("Disabled"), "destructive");
+});
+
+test("issueAmountHintCode returns a translatable code", () => {
+  assert.equal(issueAmountHintCode(""), null);
+  assert.equal(issueAmountHintCode("500"), null);
+  assert.equal(issueAmountHintCode("abc"), "number");
+  assert.equal(issueAmountHintCode("0"), "positive");
 });
