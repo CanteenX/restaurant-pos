@@ -112,6 +112,18 @@ run('GraphQL auth and tenant guard (e2e)', () => {
         revokedAt: new Date(),
       },
     });
+    keys.expired = `ordr_ext_${randomUUID().replace(/-/g, '')}`;
+    await prisma.integrationApiKey.create({
+      data: {
+        restaurantId: other.id,
+        name: 'expired',
+        tokenHash: createHash('sha256').update(keys.expired).digest('hex'),
+        lastFour: keys.expired.slice(-4),
+        scopes: ['menu:read'],
+        createdById: user.id,
+        expiresAt: new Date(Date.now() - 60_000),
+      },
+    });
   });
 
   afterAll(async () => {
@@ -140,6 +152,10 @@ run('GraphQL auth and tenant guard (e2e)', () => {
 
     it('rejects a revoked key', async () => {
       expect((await gql(VIEWER, keys.revoked)).status).toBe(401);
+    });
+
+    it('rejects an expired key', async () => {
+      expect((await gql(VIEWER, keys.expired)).status).toBe(401);
     });
 
     it('rejects a non-integration bearer token', async () => {

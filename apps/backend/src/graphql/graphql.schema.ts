@@ -4,7 +4,9 @@ import type { GraphqlContext } from './graphql-context';
 // Schema-first (SDL + root resolvers on plain graphql-js), see
 // docs/graphql-api.md for why. Resolvers for menu/orders/customers are added
 // by the follow-up issues; each must call requireAccess() and filter by
-// ctx.restaurantId / scopedBranchId(ctx, …).
+// ctx.restaurantId / scopedBranchId(ctx, …). Every list field needs a page
+// argument (first/last/limit/take) that the resolver clamps server-side: the
+// cost rule charges a list without one as a single item.
 export const typeDefs = /* GraphQL */ `
   enum PrincipalKind {
     INTEGRATION_KEY

@@ -1,14 +1,24 @@
 import {
+  getArgumentValues,
+  getNamedType,
+  getVariableValues,
   GraphQLError,
+  isInterfaceType,
+  isObjectType,
   Kind,
   NoSchemaIntrospectionCustomRule,
   specifiedRules,
   type ASTVisitor,
+  type FieldNode,
   type FragmentDefinitionNode,
+  type GraphQLField,
+  type GraphQLNamedType,
+  type GraphQLSchema,
+  type InlineFragmentNode,
+  type OperationDefinitionNode,
   type SelectionSetNode,
   type ValidationContext,
   type ValidationRule,
-  type ValueNode,
 } from 'graphql';
 
 // Query-shape limits for the public GraphQL endpoint. Both walk the
@@ -61,28 +71,94 @@ export function costLimitRule(
   maxCost: number,
   variables: Record<string, unknown> = {},
 ): ValidationRule {
-  return operationRule((sel, fragments) => {
+  return operationRule((sel, fragments, context, operation) => {
+    const schema = context.getSchema();
+    const root = schema.getRootType(operation.operation);
+    if (!root) return null;
+    // Coerced exactly as execute() will: supplied values, else the
+    // operation's own defaults. Bad input fails execution anyway.
+    const coerced = getVariableValues(
+      schema,
+      operation.variableDefinitions ?? [],
+      variables,
+    );
+    const vars = coerced.coerced ?? {};
     const memo = new Map<string, number>();
-    const cost = (set: SelectionSetNode, seen: Set<string>): number => {
+    const cost = (
+      set: SelectionSetNode,
+      parent: GraphQLNamedType,
+      seen: Set<string>,
+    ): number => {
       let total = 0;
       for (const s of set.selections) {
         if (s.kind === Kind.FIELD) {
           if (s.name.value === '__typename') continue;
-          const page = pageSize(s.arguments ?? [], variables);
-          total += 1 + (s.selectionSet ? page * cost(s.selectionSet, seen) : 0);
+          const def = fieldDef(parent, s.name.value);
+          total += 1;
+          if (s.selectionSet && def) {
+            const page = pageSize(def, s, vars);
+            total += page * cost(s.selectionSet, getNamedType(def.type), seen);
+          }
         } else if (s.kind === Kind.INLINE_FRAGMENT) {
-          total += cost(s.selectionSet, seen);
+          total += cost(s.selectionSet, narrow(schema, s, parent), seen);
         } else {
-          total += viaFragment(s.name.value, fragments, memo, seen, cost);
+          const frag = fragments.get(s.name.value);
+          const type = frag ? narrow(schema, frag, parent) : parent;
+          total += viaFragment(s.name.value, fragments, memo, seen, (fs, sn) =>
+            cost(fs, type, sn),
+          );
         }
       }
       return total;
     };
-    const c = cost(sel, new Set());
+    const c = cost(sel, root, new Set());
     return c > maxCost
       ? `Query cost ${c} exceeds the maximum of ${maxCost}`
       : null;
   });
+}
+
+function fieldDef(
+  parent: GraphQLNamedType,
+  name: string,
+): GraphQLField<unknown, unknown> | undefined {
+  return isObjectType(parent) || isInterfaceType(parent)
+    ? parent.getFields()[name]
+    : undefined;
+}
+
+function narrow(
+  schema: GraphQLSchema,
+  node: InlineFragmentNode | FragmentDefinitionNode,
+  parent: GraphQLNamedType,
+): GraphQLNamedType {
+  return node.typeCondition
+    ? (schema.getType(node.typeCondition.name.value) ?? parent)
+    : parent;
+}
+
+const PAGE_ARGS = ['first', 'last', 'limit', 'take'];
+
+// Uses the argument values the resolver will actually receive: literal,
+// variable (or its default) and, when omitted, the schema's default.
+function pageSize(
+  def: GraphQLField<unknown, unknown>,
+  node: FieldNode,
+  vars: Record<string, unknown>,
+): number {
+  let args: Record<string, unknown>;
+  try {
+    args = getArgumentValues(def, node, vars);
+  } catch {
+    return 1; // invalid arguments: execute() rejects the field anyway
+  }
+  for (const name of PAGE_ARGS) {
+    const v = Number(args[name]);
+    if (args[name] != null && Number.isFinite(v)) {
+      return v > 1 ? Math.ceil(v) : 1;
+    }
+  }
+  return 1;
 }
 
 function viaFragment(
@@ -103,27 +179,13 @@ function viaFragment(
   return value;
 }
 
-const PAGE_ARGS = new Set(['first', 'last', 'limit', 'take']);
-
-function pageSize(
-  args: readonly { name: { value: string }; value: ValueNode }[],
-  variables: Record<string, unknown>,
-): number {
-  for (const a of args) {
-    if (!PAGE_ARGS.has(a.name.value)) continue;
-    const v =
-      a.value.kind === Kind.INT
-        ? Number(a.value.value)
-        : a.value.kind === Kind.VARIABLE
-          ? Number(variables[a.value.name.value])
-          : NaN;
-    return Number.isFinite(v) && v > 1 ? Math.ceil(v) : 1;
-  }
-  return 1;
-}
-
 function operationRule(
-  check: (set: SelectionSetNode, fragments: Fragments) => string | null,
+  check: (
+    set: SelectionSetNode,
+    fragments: Fragments,
+    context: ValidationContext,
+    operation: OperationDefinitionNode,
+  ) => string | null,
 ): ValidationRule {
   return (context: ValidationContext): ASTVisitor => {
     const fragments: Fragments = new Map();
@@ -134,7 +196,7 @@ function operationRule(
     }
     return {
       OperationDefinition(node) {
-        const message = check(node.selectionSet, fragments);
+        const message = check(node.selectionSet, fragments, context, node);
         if (message)
           context.reportError(new GraphQLError(message, { nodes: [node] }));
         return false;

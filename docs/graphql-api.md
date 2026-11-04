@@ -57,9 +57,15 @@ curl -X POST https://your-domain/api/v1/graphql \
 | Query text | 50 000 chars | — |
 
 **Cost:** each field costs 1. A field with a `first`, `last`, `limit` or
-`take` argument multiplies the cost of its sub-selection by that value.
-Aliases and repeated fragment spreads are charged every time they appear.
-`__typename` is free.
+`take` argument multiplies the cost of its sub-selection by that value. The
+value is the one the resolver will receive: a literal, a variable, the
+variable's default in the operation, or the schema's default when the
+argument is left out. Aliases and repeated fragment spreads are charged every
+time they appear. `__typename` is free.
+
+**For resolver authors:** every list field must take a page argument (a
+list without one is charged as a single item), and the resolver must clamp
+it to a server-side maximum. The cost rule is one cap, not the only one.
 
 A request over a limit, or with invalid syntax or fields, gets `400` with
 `{"errors": [...]}` and nothing runs. Over the rate limit you get `429` with

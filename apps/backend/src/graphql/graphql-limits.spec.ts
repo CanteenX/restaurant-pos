@@ -6,8 +6,18 @@ import {
 } from './graphql-limits';
 
 const schema = buildSchema(`
-  type Item { id: ID!, name: String!, children(first: Int): [Item!]! }
-  type Query { item: Item!, items(first: Int): [Item!]! }
+  interface Node { id: ID! }
+  type Item implements Node {
+    id: ID!
+    name: String!
+    children(first: Int): [Item!]!
+  }
+  type Query {
+    item: Item!
+    node: Node!
+    items(first: Int): [Item!]!
+    many(first: Int = 500): [Item!]!
+  }
 `);
 
 const errorsFor = (query: string, rules: ReturnType<typeof validationRules>) =>
@@ -60,6 +70,36 @@ describe('costLimitRule', () => {
     const doc = parse('query Q($n: Int) { items(first: $n) { id } }');
     const errs = validate(schema, doc, [costLimitRule(50, { n: 100 })]);
     expect(errs[0]?.message).toMatch(/cost 101/);
+  });
+
+  it('charges an operation variable default when the variable is omitted', () => {
+    // Review on #172: $n defaulted to 100000 used to be charged as 1.
+    const q = `query Q($n: Int = 100000) {
+      items(first: $n) { children(first: $n) { id name } }
+    }`;
+    expect(errorsFor(q, [costLimitRule(1000)])[0]).toMatch(/exceeds/);
+  });
+
+  it('a supplied variable overrides its default', () => {
+    const doc = parse('query Q($n: Int = 100000) { items(first: $n) { id } }');
+    expect(validate(schema, doc, [costLimitRule(50, { n: 10 })])).toEqual([]);
+  });
+
+  it('charges a schema argument default when the argument is omitted', () => {
+    // many(first: Int = 500) { id } = 1 + 500 * 1
+    expect(errorsFor('{ many { id } }', [costLimitRule(1000)])).toEqual([]);
+    expect(errorsFor('{ many { id } }', [costLimitRule(500)])[0]).toMatch(
+      /cost 501/,
+    );
+  });
+
+  it('resolves page arguments on fields reached through fragments', () => {
+    const q = `
+      query Q($n: Int = 1000) { node { ... on Item { children(first: $n) { id } } ...F } }
+      fragment F on Item { children(first: 1000) { id } }
+    `;
+    // 1 (node) + (1 + 1000) + (1 + 1000)
+    expect(errorsFor(q, [costLimitRule(1000)])[0]).toMatch(/cost 2003/);
   });
 
   it('charges aliases separately (alias bombs)', () => {
