@@ -1430,5 +1430,19 @@
   "team.slip.note": "Nota: {note}",
   "team.slip.paidOn": "Pagado el {date}",
   "team.slip.paidOnBy": "Pagado el {date} por {method}",
-  "team.slip.unpaid": "Estado: {status} (aún no pagado)"
+  "team.slip.unpaid": "Estado: {status} (aún no pagado)",
+  "pos.gatewayQr.show": "Mostrar QR UPI de {gateway} · {amount}",
+  "pos.gatewayQr.hint": "QR de un solo uso fijado al importe exacto; la cuenta se cierra sola al pagar.",
+  "pos.gatewayQr.createFailed": "No se pudo crear el QR",
+  "pos.gatewayQr.paid": "Pago recibido · {amount}",
+  "pos.gatewayQr.scan": "Escanea con cualquier app UPI · {amount} fijado por {gateway}",
+  "pos.gatewayQr.waiting": "Esperando el pago · también en la pantalla del cliente",
+  "pos.gatewayQr.stale": "El importe cambió: crea un nuevo QR por {amount}",
+  "pos.gatewayQr.staleOld": "El QR de {old} ya no se muestra. No dejes que el cliente lo pague.",
+  "pos.gatewayQr.newFor": "Nuevo QR · {amount}",
+  "pos.gatewayQr.review": "El dinero llegó pero no se pudo aplicar a esta cuenta: {error}. Revísalo en {gateway} antes de reembolsar.",
+  "pos.gatewayQr.expired": "Este QR caducó antes de pagarse.",
+  "pos.gatewayQr.failed": "No se pudo crear el QR.",
+  "pos.gatewayQr.newQr": "Nuevo QR",
+  "pos.gatewayQr.manualHeld": "Hay un QR de {gateway} abierto: la cuenta se cierra sola cuando el cliente paga. Para cobrar de otra forma, elige el método arriba."
 }

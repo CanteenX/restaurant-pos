@@ -11,8 +11,13 @@ import {
 } from "@/hooks/use-payment-gateway";
 import { ApiError } from "@/lib/api";
 import { publishDisplay } from "@/lib/customer-display";
-import { formatCurrency } from "@/lib/format";
-import { gatewayQrPhase, gatewayQrUri, type GatewayAttemptView } from "@/lib/gateway-qr";
+import {
+  gatewayQrPhase,
+  gatewayQrUri,
+  type GatewayAttemptView,
+  type GatewayQrPhase,
+} from "@/lib/gateway-qr";
+import { useI18n } from "@/lib/i18n/context";
 
 /**
  * "Pay by UPI QR" through a connected gateway: the server creates a dynamic,
@@ -25,6 +30,7 @@ export function GatewayUpiQr({
   orderId,
   amount,
   isPartial,
+  onPhaseChange,
 }: {
   gateway: AvailableGateway;
   branchId: string | null;
@@ -32,19 +38,31 @@ export function GatewayUpiQr({
   /** What the till wants to collect now (server re-checks against the balance). */
   amount: number;
   isPartial: boolean;
+  /** Lets the checkout hold its manual "Complete" while this QR can be paid. */
+  onPhaseChange?: (phase: GatewayQrPhase | null) => void;
 }) {
+  const { t, formatCurrency } = useI18n();
   const start = useStartGatewayAttempt(branchId, orderId);
   const [created, setCreated] = useState<GatewayAttemptView | null>(null);
   const { data: attempt } = useGatewayAttempt(created);
   // One key per amount: a double tap or retry reuses the same attempt.
   const key = useRef<{ amount: number; id: string } | null>(null);
-  const phase = created ? gatewayQrPhase(attempt) : null;
+  // Until the first poll returns, judge by the attempt the server just created.
+  const phase = created ? gatewayQrPhase(attempt ?? created, amount) : null;
   const uri = gatewayQrUri(attempt);
   const locked = attempt ? Number(attempt.amount) : amount;
 
   useEffect(() => {
+    onPhaseChange?.(phase);
+  }, [phase, onPhaseChange]);
+  useEffect(() => () => onPhaseChange?.(null), [onPhaseChange]);
+
+  useEffect(() => {
     if (phase === "waiting" && uri) {
       publishDisplay({ kind: "upi", total: locked, uri, payee: gateway.name });
+    } else if (phase === "stale") {
+      // Never leave a QR for the old amount on the guest's screen.
+      publishDisplay({ kind: "idle" });
     }
   }, [phase, uri, locked, gateway.name]);
 
@@ -67,12 +85,12 @@ export function GatewayUpiQr({
       <div className={box}>
         <Button className="h-11" onClick={() => begin(false)} disabled={start.isPending || !(amount > 0)}>
           {start.isPending ? <Loader2 className="size-4 animate-spin" /> : <QrCode className="size-4" />}
-          Show {gateway.name} UPI QR · {formatCurrency(amount)}
+          {t("pos.gatewayQr.show", { gateway: gateway.name, amount: formatCurrency(amount) })}
         </Button>
-        <p className="text-[11px] text-neutral-500">Single-use QR locked to the exact amount; the bill closes itself once paid.</p>
+        <p className="text-[11px] text-neutral-500">{t("pos.gatewayQr.hint")}</p>
         {start.error && (
           <p className="text-xs text-red-700" role="alert">
-            {start.error instanceof ApiError ? start.error.message : "Could not create the QR"}
+            {start.error instanceof ApiError ? start.error.message : t("pos.gatewayQr.createFailed")}
           </p>
         )}
       </div>
@@ -83,7 +101,26 @@ export function GatewayUpiQr({
     return (
       <div className={box} role="status" data-testid="gateway-qr-paid">
         <CheckCircle2 className="size-8 text-emerald-600" />
-        <p className="text-sm font-medium text-[#17251d]">Payment received · {formatCurrency(locked)}</p>
+        <p className="text-sm font-medium text-[#17251d]">
+          {t("pos.gatewayQr.paid", { amount: formatCurrency(locked) })}
+        </p>
+      </div>
+    );
+  }
+
+  if (phase === "stale") {
+    return (
+      <div className={box} role="alert" data-testid="gateway-qr-stale">
+        <p className="text-xs font-medium text-red-700">
+          {t("pos.gatewayQr.stale", { amount: formatCurrency(amount) })}
+        </p>
+        <p className="text-[11px] text-neutral-500">
+          {t("pos.gatewayQr.staleOld", { old: formatCurrency(locked) })}
+        </p>
+        <Button className="h-11" onClick={() => begin(false)} disabled={start.isPending || !(amount > 0)}>
+          {start.isPending ? <Loader2 className="size-4 animate-spin" /> : <QrCode className="size-4" />}
+          {t("pos.gatewayQr.newFor", { amount: formatCurrency(amount) })}
+        </Button>
       </div>
     );
   }
@@ -93,10 +130,10 @@ export function GatewayUpiQr({
       <div className={box} data-testid="gateway-qr">
         <QRCodeSVG value={uri} size={176} level="M" marginSize={1} />
         <p className="text-xs font-medium text-[#17251d]" data-testid="gateway-qr-amount">
-          Scan with any UPI app · {formatCurrency(locked)} locked by {gateway.name}
+          {t("pos.gatewayQr.scan", { amount: formatCurrency(locked), gateway: gateway.name })}
         </p>
         <p className="flex items-center gap-1 text-[11px] text-neutral-500">
-          <Loader2 className="size-3 animate-spin" /> Waiting for the payment · also on the customer display
+          <Loader2 className="size-3 animate-spin" /> {t("pos.gatewayQr.waiting")}
         </p>
       </div>
     );
@@ -104,16 +141,16 @@ export function GatewayUpiQr({
 
   const message =
     phase === "review"
-      ? `Money arrived but could not be put on this bill: ${attempt?.settlementError}. Check it in ${gateway.name} before refunding.`
+      ? t("pos.gatewayQr.review", { error: attempt?.settlementError ?? "", gateway: gateway.name })
       : phase === "expired"
-        ? "This QR expired before it was paid."
-        : (attempt?.failureMessage ?? "The QR could not be created.");
+        ? t("pos.gatewayQr.expired")
+        : (attempt?.failureMessage ?? t("pos.gatewayQr.failed"));
   return (
     <div className={box} role="alert">
       <p className="text-xs text-red-700">{message}</p>
       {phase !== "review" && (
         <Button variant="outline" onClick={() => begin(true)} disabled={start.isPending}>
-          New QR
+          {t("pos.gatewayQr.newQr")}
         </Button>
       )}
     </div>

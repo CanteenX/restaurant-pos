@@ -17,7 +17,13 @@ export interface GatewayAttemptView {
   failureMessage: string | null;
 }
 
-export type GatewayQrPhase = "starting" | "waiting" | "paid" | "failed" | "expired" | "review";
+/**
+ * `stale`: the QR is still payable at the gateway but locked to an amount the
+ * till no longer wants to collect (discount, tip, split, edited amount).
+ */
+export type GatewayQrPhase = "starting" | "waiting" | "stale" | "paid" | "failed" | "expired" | "review";
+
+const paise = (n: number) => Math.round(n * 100);
 
 /** The upi:// link to draw as a QR, or null when there is none to show. */
 export function gatewayQrUri(a: GatewayAttemptView | undefined): string | null {
@@ -25,12 +31,27 @@ export function gatewayQrUri(a: GatewayAttemptView | undefined): string | null {
   return v && v.startsWith("upi://") ? v : null;
 }
 
-export function gatewayQrPhase(a: GatewayAttemptView | undefined): GatewayQrPhase {
+/**
+ * Where the attempt stands. Pass `amount` (what the till wants to collect
+ * now) so a QR locked to a different amount is reported as `stale` rather
+ * than shown to the guest.
+ */
+export function gatewayQrPhase(a: GatewayAttemptView | undefined, amount?: number): GatewayQrPhase {
   if (!a) return "starting";
   // A person must reconcile it (different amount, bill closed another way).
   if (a.settlementError) return "review";
   if (a.status === "SUCCEEDED") return a.settled ? "paid" : "waiting";
   if (a.status === "FAILED") return "failed";
   if (a.status === "EXPIRED") return "expired";
-  return gatewayQrUri(a) ? "waiting" : "failed";
+  if (!gatewayQrUri(a)) return "failed";
+  if (amount !== undefined && paise(amount) !== paise(Number(a.amount))) return "stale";
+  return "waiting";
+}
+
+/**
+ * While a gateway QR can still be paid, recording a manual UPI payment would
+ * book money that never arrived and leave the gateway payment unmatched.
+ */
+export function gatewayQrBlocksManualUpi(phase: GatewayQrPhase | null): boolean {
+  return phase === "waiting" || phase === "stale";
 }

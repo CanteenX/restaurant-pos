@@ -1430,5 +1430,19 @@
   "team.slip.note": "Note : {note}",
   "team.slip.paidOn": "Payé le {date}",
   "team.slip.paidOnBy": "Payé le {date} par {method}",
-  "team.slip.unpaid": "Statut : {status} (pas encore payé)"
+  "team.slip.unpaid": "Statut : {status} (pas encore payé)",
+  "pos.gatewayQr.show": "Afficher le QR UPI {gateway} · {amount}",
+  "pos.gatewayQr.hint": "QR à usage unique bloqué sur le montant exact ; l'addition se clôt d'elle-même une fois payée.",
+  "pos.gatewayQr.createFailed": "Impossible de créer le QR",
+  "pos.gatewayQr.paid": "Paiement reçu · {amount}",
+  "pos.gatewayQr.scan": "Scannez avec n'importe quelle appli UPI · {amount} bloqué par {gateway}",
+  "pos.gatewayQr.waiting": "En attente du paiement · aussi sur l'écran client",
+  "pos.gatewayQr.stale": "Montant modifié : créez un nouveau QR pour {amount}",
+  "pos.gatewayQr.staleOld": "Le QR de {old} n'est plus affiché. Ne laissez pas le client le payer.",
+  "pos.gatewayQr.newFor": "Nouveau QR · {amount}",
+  "pos.gatewayQr.review": "L'argent est arrivé mais n'a pas pu être imputé à cette addition : {error}. Vérifiez dans {gateway} avant de rembourser.",
+  "pos.gatewayQr.expired": "Ce QR a expiré avant d'être payé.",
+  "pos.gatewayQr.failed": "Le QR n'a pas pu être créé.",
+  "pos.gatewayQr.newQr": "Nouveau QR",
+  "pos.gatewayQr.manualHeld": "Un QR {gateway} est ouvert : l'addition se clôt d'elle-même quand le client paie. Pour un autre moyen, choisissez-le ci-dessus."
 }

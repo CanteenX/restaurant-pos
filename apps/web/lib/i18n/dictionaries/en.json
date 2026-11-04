@@ -1430,5 +1430,19 @@
   "team.slip.note": "Note: {note}",
   "team.slip.paidOn": "Paid on {date}",
   "team.slip.paidOnBy": "Paid on {date} by {method}",
-  "team.slip.unpaid": "Status: {status} (not yet paid)"
+  "team.slip.unpaid": "Status: {status} (not yet paid)",
+  "pos.gatewayQr.show": "Show {gateway} UPI QR · {amount}",
+  "pos.gatewayQr.hint": "Single-use QR locked to the exact amount; the bill closes itself once paid.",
+  "pos.gatewayQr.createFailed": "Could not create the QR",
+  "pos.gatewayQr.paid": "Payment received · {amount}",
+  "pos.gatewayQr.scan": "Scan with any UPI app · {amount} locked by {gateway}",
+  "pos.gatewayQr.waiting": "Waiting for the payment · also on the customer display",
+  "pos.gatewayQr.stale": "Amount changed — create a new QR for {amount}",
+  "pos.gatewayQr.staleOld": "The {old} QR is no longer shown. Do not let the guest pay it.",
+  "pos.gatewayQr.newFor": "New QR · {amount}",
+  "pos.gatewayQr.review": "Money arrived but could not be put on this bill: {error}. Check it in {gateway} before refunding.",
+  "pos.gatewayQr.expired": "This QR expired before it was paid.",
+  "pos.gatewayQr.failed": "The QR could not be created.",
+  "pos.gatewayQr.newQr": "New QR",
+  "pos.gatewayQr.manualHeld": "A {gateway} QR is open: the bill closes itself when the guest pays. To take another method, pick it above."
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { gatewayQrPhase, gatewayQrUri, type GatewayAttemptView } from "./gateway-qr.ts";
+import { gatewayQrBlocksManualUpi, gatewayQrPhase, gatewayQrUri, type GatewayAttemptView } from "./gateway-qr.ts";
 
 const attempt = (over: Partial<GatewayAttemptView> = {}): GatewayAttemptView => ({
   id: "att_1",
@@ -44,4 +44,27 @@ test("the QR shows only a upi:// intent, never another URL", () => {
 
 test("a pending attempt without a usable link is a failure, not a blank QR", () => {
   assert.equal(gatewayQrPhase(attempt({ action: null })), "failed");
+});
+
+test("a waiting QR goes stale once the amount to collect no longer matches it", () => {
+  // Same amount (to the paisa) keeps it live.
+  assert.equal(gatewayQrPhase(attempt(), 250.5), "waiting");
+  assert.equal(gatewayQrPhase(attempt({ amount: "0.30" }), 0.1 + 0.2), "waiting");
+  // Discount, tip, split or an edited "Amount to pay now": stop showing it.
+  assert.equal(gatewayQrPhase(attempt(), 200), "stale");
+  assert.equal(gatewayQrPhase(attempt({ status: "CREATED" }), 251), "stale");
+  // Money already in, or a terminal state: the amount change does not hide it.
+  assert.equal(gatewayQrPhase(attempt({ status: "SUCCEEDED", settled: true }), 0), "paid");
+  assert.equal(gatewayQrPhase(attempt({ status: "SUCCEEDED" }), 100), "waiting");
+  assert.equal(gatewayQrPhase(attempt({ status: "EXPIRED" }), 100), "expired");
+  // Without an amount to compare (legacy callers) nothing changes.
+  assert.equal(gatewayQrPhase(attempt()), "waiting");
+});
+
+test("the manual UPI Complete is held while a gateway QR can still be paid", () => {
+  assert.equal(gatewayQrBlocksManualUpi("waiting"), true);
+  assert.equal(gatewayQrBlocksManualUpi("stale"), true);
+  for (const p of [null, "starting", "paid", "failed", "expired", "review"] as const) {
+    assert.equal(gatewayQrBlocksManualUpi(p), false, String(p));
+  }
 });
