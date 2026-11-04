@@ -51,12 +51,19 @@ export function gstSummary(lines: (GstLine & { factor: number })[]): {
   };
 }
 
-/** Cash the till should hold at close of day. */
+/**
+ * Cash the till should hold at close of day. `pettyCashTopUps` is cash moved
+ * from the drawer into the petty-cash float; petty-cash payouts are not
+ * subtracted here (they come out of the float, not the till).
+ */
 export function expectedCash(
   openingFloat: number,
   cashSales: number,
   cashRefunds: number,
   cashExpenses: number,
+  pettyCashTopUps = 0,
 ): number {
-  return round2(openingFloat + cashSales - cashRefunds - cashExpenses);
+  return round2(
+    openingFloat + cashSales - cashRefunds - cashExpenses - pettyCashTopUps,
+  );
 }

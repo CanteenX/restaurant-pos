@@ -19,6 +19,7 @@ const GRANT_WHEN_CREATED: Record<string, string[]> = {
   'delivery.rider': ['DELIVERY_STAFF'],
   'memberships.manage': ['RESTAURANT_MANAGER'],
   'expenses.approve': ['RESTAURANT_MANAGER'],
+  'petty_cash.manage': ['RESTAURANT_MANAGER', 'ACCOUNTANT'],
 };
 
 @Injectable()

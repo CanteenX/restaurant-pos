@@ -67,3 +67,44 @@ export const tallyMappingSchema = z
     "Ledger names cannot contain < > or &",
   );
 export type TallyMappingDto = z.infer<typeof tallyMappingSchema>;
+
+// Petty cash float (#72). Amounts are positive; the server signs them.
+// A PAYOUT also books one Expense (category) that is NOT paid from the till,
+// so it is counted once in P&L and never against the day-close cash count.
+const pettyBase = {
+  businessDate: isoDate,
+  reason: z.string().trim().min(1).max(200),
+  receiptRef: z.string().trim().max(100).optional(),
+};
+const money = z.coerce.number().positive().max(10_000_000);
+export const pettyCashEntrySchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("TOP_UP"),
+    ...pettyBase,
+    amount: money,
+    // Cash moved out of the till drawer into the petty-cash box.
+    fromTill: z.boolean().default(false),
+  }),
+  z.object({
+    kind: z.literal("PAYOUT"),
+    ...pettyBase,
+    amount: money,
+    category: z.string().trim().min(1).max(60),
+  }),
+  z.object({
+    kind: z.literal("ADJUST"),
+    ...pettyBase,
+    // Signed correction (+ found, - missing); never zero.
+    amount: z.coerce
+      .number()
+      .refine((n) => n !== 0 && Math.abs(n) <= 10_000_000, "Non-zero amount required"),
+  }),
+]);
+export type PettyCashEntryDto = z.infer<typeof pettyCashEntrySchema>;
+
+export const pettyCashReconcileSchema = z.object({
+  businessDate: isoDate,
+  countedCash: z.coerce.number().min(0).max(10_000_000),
+  note: z.string().max(200).optional(),
+});
+export type PettyCashReconcileDto = z.infer<typeof pettyCashReconcileSchema>;

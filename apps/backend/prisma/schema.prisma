@@ -120,6 +120,8 @@ model Branch {
   bankTransactions  BankTransaction[]
   reportSchedules   ReportSchedule[]
   cashClosings      CashClosing[]
+  pettyCashFloat    PettyCashFloat?
+  pettyCashEntries  PettyCashEntry[]
   coupons           Coupon[]
   promotions        Promotion[]
   campaigns         Campaign[]
@@ -353,6 +355,7 @@ model User {
   payrollLines           PayrollLine[]
   expensesCreated        Expense[]
   expensesDecided        Expense[]        @relation("ExpenseDecider")
+  pettyCashEntries       PettyCashEntry[] @relation("PettyCashEntryCreatedBy")
 
   purchaseRequestsRequested PurchaseRequest[]   @relation("PurchaseRequestRequestedBy")
   purchaseRequestsApproved  PurchaseRequest[]   @relation("PurchaseRequestApprovedBy")
@@ -2166,12 +2169,15 @@ model Expense {
   branchId String
   branch   Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
 
-  spentOn      DateTime @db.Date
-  category     String
-  amount       Decimal  @db.Decimal(12, 2)
-  note         String?
+  spentOn        DateTime        @db.Date
+  category       String
+  amount         Decimal         @db.Decimal(12, 2)
+  note           String?
   // Paid out of the till: counted against expected cash at day close.
-  paidFromCash Boolean  @default(false)
+  paidFromCash   Boolean         @default(false)
+  // Set when the expense was paid out of the petty-cash float (#72); such an
+  // expense is never paidFromCash, so day close does not count it twice.
+  pettyCashEntry PettyCashEntry?
 
   createdById String
   createdBy   User     @relation(fields: [createdById], references: [id])
@@ -2196,20 +2202,66 @@ model CashClosing {
   branchId String
   branch   Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
 
-  businessDate DateTime @db.Date
-  openingFloat Decimal  @default(0) @db.Decimal(12, 2)
-  cashSales    Decimal  @db.Decimal(12, 2)
-  cashExpenses Decimal  @default(0) @db.Decimal(12, 2)
-  expectedCash Decimal  @db.Decimal(12, 2)
-  countedCash  Decimal  @db.Decimal(12, 2)
-  variance     Decimal  @db.Decimal(12, 2)
-  note         String?
+  businessDate    DateTime @db.Date
+  openingFloat    Decimal  @default(0) @db.Decimal(12, 2)
+  cashSales       Decimal  @db.Decimal(12, 2)
+  cashExpenses    Decimal  @default(0) @db.Decimal(12, 2)
+  // Cash moved from the till into the petty-cash float that day (#72).
+  pettyCashTopUps Decimal  @default(0) @db.Decimal(12, 2)
+  expectedCash    Decimal  @db.Decimal(12, 2)
+  countedCash     Decimal  @db.Decimal(12, 2)
+  variance        Decimal  @db.Decimal(12, 2)
+  note            String?
 
   closedById String
   createdAt  DateTime @default(now())
 
   @@unique([branchId, businessDate])
   @@map("cash_closings")
+}
+
+// Petty-cash float (#72), separate from the till drawer. The running balance
+// is read-modify-written (rounded `set`, guarded on the value read), never a
+// DB increment. Every movement is a PettyCashEntry with the balance after it.
+model PettyCashFloat {
+  branchId  String   @id
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  balance   Decimal  @default(0) @db.Decimal(12, 2)
+  updatedAt DateTime @updatedAt
+
+  @@map("petty_cash_floats")
+}
+
+enum PettyCashKind {
+  TOP_UP
+  PAYOUT
+  ADJUST
+}
+
+model PettyCashEntry {
+  id       String @id @default(cuid())
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  businessDate DateTime      @db.Date
+  kind         PettyCashKind
+  // Signed: + into the float (top-up, found), - out of it (payout, missing).
+  amount       Decimal       @db.Decimal(12, 2)
+  balanceAfter Decimal       @db.Decimal(12, 2)
+  reason       String
+  receiptRef   String?
+  // TOP_UP taken from the till drawer: subtracted from that day's expected cash.
+  fromTill     Boolean       @default(false)
+  // PAYOUT: the Expense it booked (counted once in P&L).
+  expenseId    String?       @unique
+  expense      Expense?      @relation(fields: [expenseId], references: [id], onDelete: NoAction)
+
+  createdById String
+  createdBy   User     @relation("PettyCashEntryCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([branchId, businessDate])
+  @@map("petty_cash_entries")
 }
 
 // ---------------------------------------------------------------------------

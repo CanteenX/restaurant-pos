@@ -144,8 +144,13 @@ export class AccountingService {
   async deleteExpense(branchId: string, id: string) {
     const expense = await this.prisma.expense.findFirst({
       where: { id, branchId },
+      include: { pettyCashEntry: { select: { id: true } } },
     });
     if (!expense) throw new NotFoundException('Expense not found');
+    if (expense.pettyCashEntry)
+      throw new BadRequestException(
+        'Paid from petty cash — correct it with a petty-cash adjustment',
+      );
     const closed = await this.prisma.cashClosing.findUnique({
       where: {
         branchId_businessDate: { branchId, businessDate: expense.spentOn },
@@ -165,7 +170,7 @@ export class AccountingService {
   async closingPreview(branchId: string, date: string, openingFloat = 0) {
     const from = dayStart(date); // @db.Date column: a plain calendar date
     const range = zonedRange(date, date, await this.time.tzForBranch(branchId));
-    const [sales, refunds, expenses] = await Promise.all([
+    const [sales, refunds, expenses, petty] = await Promise.all([
       this.prisma.payment.aggregate({
         where: {
           method: 'CASH',
@@ -191,20 +196,33 @@ export class AccountingService {
         },
         _sum: { amount: true },
       }),
+      // Cash moved from the drawer into the petty-cash float (#72).
+      this.prisma.pettyCashEntry.aggregate({
+        where: {
+          branchId,
+          businessDate: from,
+          kind: 'TOP_UP',
+          fromTill: true,
+        },
+        _sum: { amount: true },
+      }),
     ]);
     const cashSales = Number(sales._sum.amount ?? 0);
     const cashRefunds = Number(refunds._sum.amount ?? 0);
     const cashExpenses = Number(expenses._sum.amount ?? 0);
+    const pettyCashTopUps = round2(Number(petty._sum.amount ?? 0));
     return {
       businessDate: date,
       openingFloat,
       cashSales: round2(cashSales - cashRefunds),
       cashExpenses: round2(cashExpenses),
+      pettyCashTopUps,
       expectedCash: expectedCash(
         openingFloat,
         cashSales,
         cashRefunds,
         cashExpenses,
+        pettyCashTopUps,
       ),
     };
   }
@@ -231,6 +249,7 @@ export class AccountingService {
         openingFloat: dto.openingFloat,
         cashSales: p.cashSales,
         cashExpenses: p.cashExpenses,
+        pettyCashTopUps: p.pettyCashTopUps,
         expectedCash: p.expectedCash,
         countedCash: dto.countedCash,
         variance: round2(dto.countedCash - p.expectedCash),
