@@ -47,10 +47,5 @@ export type OfflineSaleDto = z.infer<typeof offlineSaleSchema>;
 export type OfflineSalesDto = z.infer<typeof offlineSalesSchema>;
 
 export type OfflineSaleResult =
-  | {
-      id: string;
-      status: 'created' | 'duplicate';
-      orderId: string;
-      orderNumber: string;
-    }
+  | { id: string; status: 'created' | 'duplicate'; orderId: string; orderNumber: string }
   | { id: string; status: 'refused'; reason: string };
