@@ -24,7 +24,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "db:upgrade-identity": "ts-node src/system/db-identity-upgrade.cli.ts",
-    "prisma:seed": "ts-node prisma/seed.ts"
+    "prisma:seed": "ts-node prisma/seed.ts",
+    "mock:aggregator": "ts-node test/mocks/run-aggregator-mock.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1110.0",
@@ -115,6 +116,10 @@
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "roots": [
+      "<rootDir>",
+      "<rootDir>/../test/mocks"
+    ]
   }
 }
