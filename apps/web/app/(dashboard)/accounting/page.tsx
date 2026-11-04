@@ -19,11 +19,12 @@ import { useBranch } from "@/hooks/use-branch";
 import { ApiError } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { TallyTab } from "@/components/accounting/tally-tab";
 import { BalanceSheetTab, BankTab, BudgetsTab } from "@/components/accounting/finance-tabs";
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong");
-const TABS = ["expenses", "cash close", "profit & loss", "balance sheet", "budgets", "bank", "gst", "branches"] as const;
+const TABS = ["expenses", "cash close", "profit & loss", "balance sheet", "budgets", "bank", "gst", "tally", "branches"] as const;
 type Tab = (typeof TABS)[number];
 
 function monthRange() {
@@ -322,6 +323,7 @@ export default function AccountingPage() {
       {tab === "budgets" && <BudgetsTab branchId={branchId} />}
       {tab === "bank" && <BankTab branchId={branchId} />}
       {tab === "gst" && <GstTab branchId={branchId} />}
+      {tab === "tally" && <TallyTab branchId={branchId} />}
       {tab === "branches" && <BranchesTab />}
     </div>
   );
