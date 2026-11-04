@@ -39,11 +39,6 @@ apps/web/lib/i18n/context.tsx                        # localStorage key; renamin
 e2e/tests/i18n-hindi.spec.ts                         # clears the legacy locale key above
 e2e/tests/pin-switch.spec.ts                         # reads the legacy branch key above
 
-# --- i18n licence notice (settings.general.license, #181) ---
-apps/web/lib/i18n/dictionaries/en.json       # AGPL licence notice credits upstream
-apps/web/lib/i18n/dictionaries/es.json       # AGPL licence notice credits upstream
-apps/web/lib/i18n/dictionaries/fr.json       # AGPL licence notice credits upstream
-
 # --- Attribution documents that name the upstream marks on purpose ---
 TRADEMARK_POLICY.md           # states the upstream marks are not licensed to us
 CITATION.cff                  # cites the upstream project as a reference
