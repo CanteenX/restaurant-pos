@@ -27,6 +27,7 @@ import { DisplayRegistry } from './display-registry';
 
 interface SocketData {
   branchId?: string;
+  userId?: string;
   permissions?: string[];
 }
 
@@ -106,6 +107,7 @@ export class RealtimeGateway
       // session bumps tokenVersion and disconnectUser() drops the socket.
       const data = client.data as SocketData;
       data.branchId = branchId;
+      data.userId = user.id;
       data.permissions = effectivePermissions(user);
 
       await client.join(this.branchRoom(branchId));
@@ -147,7 +149,8 @@ export class RealtimeGateway
   }
 
   // Customer display pairing: a till (orders.create) issues a code by
-  // publishing under it and owns it until it disconnects; a display (any
+  // publishing under it; the code stays with that user while any of their
+  // sockets holds it (so a reconnecting till reclaims it); a display (any
   // device logged in to the same branch) may join only an issued code.
   @SubscribeMessage('display.join')
   async onDisplayJoin(
@@ -157,7 +160,7 @@ export class RealtimeGateway
     const parsed = displayJoinSchema.safeParse(body);
     const branchId = (client.data as SocketData | undefined)?.branchId;
     if (!parsed.success || !branchId) return { ok: false };
-    if (!this.displays.allow(client.id)) return { ok: false };
+    if (!this.displays.allow(client.id, 'join')) return { ok: false };
     const room = this.displayRoom(branchId, parsed.data.code);
     if (!this.displays.isIssued(room)) return { ok: false };
     await client.join(room);
@@ -173,11 +176,11 @@ export class RealtimeGateway
     if (!data?.permissions?.includes(DISPLAY_PUBLISH_PERMISSION))
       return { ok: false, error: 'forbidden' };
     const parsed = displayPublishSchema.safeParse(body);
-    if (!parsed.success || !data.branchId) return { ok: false };
-    if (!this.displays.allow(client.id))
+    if (!parsed.success || !data.branchId || !data.userId) return { ok: false };
+    if (!this.displays.allow(client.id, 'publish'))
       return { ok: false, error: 'rate-limited' };
     const room = this.displayRoom(data.branchId, parsed.data.code);
-    if (this.displays.claim(room, client.id) !== 'ok')
+    if (this.displays.claim(room, client.id, data.userId) !== 'ok')
       return { ok: false, error: 'code-in-use' };
     this.server.to(room).emit('display.state', parsed.data.state);
     return { ok: true };

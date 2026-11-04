@@ -25,11 +25,12 @@ let nextId = 0;
 function makeClient(
   branchId: string | undefined,
   permissions: string[] = ['orders.create'],
+  userId = `user-${nextId + 1}`,
 ) {
   const joined: string[] = [];
   const client = {
     id: `sock-${++nextId}`,
-    data: { branchId, permissions },
+    data: { branchId, permissions, userId },
     join: (r: string) => Promise.resolve(void joined.push(r)),
   };
   return { client: client as never, joined, id: client.id };
@@ -166,6 +167,48 @@ describe('customer display relay', () => {
       ).toEqual({ ok: false });
     }
     expect(emitted).toEqual([]);
+  });
+});
+
+describe('customer display relay: reconnects and budgets', () => {
+  it('lets the same till user reclaim its code from a new socket before the old one is reaped', () => {
+    const { gw, emitted } = makeGateway();
+    const till = makeClient('branch-a', ['orders.create'], 'cashier-1');
+    gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle });
+    // Wi-Fi blip: new socket id, old socket's disconnect not seen yet.
+    const reconnected = makeClient('branch-a', ['orders.create'], 'cashier-1');
+    const upi = {
+      kind: 'upi' as const,
+      total: 10,
+      uri: 'upi://pay?pa=a@b',
+      payee: 'A',
+    };
+    expect(
+      gw.onDisplayPublish(reconnected.client, { code: 'ABC234', state: upi }),
+    ).toEqual({ ok: true });
+    expect(emitted.at(-1)).toEqual({
+      rooms: ['display:branch-a:ABC234'],
+      event: 'display.state',
+      payload: upi,
+    });
+    // The stale socket going away later must not free the live claim.
+    gw.handleDisconnect(till.client);
+    const rogue = makeClient('branch-a', ['orders.create'], 'cashier-2');
+    expect(
+      gw.onDisplayPublish(rogue.client, { code: 'ABC234', state: idle }),
+    ).toEqual({ ok: false, error: 'code-in-use' });
+  });
+
+  it('keeps join retries from eating the publish budget', async () => {
+    const { gw } = makeGateway();
+    const till = makeClient('branch-a');
+    for (let i = 0; i < 39; i++)
+      gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle });
+    for (let i = 0; i < 5; i++)
+      await gw.onDisplayJoin(till.client, { code: 'ABC234' });
+    expect(
+      gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle }),
+    ).toEqual({ ok: true });
   });
 });
 
