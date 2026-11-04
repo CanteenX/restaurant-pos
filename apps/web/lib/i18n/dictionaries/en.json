@@ -1924,5 +1924,17 @@
   "operations.files.tooLarge": "Files can be at most 5 MB",
   "operations.files.uploadFailed": "Upload failed",
   "operations.files.hint": "PDF, image, text, Word or Excel · up to 5 MB each, 10 per document.",
-  "operations.files.remove": "Remove {name}"
+  "operations.files.remove": "Remove {name}",
+  "dashboard.backup.none": "No good backup yet. Set up backups so your data is safe.",
+  "dashboard.backup.stale": "Your last good backup is more than 48 hours old.",
+  "dashboard.backup.failed": "The latest backup failed.",
+  "dashboard.backup.lastGood": "Last good backup: {when}",
+  "dashboard.backup.never": "No successful backup recorded.",
+  "dashboard.backup.open": "Open backup settings",
+  "reports.variance.filter": "Filter ingredient or supplier",
+  "reports.variance.highlight": "Highlight at ±",
+  "reports.variance.threshold": "Variance threshold percent",
+  "reports.variance.onlyHigh": "Only high variance",
+  "reports.variance.csv": "CSV",
+  "reports.variance.none": "No rows match the filter."
 }

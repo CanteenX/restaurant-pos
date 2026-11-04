@@ -1924,5 +1924,17 @@
   "operations.files.tooLarge": "Les fichiers peuvent peser 5 Mo au maximum",
   "operations.files.uploadFailed": "Échec de l'envoi",
   "operations.files.hint": "PDF, image, texte, Word ou Excel · 5 Mo maximum chacun, 10 par document.",
-  "operations.files.remove": "Retirer {name}"
+  "operations.files.remove": "Retirer {name}",
+  "dashboard.backup.none": "Aucune bonne sauvegarde pour l'instant. Configurez les sauvegardes pour protéger vos données.",
+  "dashboard.backup.stale": "Votre dernière bonne sauvegarde date de plus de 48 heures.",
+  "dashboard.backup.failed": "La dernière sauvegarde a échoué.",
+  "dashboard.backup.lastGood": "Dernière bonne sauvegarde : {when}",
+  "dashboard.backup.never": "Aucune sauvegarde réussie enregistrée.",
+  "dashboard.backup.open": "Ouvrir les paramètres de sauvegarde",
+  "reports.variance.filter": "Filtrer par ingrédient ou fournisseur",
+  "reports.variance.highlight": "Surligner à partir de ±",
+  "reports.variance.threshold": "Pourcentage du seuil d'écart",
+  "reports.variance.onlyHigh": "Écart élevé uniquement",
+  "reports.variance.csv": "CSV",
+  "reports.variance.none": "Aucune ligne ne correspond au filtre."
 }

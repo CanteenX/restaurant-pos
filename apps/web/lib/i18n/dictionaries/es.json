@@ -1924,5 +1924,17 @@
   "operations.files.tooLarge": "Los archivos pueden pesar como máximo 5 MB",
   "operations.files.uploadFailed": "Error al subir",
   "operations.files.hint": "PDF, imagen, texto, Word o Excel · hasta 5 MB cada uno, 10 por documento.",
-  "operations.files.remove": "Quitar {name}"
+  "operations.files.remove": "Quitar {name}",
+  "dashboard.backup.none": "Aún no hay una copia de seguridad válida. Configura las copias para proteger tus datos.",
+  "dashboard.backup.stale": "Tu última copia de seguridad válida tiene más de 48 horas.",
+  "dashboard.backup.failed": "La última copia de seguridad falló.",
+  "dashboard.backup.lastGood": "Última copia válida: {when}",
+  "dashboard.backup.never": "No hay ninguna copia correcta registrada.",
+  "dashboard.backup.open": "Abrir ajustes de copias",
+  "reports.variance.filter": "Filtrar ingrediente o proveedor",
+  "reports.variance.highlight": "Resaltar a partir de ±",
+  "reports.variance.threshold": "Porcentaje umbral de variación",
+  "reports.variance.onlyHigh": "Solo variación alta",
+  "reports.variance.csv": "CSV",
+  "reports.variance.none": "Ninguna fila coincide con el filtro."
 }
