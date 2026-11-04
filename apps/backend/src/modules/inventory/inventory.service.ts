@@ -16,6 +16,7 @@ import { diffFields } from '../../audit/audit-diff';
 import { PrismaService } from '../../prisma/prisma.service';
 import { round2 } from '../../common/money';
 import { StockService } from './stock.service';
+import { converterFor, withConversions } from './unit-conversion.service';
 import { planStockUsage, type PlanItem, type StockPlan } from './stock-plan';
 
 type Tx = Prisma.TransactionClient;
@@ -72,6 +73,7 @@ export class InventoryService {
   ) {
     const existing = await this.getIngredient(branchId, id);
     await this.assertSupplierInBranch(branchId, dto.preferredSupplierId);
+    if (dto.unit && dto.unit !== existing.unit) await this.assertUnitFree(id);
     const updated = await this.prisma.ingredient.update({
       where: { id },
       data: dto,
@@ -88,6 +90,24 @@ export class InventoryService {
       },
     });
     return updated;
+  }
+
+  // Every stored quantity is in the base unit, so changing it once anything
+  // refers to those quantities would silently rescale stock (5 KG -> 5 G).
+  private async assertUnitFree(id: string) {
+    const [moves, recipes, packs, orders] = await Promise.all([
+      this.prisma.stockMovement.count({ where: { ingredientId: id } }),
+      this.prisma.recipeIngredient.count({ where: { ingredientId: id } }),
+      this.prisma.ingredientUnitConversion.count({
+        where: { ingredientId: id },
+      }),
+      this.prisma.purchaseOrderItem.count({ where: { ingredientId: id } }),
+    ]);
+    if (moves + recipes + packs + orders > 0) {
+      throw new BadRequestException(
+        'Base unit cannot change once the item has stock history, recipes, purchase orders or pack sizes — create a new item instead',
+      );
+    }
   }
 
   async deleteIngredient(branchId: string, id: string, userId?: string) {
@@ -200,6 +220,9 @@ export class InventoryService {
       ingredientName: line.ingredient.name,
       unit: line.ingredient.unit,
       quantity: Number(line.quantity),
+      enteredUnit: line.enteredUnit,
+      enteredQuantity:
+        line.enteredQuantity === null ? null : Number(line.enteredQuantity),
       costPerUnit: Number(line.ingredient.costPerUnit),
       lineCost: round2(
         Number(line.quantity) * Number(line.ingredient.costPerUnit),
@@ -220,27 +243,33 @@ export class InventoryService {
     if (new Set(ingredientIds).size !== ingredientIds.length) {
       throw new BadRequestException('Duplicate ingredient in recipe');
     }
-    if (ingredientIds.length > 0) {
-      const count = await this.prisma.ingredient.count({
-        where: { id: { in: ingredientIds }, branchId },
-      });
-      if (count !== ingredientIds.length) {
-        throw new BadRequestException(
-          'One or more ingredients not found in this branch',
-        );
-      }
+    const ingredients = await this.prisma.ingredient.findMany({
+      where: { id: { in: ingredientIds }, branchId },
+      include: withConversions,
+    });
+    if (ingredients.length !== ingredientIds.length) {
+      throw new BadRequestException(
+        'One or more ingredients not found in this branch',
+      );
     }
+    // Recipe quantities are stored in the base unit (what stock deduction
+    // reads); the entered unit is kept only for display.
+    const rows = lines.map((l) => {
+      const ingredient = ingredients.find((i) => i.id === l.ingredientId)!;
+      const entered = !!l.unit && l.unit !== ingredient.unit;
+      return {
+        menuItemId,
+        ingredientId: l.ingredientId,
+        quantity: converterFor(ingredient).quantity(l.quantity, l.unit),
+        enteredUnit: entered ? l.unit : null,
+        enteredQuantity: entered ? l.quantity : null,
+      };
+    });
 
     await this.prisma.$transaction(async (tx) => {
       await tx.recipeIngredient.deleteMany({ where: { menuItemId } });
       if (lines.length > 0) {
-        await tx.recipeIngredient.createMany({
-          data: lines.map((l) => ({
-            menuItemId,
-            ingredientId: l.ingredientId,
-            quantity: l.quantity,
-          })),
-        });
+        await tx.recipeIngredient.createMany({ data: rows });
       }
     });
 

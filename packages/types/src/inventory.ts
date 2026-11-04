@@ -43,8 +43,27 @@ export type IngredientDto = z.infer<typeof ingredientSchema>;
 export const ingredientUpdateSchema = ingredientFields.partial();
 export type IngredientUpdateDto = z.infer<typeof ingredientUpdateSchema>;
 
+// Quantities on recipe lines, goods receipts, waste and adjustments may be
+// entered in any unit convertible to the ingredient's base unit (KG<->G,
+// L<->ML, DOZEN<->PIECE, or a pack size set on the ingredient). Omitted =
+// the base unit. The server converts and stores base units only.
+const enteredUnit = ingredientUnitSchema.optional();
+
+export const unitConversionSchema = z.object({
+  unit: ingredientUnitSchema,
+  // How many base units one `unit` holds, e.g. PACK = 25 (KG).
+  factor: z.coerce.number().positive().max(1_000_000),
+});
+export type UnitConversionDto = z.infer<typeof unitConversionSchema>;
+
+export const setUnitConversionsSchema = z.object({
+  conversions: z.array(unitConversionSchema).max(8),
+});
+export type SetUnitConversionsDto = z.infer<typeof setUnitConversionsSchema>;
+
 export const stockAdjustmentSchema = z.object({
   quantity: z.coerce.number(), // signed: positive to add, negative to remove
+  unit: enteredUnit,
   note: z.string().min(1),
 });
 export type StockAdjustmentDto = z.infer<typeof stockAdjustmentSchema>;
@@ -52,6 +71,7 @@ export type StockAdjustmentDto = z.infer<typeof stockAdjustmentSchema>;
 export const recipeLineSchema = z.object({
   ingredientId: z.string(),
   quantity: z.coerce.number().positive(),
+  unit: enteredUnit,
 });
 export type RecipeLineDto = z.infer<typeof recipeLineSchema>;
 
@@ -116,6 +136,7 @@ export const goodsReceiptItemSchema = z.object({
   ingredientId: z.string(),
   purchaseOrderItemId: z.string().optional(),
   quantity: z.coerce.number().positive(),
+  unit: enteredUnit, // unit of both quantity and unitCost
   unitCost: z.coerce.number().nonnegative(),
   batchNumber: z.string().optional(), // auto-generated server-side if omitted
   expiryDate: z.coerce.date().optional(),
@@ -143,6 +164,7 @@ export type WasteReason = z.infer<typeof wasteReasonSchema>;
 export const wasteLogSchema = z.object({
   ingredientId: z.string(),
   quantity: z.coerce.number().positive(),
+  unit: enteredUnit,
   reason: wasteReasonSchema,
   notes: z.string().optional(),
 });
