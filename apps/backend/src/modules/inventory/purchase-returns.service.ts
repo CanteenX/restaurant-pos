@@ -7,7 +7,7 @@ import type { Prisma } from '@prisma/client';
 import type { PurchaseReturnDto } from '@nventra/types';
 import { AuditService } from '../../audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { round2, round3, round4 } from '../../common/money';
+import { round2, round3, round6 } from '../../common/money';
 
 type Tx = Prisma.TransactionClient;
 
@@ -41,7 +41,7 @@ export function costAfterReturn(
   if (newStock <= 0) return oldCost;
   const value = Math.max(0, oldStock) * oldCost - quantity * unitCost;
   if (value < 0) return oldCost;
-  return round4(value / newStock);
+  return round6(value / newStock);
 }
 
 @Injectable()
@@ -240,7 +240,9 @@ export class PurchaseReturnsService {
           `Cannot return ${quantity} — only ${inStock} of this batch is still in stock`,
         );
       }
-      const unitCost = Number(grnItem.unitCost);
+      // Same 6dp scale as the GRN line and costPerUnit (#193), so per-gram
+      // costs survive the round trip into the debit note unchanged.
+      const unitCost = round6(Number(grnItem.unitCost));
       lines.push({
         grnItem,
         batchId: batch.id,

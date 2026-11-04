@@ -299,6 +299,10 @@ describe('costAfterReturn', () => {
   it('keeps the old cost when nothing is left', () => {
     expect(costAfterReturn(4, 12, 4, 15)).toBe(12);
   });
+  it('keeps 6dp precision so per-gram costs are not truncated (#193)', () => {
+    // 3 g at 0.2/g, 1 g returned at 0.123456/g -> (0.6 - 0.123456) / 2.
+    expect(costAfterReturn(3, 0.2, 1, 0.123456)).toBe(0.238272);
+  });
   it('never produces a negative cost', () => {
     expect(costAfterReturn(5, 1, 4, 100)).toBe(1);
   });
