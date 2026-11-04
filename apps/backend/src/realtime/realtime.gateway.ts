@@ -17,8 +17,21 @@ import {
   sessionMaxSeconds,
   type SessionPayload,
 } from '../auth/session';
+import {
+  effectivePermissions,
+  permissionInclude,
+} from '../auth/effective-permissions';
 import { BranchAccessService } from '../common/services/branch-access.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { DisplayRegistry } from './display-registry';
+
+interface SocketData {
+  branchId?: string;
+  permissions?: string[];
+}
+
+// Publishing to a customer display is part of taking an order at the till.
+const DISPLAY_PUBLISH_PERMISSION = 'orders.create';
 
 // One gateway, room-per-branch — KDS/table-status/order-tracking all join
 // the branch room they care about and get pushed events by name
@@ -46,6 +59,8 @@ export class RealtimeGateway
 
   @WebSocketServer()
   server!: Server;
+
+  private readonly displays = new DisplayRegistry();
 
   constructor(
     private readonly jwt: JwtService,
@@ -75,6 +90,7 @@ export class RealtimeGateway
         throw new Error('Session expired');
       const user = await this.prisma.user.findUnique({
         where: { id: payload.sub },
+        include: permissionInclude,
       });
       if (!user || !user.isActive || (payload.tv ?? 0) !== user.tokenVersion)
         throw new Error('Session no longer valid');
@@ -86,7 +102,11 @@ export class RealtimeGateway
       await this.branchAccess.assertAccess(user.restaurantId, branchId);
       // Remembered for the customer-display relay: its rooms are always built
       // from this verified branch, never from anything the client sends later.
-      (client.data as { branchId?: string }).branchId = branchId;
+      // Permissions are snapshotted for the display relay; revoking a
+      // session bumps tokenVersion and disconnectUser() drops the socket.
+      const data = client.data as SocketData;
+      data.branchId = branchId;
+      data.permissions = effectivePermissions(user);
 
       await client.join(this.branchRoom(branchId));
       // Every socket also joins a room keyed to its own authenticated user
@@ -106,8 +126,10 @@ export class RealtimeGateway
     }
   }
 
-  handleDisconnect() {
-    // socket.io removes room membership automatically on disconnect
+  handleDisconnect(client?: Pick<Socket, 'id'>) {
+    // socket.io removes room membership automatically on disconnect; the
+    // display codes this socket issued are freed here.
+    if (client) this.displays.release(client.id);
   }
 
   emitToBranch(branchId: string, event: string, payload: unknown) {
@@ -124,18 +146,21 @@ export class RealtimeGateway
     this.server.to(userIds.map((id) => this.userRoom(id))).emit(event, payload);
   }
 
-  // Customer display pairing: a display (any device logged in to the same
-  // branch) joins the room for a till's code; the till publishes into it.
+  // Customer display pairing: a till (orders.create) issues a code by
+  // publishing under it and owns it until it disconnects; a display (any
+  // device logged in to the same branch) may join only an issued code.
   @SubscribeMessage('display.join')
   async onDisplayJoin(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: unknown,
   ) {
     const parsed = displayJoinSchema.safeParse(body);
-    const branchId = (client.data as { branchId?: string } | undefined)
-      ?.branchId;
+    const branchId = (client.data as SocketData | undefined)?.branchId;
     if (!parsed.success || !branchId) return { ok: false };
-    await client.join(this.displayRoom(branchId, parsed.data.code));
+    if (!this.displays.allow(client.id)) return { ok: false };
+    const room = this.displayRoom(branchId, parsed.data.code);
+    if (!this.displays.isIssued(room)) return { ok: false };
+    await client.join(room);
     return { ok: true };
   }
 
@@ -143,14 +168,18 @@ export class RealtimeGateway
   onDisplayPublish(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: unknown,
-  ) {
+  ): { ok: boolean; error?: string } {
+    const data = client.data as SocketData | undefined;
+    if (!data?.permissions?.includes(DISPLAY_PUBLISH_PERMISSION))
+      return { ok: false, error: 'forbidden' };
     const parsed = displayPublishSchema.safeParse(body);
-    const branchId = (client.data as { branchId?: string } | undefined)
-      ?.branchId;
-    if (!parsed.success || !branchId) return { ok: false };
-    this.server
-      .to(this.displayRoom(branchId, parsed.data.code))
-      .emit('display.state', parsed.data.state);
+    if (!parsed.success || !data.branchId) return { ok: false };
+    if (!this.displays.allow(client.id))
+      return { ok: false, error: 'rate-limited' };
+    const room = this.displayRoom(data.branchId, parsed.data.code);
+    if (this.displays.claim(room, client.id) !== 'ok')
+      return { ok: false, error: 'code-in-use' };
+    this.server.to(room).emit('display.state', parsed.data.state);
     return { ok: true };
   }
 

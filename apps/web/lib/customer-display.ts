@@ -92,6 +92,34 @@ export function stopDisplayLink() {
   link = null;
 }
 
+interface JoinSocket {
+  connected: boolean;
+  emit(event: "display.join", body: { code: string }, ack: (r: { ok?: boolean }) => void): unknown;
+}
+
+const JOIN_RETRY_MS = 3000;
+
+/**
+ * The server only lets a display join a code a till in this branch has
+ * already issued (published under), so keep asking until the till is up.
+ */
+export function joinDisplayRoom(
+  socket: JoinSocket,
+  code: string,
+  onResult: (ok: boolean) => void,
+  schedule: (fn: () => void) => void = (fn) => void setTimeout(fn, JOIN_RETRY_MS),
+) {
+  const attempt = () => {
+    if (!socket.connected) return;
+    socket.emit("display.join", { code }, (r) => {
+      const ok = r?.ok === true;
+      onResult(ok);
+      if (!ok) schedule(attempt);
+    });
+  };
+  attempt();
+}
+
 /** Display side: join the till's code room; auto-rejoins after reconnects. */
 export function subscribeDisplayRemote(
   branchId: string,
@@ -101,8 +129,7 @@ export function subscribeDisplayRemote(
 ): () => void {
   const socket = io(resolveWsUrl(), { query: { branchId }, withCredentials: true });
   socket.on("connect", () => {
-    socket.emit("display.join", { code });
-    onStatus?.(true);
+    joinDisplayRoom(socket, code, (ok) => onStatus?.(ok));
   });
   socket.on("disconnect", () => onStatus?.(false));
   socket.on("display.state", (raw: unknown) => {
