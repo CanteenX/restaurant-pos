@@ -11,6 +11,8 @@ const PAGES = [
 ];
 
 test("all staff pages render without console errors", async ({ page }) => {
+  // 23 pages x (navigation + settle) legitimately exceeds the 45 s default.
+  test.setTimeout(180_000);
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
   page.on("console", (m) => m.type() === "error" && errors.push(`console: ${m.text()}`));
@@ -23,7 +25,8 @@ test("all staff pages render without console errors", async ({ page }) => {
   await openDashboard(page);
   for (const path of PAGES) {
     await page.goto(path);
-    await page.waitForLoadState("networkidle");
+    // Realtime sockets can keep the network busy; a missed idle is not a failure.
+    await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
     await expect(page.locator("body"), path).not.toContainText(/Application error|Something went wrong/i);
   }
   expect(errors, errors.join("\n")).toEqual([]);
