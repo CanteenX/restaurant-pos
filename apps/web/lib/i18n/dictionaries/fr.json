@@ -1621,5 +1621,6 @@
   "acct.exp.threshold.help": "Les dépenses au-dessus de ce montant doivent être approuvées. Laissez vide pour désactiver les approbations.",
   "acct.exp.threshold.save": "Enregistrer le seuil",
   "acct.exp.threshold.saved": "Seuil d'approbation enregistré",
-  "acct.exp.threshold.invalid": "Saisissez un nombre supérieur ou égal à 0, ou laissez vide"
+  "acct.exp.threshold.invalid": "Saisissez un nombre supérieur ou égal à 0, ou laissez vide",
+  "inv.unit.preview": "Équivaut à {quantity} {unit}"
 }

@@ -1621,5 +1621,6 @@
   "acct.exp.threshold.help": "Expenses above this amount need approval. Leave blank to turn approvals off.",
   "acct.exp.threshold.save": "Save threshold",
   "acct.exp.threshold.saved": "Approval threshold saved",
-  "acct.exp.threshold.invalid": "Enter a number of 0 or more, or leave blank"
+  "acct.exp.threshold.invalid": "Enter a number of 0 or more, or leave blank",
+  "inv.unit.preview": "Equals {quantity} {unit}"
 }

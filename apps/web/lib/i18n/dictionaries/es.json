@@ -1621,5 +1621,6 @@
   "acct.exp.threshold.help": "Los gastos por encima de este importe requieren aprobación. Déjalo vacío para desactivar las aprobaciones.",
   "acct.exp.threshold.save": "Guardar umbral",
   "acct.exp.threshold.saved": "Umbral de aprobación guardado",
-  "acct.exp.threshold.invalid": "Introduce un número de 0 o más, o déjalo vacío"
+  "acct.exp.threshold.invalid": "Introduce un número de 0 o más, o déjalo vacío",
+  "inv.unit.preview": "Equivale a {quantity} {unit}"
 }
