@@ -89,8 +89,10 @@ describe('resolveBackupDir (path validation)', () => {
   });
 
   it('accepts sub-folders, relative or absolute, inside the root', () => {
-    expect(resolveBackupDir(root, 'usb/nightly')).toBe('/backups/usb/nightly');
-    expect(resolveBackupDir(root, '/backups/nas')).toBe('/backups/nas');
+    expect(resolveBackupDir(root, 'usb/nightly')).toBe(
+      path.resolve('/backups/usb/nightly'),
+    );
+    expect(resolveBackupDir(root, '/backups/nas')).toBe(path.resolve('/backups/nas'));
   });
 
   it.each([
