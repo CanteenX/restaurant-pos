@@ -718,6 +718,13 @@ model Ingredient {
   unit         IngredientUnit
   reorderLevel Decimal        @default(0) @db.Decimal(12, 3)
 
+  // Reorder planning (all optional): days from order to delivery, units per
+  // pack (suggestions round up to whole packs) and the usual supplier.
+  leadTimeDays        Int?
+  packSize            Decimal?  @db.Decimal(12, 3)
+  preferredSupplierId String?
+  preferredSupplier   Supplier? @relation("IngredientPreferredSupplier", fields: [preferredSupplierId], references: [id], onDelete: SetNull)
+
   // Cached from the StockMovement ledger — see note above on why these are
   // safe (transactional read-then-set, never `increment`).
   currentStock Decimal @default(0) @db.Decimal(12, 3)
@@ -781,6 +788,8 @@ model Supplier {
 
   quotations SupplierQuotation[]
   invoices   SupplierInvoice[]
+
+  preferredFor Ingredient[] @relation("IngredientPreferredSupplier")
 
   @@index([branchId])
   @@map("suppliers")

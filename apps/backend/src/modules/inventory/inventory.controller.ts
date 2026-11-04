@@ -27,6 +27,8 @@ import {
   type PurchaseOrderStatus,
   type PurchaseRequestStatus,
   type QuotationStatus,
+  reorderSuggestionsQuerySchema,
+  type ReorderSuggestionsQuery,
   type SessionUser,
 } from '@nventra/types';
 import { Auth } from '../../common/decorators/auth.decorator';
@@ -36,6 +38,7 @@ import { BranchAccessService } from '../../common/services/branch-access.service
 import { GoodsReceiptsService } from './goods-receipts.service';
 import { InventoryService } from './inventory.service';
 import { PurchaseOrdersService } from './purchase-orders.service';
+import { ReorderSuggestionsService } from './reorder-suggestions.service';
 import { PurchaseRequestsService } from './purchase-requests.service';
 import { StockService } from './stock.service';
 import { parseInvoiceText, MAX_INVOICE_TEXT } from './invoice-text';
@@ -58,6 +61,7 @@ export class InventoryController {
     private readonly wasteService: WasteService,
     private readonly stockService: StockService,
     private readonly purchaseRequestsService: PurchaseRequestsService,
+    private readonly reorderSuggestionsService: ReorderSuggestionsService,
     private readonly supplierQuotationsService: SupplierQuotationsService,
     private readonly supplierInvoicesService: SupplierInvoicesService,
     private readonly branchAccess: BranchAccessService,
@@ -418,6 +422,20 @@ export class InventoryController {
   }
 
   // --- Purchase requests ----------------------------------------------------------
+
+  @Auth('inventory.manage')
+  @Get('reorder-suggestions')
+  async reorderSuggestions(
+    @CurrentUser() user: SessionUser,
+    @Query(new ZodValidationPipe(reorderSuggestionsQuerySchema, 'query'))
+    query: ReorderSuggestionsQuery & { branchId: string },
+  ) {
+    await this.branchAccess.assertAccess(user.restaurantId, query.branchId);
+    return this.reorderSuggestionsService.getSuggestions(
+      query.branchId,
+      query.days,
+    );
+  }
 
   @Auth('inventory.manage')
   @Get('purchase-requests')

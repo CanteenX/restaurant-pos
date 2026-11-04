@@ -18,6 +18,9 @@ export const ingredientSchema = z.object({
   sku: z.string().optional(),
   unit: ingredientUnitSchema,
   reorderLevel: z.coerce.number().nonnegative().default(0),
+  leadTimeDays: z.coerce.number().int().nonnegative().nullable().optional(),
+  packSize: z.coerce.number().positive().nullable().optional(),
+  preferredSupplierId: z.string().nullable().optional(),
   isActive: z.boolean().default(true),
 });
 export type IngredientDto = z.infer<typeof ingredientSchema>;
@@ -202,3 +205,11 @@ export const supplierPaymentSchema = z.object({
   reference: z.string().optional(),
 });
 export type SupplierPaymentDto = z.infer<typeof supplierPaymentSchema>;
+
+export const reorderSuggestionsQuerySchema = z.object({
+  branchId: z.string().min(1),
+  days: z.coerce.number().int().min(1).max(365).default(30),
+});
+export type ReorderSuggestionsQuery = z.infer<
+  typeof reorderSuggestionsQuerySchema
+>;
