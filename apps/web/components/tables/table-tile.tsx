@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useUpdateTableStatus, type RestaurantTable } from "@/hooks/use-tables";
 import { cn } from "@/lib/utils";
+import { useI18n, type TranslationKey } from "@/lib/i18n/context";
 import { BillTableDialog } from "./bill-table-dialog";
 import { ElapsedTimer } from "./elapsed-timer";
 import { MergeTableDialog } from "./merge-table-dialog";
@@ -27,12 +28,12 @@ const STATUS_STYLES: Record<TableStatusDto, string> = {
   OUT_OF_SERVICE: "bg-muted border-border text-muted-foreground opacity-60",
 };
 
-const STATUS_LABEL: Record<TableStatusDto, string> = {
-  AVAILABLE: "Available",
-  OCCUPIED: "Occupied",
-  RESERVED: "Reserved",
-  CLEANING: "Cleaning",
-  OUT_OF_SERVICE: "Out of service",
+const STATUS_LABEL: Record<TableStatusDto, TranslationKey> = {
+  AVAILABLE: "tables.status.available",
+  OCCUPIED: "tables.status.occupied",
+  RESERVED: "tables.status.reserved",
+  CLEANING: "tables.status.cleaning",
+  OUT_OF_SERVICE: "tables.status.outOfService",
 };
 
 export function TableTile({
@@ -46,6 +47,7 @@ export function TableTile({
   branchId: string | null;
   style?: React.CSSProperties;
 }) {
+  const { t } = useI18n();
   const router = useRouter();
   const updateStatus = useUpdateTableStatus(branchId);
   const [qrOpen, setQrOpen] = useState(false);
@@ -74,7 +76,7 @@ export function TableTile({
         </DropdownMenuTrigger>
         <DropdownMenuContent>
           <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-            {STATUS_LABEL[table.status]} · {table.capacity} guests
+            {t("tables.tile.statusGuests", { status: t(STATUS_LABEL[table.status]), count: table.capacity })}
           </div>
           {(Object.keys(STATUS_LABEL) as TableStatusDto[]).map((status) => (
             <DropdownMenuItem
@@ -82,33 +84,33 @@ export function TableTile({
               disabled={status === table.status}
               onClick={() => updateStatus.mutate({ id: table.id, status })}
             >
-              {STATUS_LABEL[status]}
+              {t(STATUS_LABEL[status])}
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setQrOpen(true)}>
             <QrCode className="h-4 w-4" />
-            View QR code
+            {t("tables.tile.viewQr")}
           </DropdownMenuItem>
           {(table.status === "AVAILABLE" || table.status === "RESERVED") && (
             <DropdownMenuItem onClick={() => router.push(`/pos?tableId=${table.id}`)}>
               <Plus className="h-4 w-4" />
-              New order
+              {t("tables.tile.newOrder")}
             </DropdownMenuItem>
           )}
           {table.status === "OCCUPIED" && (
             <>
               <DropdownMenuItem onClick={() => router.push(`/pos?tableId=${table.id}`)}>
                 <Plus className="h-4 w-4" />
-                Add another round
+                {t("tables.tile.addRound")}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setBillOpen(true)}>
                 <ClipboardList className="h-4 w-4" />
-                Bill this table
+                {t("tables.tile.billTable")}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setMergeOpen(true)}>
                 <Merge className="h-4 w-4" />
-                Merge another table&apos;s bill here
+                {t("tables.tile.mergeHere")}
               </DropdownMenuItem>
             </>
           )}
