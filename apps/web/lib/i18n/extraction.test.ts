@@ -16,7 +16,13 @@ function* tsxFiles(dir: string): Generator<string> {
 
 // Areas that have been fully moved to t(). Add an area here once its
 // extraction PR lands so new hardcoded strings cannot creep back in.
-const EXTRACTED_PATHS = ["app/(dashboard)/pos", "components/pos", "components/order"];
+const EXTRACTED_PATHS = [
+  "app/(dashboard)/pos",
+  "components/pos",
+  "components/order",
+  "app/(dashboard)/kds",
+  "components/kds",
+];
 
 for (const path of EXTRACTED_PATHS) {
   test(`no hardcoded user-facing strings in ${path}`, () => {
