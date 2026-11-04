@@ -26,6 +26,7 @@ import type { NotifyPayload } from '../notifications/notifications.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { uploadsDir } from '../common/upload/image-upload.config';
+import { notifyOwners } from './notify-owners';
 import {
   CHECKSUM_FILE,
   DB_FILE,
@@ -748,34 +749,7 @@ export class BackupService {
     }
   }
 
-  // Instance-wide event -> notify every OWNER-role user across every
-  // restaurant on this instance (not just the acting user's own
-  // restaurant), because a backup/restore affects the entire shared
-  // Postgres instance, not one tenant. `Notification` rows are
-  // branch-scoped (schema.prisma), so each Owner is attached to their
-  // oldest (first-created) branch — a reasonable stand-in "primary" branch
-  // since there's no meaningful branch to prefer for an instance-wide
-  // event, and an Owner of a typical single-branch self-hosted deployment
-  // only has exactly one branch anyway. An Owner with no branch assignment
-  // (shouldn't normally happen — registration always assigns one) is
-  // skipped rather than failing the whole operation.
-  private async notifyOwners(payload: NotifyPayload) {
-    const owners = await this.prisma.user.findMany({
-      where: { role: { name: 'OWNER' }, isActive: true },
-      select: {
-        id: true,
-        branches: {
-          select: { branchId: true },
-          orderBy: { branch: { createdAt: 'asc' } },
-          take: 1,
-        },
-      },
-    });
-
-    for (const owner of owners) {
-      const branchId = owner.branches[0]?.branchId;
-      if (!branchId) continue;
-      await this.notifications.notifyUser(owner.id, branchId, payload);
-    }
+  private notifyOwners(payload: NotifyPayload) {
+    return notifyOwners(this.prisma, this.notifications, payload);
   }
 }

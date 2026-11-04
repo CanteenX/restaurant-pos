@@ -117,6 +117,8 @@ passwords and percent-encoding, are in [`docs/email.md`](email.md).
 - Data lives in two Docker volumes: `pg_data` (the Postgres database) and
   `uploads_data` (attachments and uploaded files).
 - Schedule backups and run restores from **Settings → Backup**.
+- For automatic daily copies to a USB drive or NAS, follow
+  [BACKUPS.md](BACKUPS.md) (mount the drive, set `LOCAL_BACKUP_ROOT`).
 - Test a restore on a spare machine before the first live service.
 
 ## 8. Updates

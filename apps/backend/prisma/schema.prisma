@@ -540,6 +540,27 @@ model BackupConfig {
   @@map("backup_config")
 }
 
+// Local (folder / USB / NAS) backups — issue #29. One instance-wide row.
+// Null config fields fall back to LOCAL_BACKUP_* env vars; the directory is
+// always resolved inside LOCAL_BACKUP_ROOT (env only, never settable from the
+// app). The last-success/last-failure columns back GET /backups/local/status.
+model LocalBackupConfig {
+  id                String    @id @default("singleton")
+  enabled           Boolean?
+  directory         String?
+  intervalHours     Int?
+  retainCount       Int?
+  lastSuccessAt     DateTime?
+  lastSuccessPath   String?
+  lastSizeBytes     BigInt?
+  lastFailureAt     DateTime?
+  lastFailureReason String?
+  updatedById       String?
+  updatedAt         DateTime  @updatedAt
+
+  @@map("local_backup_config")
+}
+
 // ---------------------------------------------------------------------------
 // Floor & Table management
 // ---------------------------------------------------------------------------
