@@ -41,3 +41,9 @@ test("pair display popover opens by keyboard, closes on Esc, Unpair works", asyn
   await page.getByRole("button", { name: "Unpair" }).click();
   await expect(page.getByRole("button", { name: "Pair display" })).toBeVisible();
 });
+
+test("an invalid pairing link tells the user to scan again", async ({ page }) => {
+  await page.goto("/customer-display?code=BAD&branch=nope");
+  await expect(page.locator("main").getByRole("alert")).toContainText("Invalid pairing link — scan the code on the till again");
+  await expect(page.getByText("Welcome")).toHaveCount(0);
+});

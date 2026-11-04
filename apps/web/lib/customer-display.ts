@@ -52,6 +52,20 @@ export function normalizePairCode(input: string): string | null {
   return r.success ? r.data : null;
 }
 
+export type PairingParams =
+  | { kind: "none" }
+  | { kind: "invalid" }
+  | { kind: "paired"; code: string; branchId: string };
+
+/** Reads ?code=&branch= from a query string. Any pairing param present but unusable is "invalid". */
+export function parsePairingParams(search: string): PairingParams {
+  const q = new URLSearchParams(search);
+  if (!q.has("code") && !q.has("branch")) return { kind: "none" };
+  const code = normalizePairCode(q.get("code") ?? "");
+  const branchId = q.get("branch");
+  return code && branchId ? { kind: "paired", code, branchId } : { kind: "invalid" };
+}
+
 export function parseDisplayState(input: unknown): DisplayState | null {
   const r = displayStateSchema.safeParse(input);
   return r.success ? (r.data as DisplayState) : null;
