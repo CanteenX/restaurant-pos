@@ -88,3 +88,28 @@ export function useLogout() {
 export function hasPermission(user: SessionUser | undefined, permission: string): boolean {
   return user ? permissionSatisfied(user.permissions, permission) : false;
 }
+
+/**
+ * "Log out of all devices": the server bumps this user's token version, so
+ * every session (this one included) stops working. Clears local state like
+ * a normal sign-out.
+ */
+export function useRevokeMySessions() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<{ ok: true }>("/auth/sessions/revoke"),
+    onSuccess: () => {
+      savePushToken(null);
+      queryClient.clear();
+      clearOfflineCache();
+      forgetBranchChoice();
+    },
+  });
+}
+
+/** Admin: sign a staff member out on every device (needs users.manage). */
+export function useRevokeStaffSessions() {
+  return useMutation({
+    mutationFn: (userId: string) => api.post(`/auth/sessions/revoke/${encodeURIComponent(userId)}`),
+  });
+}

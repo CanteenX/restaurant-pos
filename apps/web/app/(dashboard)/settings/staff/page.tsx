@@ -20,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useCurrentUser } from "@/hooks/use-auth";
+import { useCurrentUser, useRevokeStaffSessions } from "@/hooks/use-auth";
 import { useDeleteStaff, useDepartments, useStaff, useUpdateStaff, type StaffMember } from "@/hooks/use-staff";
 import { api, ApiError } from "@/lib/api";
 import { useState } from "react";
@@ -31,6 +31,7 @@ export default function StaffPage() {
   const { data: currentUser } = useCurrentUser();
   const updateStaff = useUpdateStaff();
   const deleteStaff = useDeleteStaff();
+  const revokeSessions = useRevokeStaffSessions();
   const { data: departments } = useDepartments();
   const [dept, setDept] = useState<string>("all");
   const visible = staff?.filter((m) => dept === "all" || (dept === "none" ? !m.departmentId : m.departmentId === dept));
@@ -42,6 +43,14 @@ export default function StaffPage() {
       () => toast.success(t("settings.staff.reset2faDone", { name: member.name })),
       (err) => toast.error(err instanceof ApiError ? err.message : t("settings.staff.reset2faFailed")),
     );
+  };
+
+  const onSignOutEverywhere = (member: StaffMember) => {
+    if (!confirm(`Sign ${member.name} out on every device? They will need to sign in again.`)) return;
+    revokeSessions.mutate(member.id, {
+      onSuccess: () => toast.success(`${member.name} was signed out on every device`),
+      onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not sign out"),
+    });
   };
 
   const onDelete = (member: StaffMember) => {
@@ -152,6 +161,15 @@ export default function StaffPage() {
                           onClick={() => onResetTwoFactor(member)}
                         >
                           {t("settings.staff.reset2fa")}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 px-2 text-xs text-muted-foreground"
+                          title="Sign this person out on every device (lost or shared device)"
+                          onClick={() => onSignOutEverywhere(member)}
+                        >
+                          Sign out everywhere
                         </Button>
                         <Button
                           variant="ghost"
