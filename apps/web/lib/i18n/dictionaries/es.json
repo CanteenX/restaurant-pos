@@ -1605,5 +1605,21 @@
   "giftCards.hint.number": "Introduce el importe como número.",
   "inventory.supplier.good": "Bueno",
   "inventory.supplier.atRisk": "En riesgo",
-  "inventory.supplier.poor": "Deficiente"
+  "inventory.supplier.poor": "Deficiente",
+  "acct.exp.status.pending": "Pendiente",
+  "acct.exp.status.approved": "Aprobado",
+  "acct.exp.status.rejected": "Rechazado",
+  "acct.exp.approvals.title": "Pendientes de aprobación",
+  "acct.exp.approvals.empty": "No hay gastos pendientes de aprobación.",
+  "acct.exp.approvals.by": "por {name}",
+  "acct.exp.approvals.approve": "Aprobar",
+  "acct.exp.approvals.reject": "Rechazar",
+  "acct.exp.approvals.approved": "Gasto aprobado",
+  "acct.exp.approvals.rejected": "Gasto rechazado",
+  "acct.exp.approvals.pendingTotal": "Total pendiente",
+  "acct.exp.threshold.title": "Umbral de aprobación",
+  "acct.exp.threshold.help": "Los gastos por encima de este importe requieren aprobación. Déjalo vacío para desactivar las aprobaciones.",
+  "acct.exp.threshold.save": "Guardar umbral",
+  "acct.exp.threshold.saved": "Umbral de aprobación guardado",
+  "acct.exp.threshold.invalid": "Introduce un número de 0 o más, o déjalo vacío"
 }

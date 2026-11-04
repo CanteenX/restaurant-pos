@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import type { ExpenseStatus } from "@/lib/expense-status";
 import { parseDownloadFilename, tallyExportPath, tallyFilename } from "@/lib/tally-export";
 
 export interface ExpenseRow {
@@ -11,6 +12,10 @@ export interface ExpenseRow {
   amount: string;
   note: string | null;
   paidFromCash: boolean;
+  status?: ExpenseStatus;
+}
+export interface PendingExpenseRow extends ExpenseRow {
+  createdBy: { id: string; name: string } | null;
 }
 export interface ClosingPreview {
   businessDate: string;
@@ -61,6 +66,21 @@ export function useExpenses(branchId: string | null, from: string, to: string) {
     queryKey: ["acct", "expenses", branchId, from, to],
     queryFn: () => api.get<ExpenseRow[]>(`/accounting/expenses?${q(branchId)}&from=${from}&to=${to}`),
     enabled: !!branchId,
+  });
+}
+export function usePendingExpenses(branchId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ["acct", "expenses-pending", branchId],
+    queryFn: () => api.get<PendingExpenseRow[]>(`/accounting/expenses/pending?${q(branchId)}`),
+    enabled: !!branchId && enabled,
+  });
+}
+export function useExpenseDecision(branchId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, decision, note }: { id: string; decision: "approve" | "reject"; note?: string }) =>
+      api.post(`/accounting/expenses/${id}/${decision}?${q(branchId)}`, note ? { note } : {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["acct"] }),
   });
 }
 export function useClosingPreview(branchId: string | null, date: string, openingFloat: number) {
