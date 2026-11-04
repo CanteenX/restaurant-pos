@@ -18,7 +18,7 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Fonts are self-hosted: `app/fonts.ts` loads [Geist](https://vercel.com/font) (npm `geist`) and Noto Sans Devanagari (npm `@fontsource-variable/noto-sans-devanagari`, for Hindi) with `next/font/local`, so `next build` never contacts Google Fonts and works offline. Do not use the Google `next/font` loader; `lib/self-hosted-fonts.test.ts` fails if it is reintroduced. Both fonts are SIL OFL 1.1 (licence files ship inside each package).
 
 ## Learn More
 
