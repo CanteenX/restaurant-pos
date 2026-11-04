@@ -6,6 +6,7 @@ import {
 import type { Prisma } from '@prisma/client';
 import type {
   IngredientDto,
+  IngredientUpdateDto,
   SupplierDto,
   RecipeLineDto,
   MenuItemTrackingDto,
@@ -66,7 +67,7 @@ export class InventoryService {
   async updateIngredient(
     branchId: string,
     id: string,
-    dto: Partial<IngredientDto>,
+    dto: IngredientUpdateDto,
     userId?: string,
   ) {
     const existing = await this.getIngredient(branchId, id);

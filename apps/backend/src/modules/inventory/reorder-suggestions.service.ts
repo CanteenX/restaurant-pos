@@ -15,14 +15,20 @@ export class ReorderSuggestionsService {
     const [ingredients, consumption] = await Promise.all([
       this.prisma.ingredient.findMany({
         where: { branchId, isActive: true },
-        include: { preferredSupplier: { select: { id: true, name: true } } },
+        include: {
+          preferredSupplier: {
+            select: { id: true, name: true, isActive: true },
+          },
+        },
         orderBy: { name: 'asc' },
       }),
       this.prisma.stockMovement.groupBy({
         by: ['ingredientId'],
         where: {
           branchId,
-          type: 'CONSUMPTION',
+          // REVERSAL (+qty) only ever compensates CONSUMPTION (-qty) for
+          // returned items, so the net sum is the true usage in the window.
+          type: { in: ['CONSUMPTION', 'REVERSAL'] },
           createdAt: { gte: since, lte: now },
         },
         _sum: { quantity: true },
@@ -31,11 +37,16 @@ export class ReorderSuggestionsService {
     const consumed = new Map(
       consumption.map((c) => [
         c.ingredientId,
-        Math.abs(Number(c._sum.quantity ?? 0)),
+        Math.max(0, -Number(c._sum.quantity ?? 0)),
       ]),
     );
 
     const suggestions = ingredients
+      .map((i) => ({
+        ...i,
+        // a deactivated supplier is not ordered from: fall back to "none"
+        supplier: i.preferredSupplier?.isActive ? i.preferredSupplier : null,
+      }))
       .map((i) =>
         suggestReorder({
           ingredientId: i.id,
@@ -47,8 +58,8 @@ export class ReorderSuggestionsService {
           windowDays: days,
           leadTimeDays: i.leadTimeDays,
           packSize: i.packSize === null ? null : Number(i.packSize),
-          supplierId: i.preferredSupplier?.id ?? null,
-          supplierName: i.preferredSupplier?.name ?? null,
+          supplierId: i.supplier?.id ?? null,
+          supplierName: i.supplier?.name ?? null,
         }),
       )
       .filter((s): s is ReorderSuggestion => s !== null);

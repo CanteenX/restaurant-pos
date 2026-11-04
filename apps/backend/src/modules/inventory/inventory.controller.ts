@@ -13,6 +13,7 @@ import { ApiTags } from '@nestjs/swagger';
 import {
   goodsReceiptSchema,
   ingredientSchema,
+  ingredientUpdateSchema,
   purchaseOrderSchema,
   purchaseRequestSchema,
   setRecipeSchema,
@@ -118,6 +119,7 @@ export class InventoryController {
 
   @Auth('inventory.manage')
   @Patch('ingredients/:id')
+  @UsePipes(new ZodValidationPipe(ingredientUpdateSchema))
   async updateIngredient(
     @CurrentUser() user: SessionUser,
     @Query('branchId') branchId: string,

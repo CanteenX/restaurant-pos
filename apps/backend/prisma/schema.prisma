@@ -747,6 +747,7 @@ model Ingredient {
 
   @@unique([branchId, name])
   @@index([branchId])
+  @@index([preferredSupplierId])
   @@map("ingredients")
 }
 
