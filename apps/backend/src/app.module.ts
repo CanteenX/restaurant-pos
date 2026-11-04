@@ -47,6 +47,7 @@ import { StandaloneModule } from './standalone/standalone.module';
 import { BackupModule } from './backup/backup.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { McpModule } from './mcp/mcp.module';
+import { GraphqlModule } from './graphql/graphql.module';
 import { SystemModule } from './system/system.module';
 import { VerifactuModule } from './modules/verifactu/verifactu.module';
 
@@ -97,6 +98,7 @@ import { VerifactuModule } from './modules/verifactu/verifactu.module';
     BackupModule,
     IntegrationsModule,
     McpModule,
+    GraphqlModule,
     SystemModule,
   ],
   controllers: [AppController],
