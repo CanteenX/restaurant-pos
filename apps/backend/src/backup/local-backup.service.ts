@@ -35,6 +35,12 @@ import {
   shouldNotifyFailure,
 } from './backup-schedule';
 import { notifyOwners } from './notify-owners';
+import {
+  describeExecError,
+  knownDbSecrets,
+  pgEnvFromUrl,
+  redactSecrets,
+} from './pg-env';
 
 const execFileAsync = promisify(execFile);
 const CONFIG_ID = 'singleton';
@@ -46,6 +52,27 @@ interface LocalConfig {
   directory: string;
   intervalHours: number;
   retainCount: number;
+}
+
+/** Never let a DB credential reach status, notifications, responses or logs. */
+function safeMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  return redactSecrets(msg, knownDbSecrets(process.env.DATABASE_URL));
+}
+
+/** Deepest path (dir itself or an ancestor) that exists, symlinks included. */
+async function deepestExisting(dir: string): Promise<string> {
+  let p = dir;
+  for (;;) {
+    try {
+      await fs.lstat(p);
+      return p;
+    } catch {
+      const parent = path.dirname(p);
+      if (parent === p) return p;
+      p = parent;
+    }
+  }
 }
 
 function envInt(name: string, fallback: number): number {
@@ -115,7 +142,11 @@ export class LocalBackupService {
     };
   }
 
-  /** Resolved dir, re-checked with realpath so a symlink cannot escape the root. */
+  /**
+   * Resolved dir, checked with realpath so a symlink cannot escape the root:
+   * first on the deepest existing ancestor (so mkdir never follows a link
+   * out of the root), then again on the created directory.
+   */
   private async safeDir(config: LocalConfig): Promise<string> {
     const dir = resolveBackupDir(config.root, config.directory);
     const realRoot = await fs.realpath(config.root).catch(() => {
@@ -123,13 +154,19 @@ export class LocalBackupService {
         `Backup root ${config.root} does not exist (is the drive mounted?)`,
       );
     });
+    const assertInside = (real: string | null) => {
+      if (real === null || !isInside(realRoot, real)) {
+        throw new BadRequestException(
+          `Backup directory must be inside the allowed backup root (${config.root}).`,
+        );
+      }
+    };
+    // A dangling symlink has no realpath: treat it as escaping the root.
+    const existing = await deepestExisting(dir);
+    assertInside(await fs.realpath(existing).catch(() => null));
     await fs.mkdir(dir, { recursive: true });
     const realDir = await fs.realpath(dir);
-    if (!isInside(realRoot, realDir)) {
-      throw new BadRequestException(
-        `Backup directory must be inside the allowed backup root (${config.root}).`,
-      );
-    }
+    assertInside(realDir);
     return realDir;
   }
 
@@ -154,7 +191,8 @@ export class LocalBackupService {
       running: this.running,
       lastSuccessAt,
       lastSuccessPath: row?.lastSuccessPath ?? null,
-      lastSizeBytes: row?.lastSizeBytes ?? null,
+      lastSizeBytes:
+        row?.lastSizeBytes != null ? Number(row.lastSizeBytes) : null,
       lastFailureAt: row?.lastFailureAt ?? null,
       lastFailureReason: row?.lastFailureReason ?? null,
       nextRunAt: config.enabled
@@ -203,7 +241,7 @@ export class LocalBackupService {
     } catch (err) {
       if (err instanceof HttpException) throw err;
       throw new InternalServerErrorException(
-        `Local backup failed: ${(err as Error).message}`,
+        `Local backup failed: ${safeMessage(err)}`,
       );
     }
     return this.status();
@@ -222,9 +260,7 @@ export class LocalBackupService {
     try {
       await this.run(config, false);
     } catch (err) {
-      this.logger.error(
-        `Scheduled local backup failed: ${(err as Error).message}`,
-      );
+      this.logger.error(`Scheduled local backup failed: ${safeMessage(err)}`);
     }
   }
 
@@ -241,7 +277,7 @@ export class LocalBackupService {
       );
       return result;
     } catch (err) {
-      await this.recordFailure((err as Error).message, manual);
+      await this.recordFailure(safeMessage(err), manual);
       throw err;
     } finally {
       this.running = false;
@@ -279,12 +315,15 @@ export class LocalBackupService {
   }
 
   private async dumpInto(dir: string): Promise<string[]> {
-    await execFileAsync('pg_dump', [
-      '--format=custom',
-      '--file',
-      path.join(dir, DB_FILE),
-      process.env.DATABASE_URL!,
-    ]);
+    // Credentials go via libpq env vars, never argv: execFile errors echo argv.
+    const pgEnv = pgEnvFromUrl(process.env.DATABASE_URL);
+    await execFileAsync(
+      'pg_dump',
+      ['--format=custom', '--file', path.join(dir, DB_FILE)],
+      { env: { ...process.env, ...pgEnv } },
+    ).catch((err: unknown) => {
+      throw new Error(describeExecError('pg_dump', err));
+    });
     const uploadRoot = uploadsDir();
     await execFileAsync('tar', [
       '-czf',
@@ -292,7 +331,9 @@ export class LocalBackupService {
       '-C',
       path.dirname(uploadRoot),
       path.basename(uploadRoot),
-    ]);
+    ]).catch((err: unknown) => {
+      throw new Error(describeExecError('tar', err));
+    });
     return [DB_FILE, UPLOADS_FILE];
   }
 
@@ -329,7 +370,7 @@ export class LocalBackupService {
     const data = {
       lastSuccessAt: new Date(),
       lastSuccessPath: finalDir,
-      lastSizeBytes: Math.min(sizeBytes, 2 ** 31 - 1),
+      lastSizeBytes: BigInt(sizeBytes),
     };
     await this.prisma.localBackupConfig.upsert({
       where: { id: CONFIG_ID },

@@ -194,4 +194,53 @@ run('Local scheduled backups (e2e)', () => {
     expect(res.body.message).toMatch(/inside the allowed backup root/);
     expect(fs.readdirSync(outside)).toEqual([]);
   }, 60_000);
+
+  it('creates nothing outside the root via a symlinked parent (link/sub)', async () => {
+    await owner
+      .put('/api/v1/backups/local/config')
+      .send({ directory: 'escape/sub/deeper' })
+      .expect(200);
+    const res = await owner.post('/api/v1/backups/local/run').expect(400);
+    expect(res.body.message).toMatch(/inside the allowed backup root/);
+    expect(fs.readdirSync(outside)).toEqual([]);
+  }, 60_000);
+
+  it('never leaks the database password when pg_dump fails', async () => {
+    await owner
+      .put('/api/v1/backups/local/config')
+      .send({ directory: 'usb' })
+      .expect(200);
+    const realUrl = process.env.DATABASE_URL;
+    const secret = 'S3cretPw-e2e';
+    // Prisma is already connected; only the pg_dump child sees this URL.
+    process.env.DATABASE_URL = `postgresql://nventra:${secret}@127.0.0.1:1/db`;
+    const failStartedAt = new Date();
+    let res: request.Response;
+    try {
+      res = await owner.post('/api/v1/backups/local/run').expect(500);
+    } finally {
+      process.env.DATABASE_URL = realUrl;
+    }
+    expect(JSON.stringify(res.body)).not.toContain(secret);
+    expect(res.body.message).toMatch(/pg_dump failed/);
+
+    const status = await owner.get('/api/v1/backups/local/status').expect(200);
+    expect(status.body.lastFailureReason).toMatch(/pg_dump failed/);
+    expect(JSON.stringify(status.body)).not.toContain(secret);
+
+    const notes = await prisma.notification.findMany({
+      where: {
+        type: 'backup.local_failed',
+        createdAt: { gte: failStartedAt },
+      },
+    });
+    expect(notes.length).toBeGreaterThanOrEqual(1);
+    for (const n of notes) expect(JSON.stringify(n)).not.toContain(secret);
+  }, 60_000);
+
+  it('reports lastSizeBytes as a number (BIGINT column)', async () => {
+    const status = await owner.get('/api/v1/backups/local/status').expect(200);
+    expect(typeof status.body.lastSizeBytes).toBe('number');
+    expect(status.body.lastSizeBytes).toBeGreaterThan(0);
+  });
 });

@@ -7,7 +7,7 @@ CREATE TABLE "local_backup_config" (
     "retainCount" INTEGER,
     "lastSuccessAt" TIMESTAMP(3),
     "lastSuccessPath" TEXT,
-    "lastSizeBytes" INTEGER,
+    "lastSizeBytes" BIGINT,
     "lastFailureAt" TIMESTAMP(3),
     "lastFailureReason" TEXT,
     "updatedById" TEXT,

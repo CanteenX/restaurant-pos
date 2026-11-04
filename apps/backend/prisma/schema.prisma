@@ -552,7 +552,7 @@ model LocalBackupConfig {
   retainCount       Int?
   lastSuccessAt     DateTime?
   lastSuccessPath   String?
-  lastSizeBytes     Int?
+  lastSizeBytes     BigInt?
   lastFailureAt     DateTime?
   lastFailureReason String?
   updatedById       String?
