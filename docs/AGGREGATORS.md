@@ -199,17 +199,30 @@ Canonical `order.created` gains optional fields; nothing monetary is trusted:
 
 ### 4.6 Menu and availability (#59)
 
-- `IntegrationItemMap { connectionId, menuItemId, externalItemId,
-  lastAvailable Boolean?, syncedAt }` with unique `(connectionId, menuItemId)`
-  and `(connectionId, externalItemId)`.
-- "Off" means `isActive = false`, or stock tracking says zero sellable. No new
-  sold-out column: #59 hooks `MenuService.updateItem` (isActive change) and
-  the stock movement that crosses zero, and enqueues `item.availability` with
-  dedupeKey `<menuItemId>:<available>:<minute>`; `lastAvailable` suppresses
-  repeats.
-- Menu push is on demand (settings action) and debounced on menu change
-  (one `menu.push` per connection per minute via dedupeKey). Prices sent are
-  the tax-inclusive `price` with `taxRatePercent`, straight from the menu.
+- Item map: `IntegrationConnection.config.itemMap` (`{ "<menuItemId>":
+  "<platform item id>" }`, saved with the connection; no migration). An
+  unmapped dish is sent under our own id.
+- "Off" means `isActive = false`. `MenuService.updateItem` enqueues
+  `item.availability` when `isActive` changes; every menu write (item
+  create/edit/delete, category and add-on group changes, bulk price change,
+  menu CSV import) enqueues `menu.push` for the branch, in the same
+  transaction. Stock crossing zero is not hooked yet.
+- Delivery reads live state (the item's current `isActive`, the branch's
+  current menu), so a queued row always sends the newest data. A new edit is
+  coalesced into a row for the same item/branch only while that row is
+  PENDING and not yet attempted; once a row was sent, the next edit queues a
+  new one. (`dedupeKey` = `<kind>:<id>:<uuid>`.)
+- Outlets: when the connection has an outlet map (`config.outlets`), calls go
+  once per platform outlet mapped to the branch, with `outletId` in the body;
+  a branch with no outlet on a mapped connection is skipped (on-demand publish
+  answers 400). Without an outlet map the call carries no `outletId`.
+  Every menu and availability body also carries our `branchId`, so a partner
+  serving a multi-branch merchant without an outlet map routes per branch
+  (as it does inbound) instead of overwriting one menu with another.
+- On-demand publish: `POST /integration-hub/:provider/menu-sync { branchId }`
+  (`settings.manage`) queues only for that connection.
+- Prices sent are the tax-inclusive `price` (and `halfPrice` when the dish has
+  a half portion) with `taxRatePercent`, straight from the menu.
 
 ## 5. Changes to follow-up issues
 

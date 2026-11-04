@@ -24,7 +24,12 @@ const connectSchema = z.object({
     .record(z.string().trim().min(1).max(120), z.string().trim().min(1).max(60))
     .refine((o) => Object.keys(o).length <= 200, 'At most 200 outlets')
     .optional(),
+  itemMap: z
+    .record(z.string().trim().min(1).max(60), z.string().trim().min(1).max(120))
+    .refine((o) => Object.keys(o).length <= 2000, 'At most 2000 items')
+    .optional(),
 });
+const menuSyncSchema = z.object({ branchId: z.string().trim().min(1).max(60) });
 const enabledSchema = z.object({ enabled: z.boolean() });
 
 // Managing outside connections is an owner/admin job: settings.manage. The
@@ -76,6 +81,18 @@ export class IntegrationHubController {
   @Post(':provider/outbox/retry')
   retry(@CurrentUser() u: SessionUser, @Param('provider') provider: string) {
     return this.hub.retryFailed(u.restaurantId, provider);
+  }
+
+  @Auth('settings.manage')
+  @AuditAction('integration.menu_synced', 'IntegrationConnection')
+  @Post(':provider/menu-sync')
+  menuSync(
+    @CurrentUser() u: SessionUser,
+    @Param('provider') provider: string,
+    @Body(new ZodValidationPipe(menuSyncSchema))
+    body: z.infer<typeof menuSyncSchema>,
+  ) {
+    return this.hub.syncMenu(u.restaurantId, provider, body.branchId);
   }
 
   @Auth('settings.manage')
