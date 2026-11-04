@@ -14,7 +14,7 @@ const enKeys = Object.keys(en).sort();
 // that are also correct French ("Tables", "Marketing", "Total").
 const SAME_IN_FRENCH = new Set(["Nventra POS", "QR", "Priya", "Tables", "Marketing", "Total",
   "Table {number}", "KOT / PDF", "KOT (Bluetooth)", "coupon {code}", "{count} pts", "Tare (g)", "Portion",
-  "Date"]);
+  "Budget", "Budgets", "GST", "Tally", "Date", "Description"]);
 
 for (const locale of ["es", "fr"]) {
   test(`${locale} dictionary has exactly the same keys as en`, () => {

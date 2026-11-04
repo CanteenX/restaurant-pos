@@ -113,6 +113,11 @@ test("audit finds hardcoded JSX text and literal UI props, ignores t() calls", (
   assert.deepEqual(hits, ["Close dialog", "Purchase orders", "Search items"]);
 });
 
+test("audit does not mistake the arrow of an arrow function for JSX text", () => {
+  const src = `const q = useQuery({ queryFn: () => api.get<Thing>("/x"), select: (d) => d.items.map<Row>(toRow) });`;
+  assert.deepEqual(findHardcodedStrings(src), []);
+});
+
 test("audit groups files into areas", () => {
   assert.equal(areaOf("app/(dashboard)/inventory/waste/page.tsx"), "inventory");
   assert.equal(areaOf("components/inventory/create-po-dialog.tsx"), "inventory");

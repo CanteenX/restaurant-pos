@@ -9,8 +9,9 @@ export interface HardcodedString {
 }
 
 const UI_PROPS = /\b(?:aria-label|placeholder|title|alt|label)="([^"]*[A-Za-z]{2,}[^"]*)"/g;
-// Text between a tag's `>` and the next `<`; skips expressions and code-ish runs.
-const JSX_TEXT = />([^<>{}=;&|]*[A-Za-z]{2,}[^<>{}=;&|]*)</g;
+// Text between a tag's `>` and the next `<`; skips expressions, code-ish runs
+// and the `>` of an arrow function (`=>`).
+const JSX_TEXT = /(?<!=)>([^<>{}=;&|]*[A-Za-z]{2,}[^<>{}=;&|]*)</g;
 
 export function findHardcodedStrings(source: string): HardcodedString[] {
   const hits: HardcodedString[] = [];
