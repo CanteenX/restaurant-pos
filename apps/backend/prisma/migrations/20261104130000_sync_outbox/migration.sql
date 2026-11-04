@@ -120,6 +120,8 @@ BEGIN
   SELECT min(((l.classid::bigint << 32) | l.objid::bigint) - (1::bigint << 40)) INTO lb
     FROM pg_locks l
    WHERE l.locktype = 'advisory' AND l.objsubid = 1
+     -- pg_locks is cluster-wide: writers in other databases don't count.
+     AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
      AND ((l.classid::bigint << 32) | l.objid::bigint) >= (1::bigint << 40);
   RETURN least(hi, lb);
 END $$;

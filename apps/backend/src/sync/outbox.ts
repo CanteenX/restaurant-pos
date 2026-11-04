@@ -153,6 +153,30 @@ export function assertWellFormed(c: SyncChange, nowMs = Date.now()): void {
     throw new Error('update without a row');
 }
 
+const isScalar = (v: unknown) =>
+  typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
+
+/**
+ * The DML keys on `pk`/`row` while LWW and tombstones key on `pkKey`, so the
+ * three must name the same row (#81 audit). `pk` holds exactly the table's
+ * key columns (permission rows: `permissionKey` in place of the sender's
+ * `permissionId`, G5) with scalar values, and an update's row repeats them.
+ * The server separately recomputes `pkKey` from `pk` (sync_pk).
+ */
+export function assertRowMatchesPk(c: SyncChange, pkCols: string[]): void {
+  const pk = c.pk;
+  if (!pk || typeof pk !== 'object' || Array.isArray(pk))
+    throw new Error('malformed pk');
+  const cols = pkCols.map((x) =>
+    x === 'permissionId' && 'permissionKey' in pk ? 'permissionKey' : x,
+  );
+  const keys = Object.keys(pk);
+  if (keys.length !== cols.length || !cols.every((x) => isScalar(pk[x])))
+    throw new Error('malformed pk');
+  if (c.op === 'U' && !cols.every((x) => c.row?.[x] === pk[x]))
+    throw new Error('row does not match pk');
+}
+
 export interface Conflict {
   /** Outbox position of the rejected change on the sender, when known. */
   seq?: string;

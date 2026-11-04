@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { captureSql } from './capture-sql';
 import {
+  assertRowMatchesPk,
   assertWellFormed,
   clockSkewError,
   compact,
@@ -260,8 +261,12 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
                 await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT sp');
                 const msg = e instanceof Error ? e.message : String(e);
                 lastError.set(c, msg);
+                // A missing parent may arrive later in the batch; a deadlock
+                // with a concurrent push on the same rows succeeds on retry.
                 if (
-                  /violates foreign key|23503/.test(msg) &&
+                  /violates foreign key|23503|deadlock detected|40P01/.test(
+                    msg,
+                  ) &&
                   pass < MAX_FK_PASSES - 1
                 )
                   retry.push(c);
@@ -291,6 +296,19 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   ): Promise<boolean> {
     const t = meta.get(wire.tbl);
     if (!t || !t.pk.length) throw new Error(`unknown table ${wire.tbl}`);
+    assertRowMatchesPk(wire, t.pk);
+    // Recompute the row key exactly as the sender's trigger did (sync_pk on
+    // the wire pk) and serialise every apply of this row until commit, so
+    // two concurrent pushes can't both pass the LWW check below (#81 audit).
+    // Two-int advisory locks (objsubid 2) are ignored by sync_safe_seq().
+    const [{ k }] = await tx.$queryRawUnsafe<{ k: string }[]>(
+      `SELECT x.k FROM (SELECT sync_pk($1::text[], $2::jsonb)::text AS k) x,
+         LATERAL (SELECT pg_advisory_xact_lock(hashtext('sync_row'), hashtext($3 || chr(1) || x.k))) l`,
+      t.pk,
+      JSON.stringify(wire.pk),
+      wire.tbl,
+    );
+    if (k !== wire.pkKey) throw new Error('pkKey does not match pk');
     const c = localizePermission(wire, opts.permissionId);
     const newer = await tx.$queryRawUnsafe<{ ok: boolean }[]>(
       `SELECT NOT EXISTS (

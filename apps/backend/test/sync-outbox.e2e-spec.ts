@@ -9,6 +9,7 @@ import { ThrottlerStorage } from '@nestjs/throttler';
 import { randomUUID } from 'crypto';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { PrismaClient } from '@prisma/client';
 import { AppModule } from './../src/app.module';
 import { PrismaService } from './../src/prisma/prisma.service';
 import { SyncChange } from './../src/sync/outbox';
@@ -627,4 +628,188 @@ describe('Sync outbox (e2e)', () => {
     expect(await outbox([floor.id])).toHaveLength(0);
     expect((await sync.state()).lastError).toBeNull();
   });
+
+  // ---- #81 audit -----------------------------------------------------------
+
+  it('VERI*FACTU settings stay on this install (sealed cert, local counters)', async () => {
+    const s = await prisma.verifactuSettings.create({
+      data: { branchId, installationNumber: `I-${tag}`, nextNumber: 7 },
+    });
+    try {
+      expect(await outbox([s.id])).toHaveLength(0);
+      const r = await sync.push('branch-z', [
+        {
+          tbl: 'verifactu_settings',
+          pk: { id: s.id },
+          pkKey: key(s.id),
+          op: 'U',
+          row: { id: s.id, branchId, installationNumber: 'x', nextNumber: 1 },
+          ts: new Date().toISOString(),
+          hlc: String(BigInt(Date.now()) * 65536n),
+          peer: 'branch-z',
+        },
+      ]);
+      expect(r.conflicts.map((c) => c.error)).toEqual([
+        'unknown table verifactu_settings',
+      ]);
+      const after = await prisma.verifactuSettings.findUniqueOrThrow({
+        where: { id: s.id },
+      });
+      expect(after.nextNumber).toBe(7);
+    } finally {
+      await prisma.verifactuSettings.delete({ where: { id: s.id } });
+    }
+  });
+
+  it('rejects a change whose pkKey or row names another row than pk', async () => {
+    const [a, b] = await Promise.all(
+      ['A', 'B'].map((n) =>
+        prisma.floor.create({ data: { branchId, name: `K${n}-${tag}` } }),
+      ),
+    );
+    const [ca] = await outbox([a.id]);
+    const base: SyncChange = {
+      tbl: 'floors',
+      pk: { id: a.id },
+      pkKey: ca.pkKey,
+      op: 'U',
+      row: { ...ca.row, name: `Hijack-${tag}` },
+      ts: new Date().toISOString(),
+      hlc: String(BigInt(ca.hlc) + 1000n),
+      peer: 'branch-z',
+    };
+    const r = await sync.push('branch-z', [
+      { ...base, pkKey: key(b.id) },
+      {
+        ...base,
+        hlc: String(BigInt(ca.hlc) + 2000n),
+        row: { ...base.row, id: b.id },
+      },
+    ]);
+    expect(r.conflicts.map((c) => c.error).sort()).toEqual([
+      'pkKey does not match pk',
+      'row does not match pk',
+    ]);
+    expect(r.applied).toBe(0);
+    const names = await prisma.floor.findMany({
+      where: { id: { in: [a.id, b.id] } },
+      select: { name: true },
+      orderBy: { name: 'asc' },
+    });
+    expect(names.map((n) => n.name)).toEqual([`KA-${tag}`, `KB-${tag}`]);
+    const [vb] = await prisma.$queryRawUnsafe<{ peer: string }[]>(
+      `SELECT peer FROM sync_versions WHERE tbl = 'floors' AND "pkKey" = $1`,
+      key(b.id),
+    );
+    expect(vb.peer).toBe(deviceId);
+  });
+
+  it('two concurrent pushes of one row: the newer HLC wins on both sides', async () => {
+    const floor = await prisma.floor.create({
+      data: { branchId, name: `C-${tag}` },
+    });
+    const [cap] = await outbox([floor.id]);
+    const at = (bump: bigint, name: string, peer: string): SyncChange => ({
+      tbl: 'floors',
+      pk: { id: floor.id },
+      pkKey: cap.pkKey,
+      op: 'U',
+      row: { ...cap.row, name },
+      ts: new Date().toISOString(),
+      hlc: String(BigInt(cap.hlc) + bump),
+      peer,
+    });
+    const waiting = async (n: number) => {
+      for (let i = 0; i < 200; i++) {
+        const [w] = await prisma.$queryRawUnsafe<{ n: bigint }[]>(
+          `SELECT count(*) AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'
+              AND (query LIKE '%INSERT INTO "floors"%' OR query LIKE '%pg_advisory_xact_lock(hashtext(''sync_row'')%')`,
+        );
+        if (Number(w.n) >= n) return;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      throw new Error(`expected ${n} blocked pushes`);
+    };
+    // Hold the row so both pushes are in flight at the same time.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => (locked = r));
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRawUnsafe(
+          `SELECT 1 FROM floors WHERE id = $1 FOR UPDATE`,
+          floor.id,
+        );
+        locked();
+        await gate;
+      },
+      { timeout: 30_000 },
+    );
+    await isLocked;
+    const newer = sync.push('branch-new', [
+      at(2000n, `New-${tag}`, 'branch-new'),
+    ]);
+    await waiting(1);
+    const older = sync.push('branch-old', [
+      at(1000n, `Old-${tag}`, 'branch-old'),
+    ]);
+    await waiting(2);
+    release();
+    await holder;
+    const [rn, ro] = await Promise.all([newer, older]);
+    expect([rn.applied, rn.conflicts]).toEqual([1, []]);
+    expect([ro.applied, ro.skipped, ro.conflicts]).toEqual([0, 1, []]);
+    const row = await prisma.floor.findUniqueOrThrow({
+      where: { id: floor.id },
+    });
+    expect(row.name).toBe(`New-${tag}`);
+    const [v] = await prisma.$queryRawUnsafe<{ hlc: string; peer: string }[]>(
+      `SELECT hlc::text, peer FROM sync_versions WHERE tbl = 'floors' AND "pkKey" = $1`,
+      cap.pkKey,
+    );
+    expect(v).toEqual({ hlc: at(2000n, '', '').hlc, peer: 'branch-new' });
+  }, 30_000);
+
+  it('an open writer in another database on the cluster does not stall sync', async () => {
+    const url = new URL(process.env.DATABASE_URL!);
+    url.pathname = '/postgres';
+    const other = new PrismaClient({
+      datasources: { db: { url: url.toString() } },
+    });
+    const head = async () =>
+      (
+        await prisma.$queryRawUnsafe<{ h: string; s: string }[]>(
+          `SELECT sync_seq_head()::text AS h, sync_safe_seq()::text AS s`,
+        )
+      )[0];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let held!: () => void;
+    const isHeld = new Promise<void>((r) => (held = r));
+    const tx = other.$transaction(
+      async (t) => {
+        // Same key shape as sync_mark_inflight(), at seq 0 of that database.
+        await t.$queryRawUnsafe(
+          `SELECT pg_advisory_xact_lock_shared(1::bigint << 40)::text`,
+        );
+        held();
+        await gate;
+      },
+      { timeout: 30_000 },
+    );
+    try {
+      await isHeld;
+      // Without the database filter the bound would drop to 0 here. Writers
+      // of other suites in this database may still lower it, never to 0.
+      const now = await head();
+      expect(BigInt(now.h)).toBeGreaterThan(0n);
+      expect(BigInt(now.s)).toBeGreaterThan(0n);
+    } finally {
+      release();
+      await tx;
+      await other.$disconnect();
+    }
+  }, 30_000);
 });

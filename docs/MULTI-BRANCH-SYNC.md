@@ -49,7 +49,7 @@ branch-aware.
 | G8 | **Server log never pruned.** | `sync_changes` on HQ grows without bound. | #81 |
 | G9 | **Schema skew is all-or-nothing.** `ping` compares the newest migration name; any difference stops sync completely. | Branches must all upgrade at the same minute; an offline branch that missed an upgrade cannot sync until updated (acceptable, but the UI must say so and keep queuing). | #82 |
 | G10 | **Device-local tables are synced.** `local_backup_config` (a USB/NAS path on that PC), `device_tokens`, `notifications` (per-branch bell), `integration_logs`, `audit_logs` all replicate. | A branch inherits HQ's backup folder; push tokens fire from the wrong install. | #81 |
-| G11 | **Encrypted secrets don't travel.** `integration_connections` credentials (`integration-hub/secret-box.ts`), `users.twoFactorSecret` and `webhook_endpoints.secret` (`auth/totp.ts` `sealSecret`) are sealed with a key derived from each install's `INTEGRATION_SECRET_KEY`/`JWT_SECRET`. | A synced row can't be decrypted on the other install: 2FA logins and webhook signing break there. | #81 (exclude / strip) |
+| G11 | **Encrypted secrets don't travel.** `integration_connections` credentials (`integration-hub/secret-box.ts`), `users.twoFactorSecret`, `webhook_endpoints.secret` (`auth/totp.ts` `sealSecret`) and the VERI*FACTU certificate in `verifactu_settings` (`verifactu.service.ts`, `VERIFACTU_KEY`) are sealed with a key derived from each install's `INTEGRATION_SECRET_KEY`/`JWT_SECRET`. | A synced row can't be decrypted on the other install: 2FA logins, webhook signing and AEAT submission break there. | #81 (exclude / strip) |
 | G12 | **Device id is self-declared.** `pull?device=` / `push.device` are trusted as sent. | A key holder can claim another device's id to receive its echo or hide its own changes. | #82 |
 | G13 | **Single shared key**, stored in plaintext in `sync_state.apiKey`, no per-branch revocation. | Losing one branch PC means rotating the key on every install. | #82 (per-branch keys) |
 | G14 | **Offline duration** is unbounded but untested; pages are 200/500 rows with no total cap or progress. | A week offline = tens of thousands of rows in one cycle; one bad row blocks nothing but gives no progress signal. | #81 (outbox), #83 (test) |
@@ -118,7 +118,6 @@ its parent's branch.
 | `delivery_zones` (B) | LWW | Pricing input (delivery fee). |
 | `coupons` (B), `promotions` (B), `campaigns` (B), `membership_tiers` (R) | LWW | Discounts are money rules; marketing is central. |
 | `suppliers` (B) | LWW | Central vendor list. |
-| `verifactu_settings` (B) | LWW | Fiscal configuration; the chain itself is local. |
 | `report_schedules` (B), `budgets` (B) | LWW | Finance planning is HQ's. |
 | `staff_pay` →user, `payroll_runs` (B), `payroll_lines` →run | LWW | Payroll is run at HQ. |
 | `documents` (B), `document_files` →document | LWW | Policies/contracts uploaded centrally. File blobs are not synced in v1 (path only). |
@@ -148,6 +147,7 @@ its parent's branch.
 |---|---|
 | `_prisma_migrations`, `sync_state`, `sync_changes` | Bookkeeping of this install. (excluded today) |
 | `verifactu_records` | Append-only hash chain per installation; cannot be merged. (excluded today) |
+| `verifactu_settings` | The certificate is sealed with this install's key (G11), and `nextNumber` / `nextRefundNumber` continue this install's own chain: an HQ copy would break AEAT submission or roll a counter back into duplicate invoice numbers. Each install configures its own VERI*FACTU (#81 audit). |
 | `backups`, `backup_config`, `local_backup_config` | Backups and their target folder belong to the machine. (`local_backup_config` is synced today — G10) |
 | `webhook_deliveries`, `integration_logs` | Delivery attempts made by this install. |
 | `download_stats` | Install telemetry. (excluded today) |
@@ -334,7 +334,18 @@ the table list if answered differently:
   below every open writer's entries. Server pull and client push only read
   `seq <= bound` (bound read in its own statement first), so `nextSeq`,
   `lastPushSeq` and the client's `DELETE … seq <= pushedTo` only move over
-  entries that are already visible.
+  entries that are already visible. `pg_locks` is cluster-wide, so only
+  locks of the current database count; writers in another database on the
+  same Postgres never stall this one.
+- **One apply per row at a time**: before the LWW check, apply recomputes
+  the row key with `sync_pk()` on the wire `pk` (as the sender's trigger
+  did) and rejects a change whose `pkKey` differs (`pkKey does not match
+  pk`), or whose update row has other key values than `pk` (`row does not
+  match pk`), so LWW and tombstones always key the row the DML writes. It
+  then takes a transaction advisory lock on (`sync_row`, table + key), held
+  until commit, so two concurrent pushes of one row are serialised and the
+  older HLC is skipped instead of overwriting the newer one. A deadlock
+  between two such pushes is retried in the next pass.
 - **A PC with a wrong clock pauses, it never drops data**: HLCs come from
   each PC's own clock, so `ping` returns the server's `now` and every client
   cycle (and the settings page's connection test) compares it with this

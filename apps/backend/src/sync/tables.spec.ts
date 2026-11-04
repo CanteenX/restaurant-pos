@@ -104,6 +104,11 @@ describe('sync table classification', () => {
     }
   });
 
+  it('keeps VERI*FACTU settings local: sealed cert and per-install invoice counters (#81 audit)', () => {
+    expect(LOCAL_TABLES.verifactu_settings).toBeDefined();
+    expect(SYNC_TABLES.verifactu_settings).toBeUndefined();
+  });
+
   it('strips the sealed 2FA secret from users', () => {
     expect(SYNC_TABLES.users.strip).toContain('twoFactorSecret');
     expect(captureRowSql()).toContain(

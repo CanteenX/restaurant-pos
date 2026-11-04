@@ -1,4 +1,5 @@
 import {
+  assertRowMatchesPk,
   assertWellFormed,
   clockSkewError,
   compact,
@@ -258,5 +259,54 @@ describe('rejectedChanges', () => {
         error: 'malformed change',
       },
     ]);
+  });
+});
+
+describe('assertRowMatchesPk (#81 audit)', () => {
+  it('accepts a row whose primary key equals pk', () => {
+    expect(() => assertRowMatchesPk(ch(1, 'a', 1), ['id'])).not.toThrow();
+    expect(() => assertRowMatchesPk(ch(1, 'a', 1, 'D'), ['id'])).not.toThrow();
+  });
+
+  it('rejects an update whose row is another row than pk', () => {
+    const c = { ...ch(1, 'a', 1), row: { id: 'b', v: 1 } };
+    expect(() => assertRowMatchesPk(c, ['id'])).toThrow(
+      /row does not match pk/,
+    );
+  });
+
+  it('rejects a pk missing a key column or holding a non-scalar', () => {
+    expect(() =>
+      assertRowMatchesPk({ ...ch(1, 'a', 1, 'D'), pk: {} }, ['id']),
+    ).toThrow(/pk/);
+    expect(() =>
+      assertRowMatchesPk({ ...ch(1, 'a', 1, 'D'), pk: { id: { x: 1 } } }, [
+        'id',
+      ]),
+    ).toThrow(/pk/);
+    expect(() =>
+      assertRowMatchesPk({ ...ch(1, 'a', 1, 'D'), pk: { id: 'a', x: 1 } }, [
+        'id',
+      ]),
+    ).toThrow(/pk/);
+  });
+
+  it('matches permission rows by key instead of the sender id', () => {
+    const c: SyncChange = {
+      ...ch(1, 'k', 1, 'U', 'role_permissions'),
+      pk: { roleId: 'r1', permissionKey: 'orders.create' },
+      row: {
+        roleId: 'r1',
+        permissionId: 'sender-id',
+        permissionKey: 'orders.create',
+      },
+    };
+    expect(() =>
+      assertRowMatchesPk(c, ['roleId', 'permissionId']),
+    ).not.toThrow();
+    const other = { ...c, row: { ...c.row, permissionKey: 'orders.void' } };
+    expect(() => assertRowMatchesPk(other, ['roleId', 'permissionId'])).toThrow(
+      /row does not match pk/,
+    );
   });
 });

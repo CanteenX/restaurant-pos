@@ -73,7 +73,6 @@ export const SYNC_TABLES: Readonly<Record<string, SyncTable>> = {
   campaigns: hq(col()),
   membership_tiers: hq(null),
   suppliers: hq(col()),
-  verifactu_settings: hq(col()),
   report_schedules: hq(col()),
   budgets: hq(col()),
   staff_pay: hq(null),
@@ -145,6 +144,8 @@ export const LOCAL_TABLES: Readonly<Record<string, string>> = {
   sync_cursors: 'pull positions of this server’s clients',
   sync_rejected: 'changes a peer rejected, kept for review on this install',
   verifactu_records: 'append-only hash chain per installation',
+  verifactu_settings:
+    'certificate sealed with this install’s key (G11); invoice counters continue this install’s chain',
   backups: 'backups belong to the machine',
   backup_config: 'backup target of this machine',
   local_backup_config: 'USB/NAS path on this PC (G10)',
