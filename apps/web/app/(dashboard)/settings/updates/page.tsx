@@ -18,8 +18,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useApplyUpdate, useUpdateCheck } from "@/hooks/use-updates";
+import { useApplyUpdate, useUpdateCheck, useUpdateProgress } from "@/hooks/use-updates";
 import { ApiError } from "@/lib/api";
+import { describeProgress, type UpdateProgress } from "@/lib/update-progress";
 
 // After "Update now" the updater sidecar pulls the new images (the app keeps
 // running meanwhile) and then restarts the backend. Each tick asks the
@@ -43,16 +44,14 @@ function pollUntilBackUp(onFailed: VoidFunction, t: (key: TranslationKey, vars?:
         credentials: "include",
       });
       if (res.ok) {
-        const p = (await res.json()) as { state: string; error?: string | null };
-        if (p.state === "error") {
+        const view = describeProgress((await res.json()) as UpdateProgress, t);
+        if (view.kind === "failed" || view.kind === "rolled_back" || view.kind === "rollback_failed") {
           clearInterval(interval);
           onFailed();
-          toast.error(
-            t("settings.updates.failed", { error: p.error ?? t("settings.updates.unknownError") }),
-          );
+          toast.error(view.message);
           return;
         }
-        if (p.state === "done") {
+        if (view.kind === "done") {
           clearInterval(interval);
           toast.success(t("settings.updates.finished"));
           window.location.reload();
@@ -80,6 +79,10 @@ function pollUntilBackUp(onFailed: VoidFunction, t: (key: TranslationKey, vars?:
 export default function UpdatesPage() {
   const { t } = useI18n();
   const { data, isLoading, refetch, isFetching } = useUpdateCheck();
+  // Last thing the updater reported: after a rollback the backend restarted
+  // underneath the page, so show it on load instead of only in a toast.
+  const { data: progress } = useUpdateProgress();
+  const lastRun = progress ? describeProgress(progress, t) : null;
   const applyUpdate = useApplyUpdate();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -120,6 +123,16 @@ export default function UpdatesPage() {
             {isFetching ? t("settings.updates.checking") : t("settings.updates.check")}
           </Button>
         </div>
+
+        {(lastRun?.kind === "rolled_back" || lastRun?.kind === "rollback_failed") && (
+          <p
+            role="alert"
+            data-testid={lastRun.kind === "rolled_back" ? "update-rolled-back" : "update-rollback-failed"}
+            className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+          >
+            {lastRun.message}
+          </p>
+        )}
 
         {isLoading ? (
           <Skeleton className="h-16 w-full" />
