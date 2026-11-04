@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { round3, round4 } from '../../common/money';
+import { round3, round6 } from '../../common/money';
 import { StockService } from './stock.service';
 
 @Injectable()
@@ -79,7 +79,7 @@ export class TransfersService {
         (s, p) => s + p.quantity * p.unitCost,
         0,
       );
-      const unitCost = round4(totalCost / dto.quantity);
+      const unitCost = round6(totalCost / dto.quantity);
 
       // Same-named ingredient at the destination, created on first transfer.
       const dest =
@@ -128,7 +128,7 @@ export class TransfersService {
       // Weighted-average cost over the stock already on hand plus this batch.
       const oldQty = Math.max(0, Number(fresh.currentStock));
       const newQty = round3(oldQty + dto.quantity);
-      const avg = round4(
+      const avg = round6(
         (oldQty * Number(fresh.costPerUnit) + dto.quantity * unitCost) / newQty,
       );
       await tx.ingredient.update({

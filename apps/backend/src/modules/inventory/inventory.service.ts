@@ -95,17 +95,23 @@ export class InventoryService {
   // Every stored quantity is in the base unit, so changing it once anything
   // refers to those quantities would silently rescale stock (5 KG -> 5 G).
   private async assertUnitFree(id: string) {
-    const [moves, recipes, packs, orders] = await Promise.all([
-      this.prisma.stockMovement.count({ where: { ingredientId: id } }),
-      this.prisma.recipeIngredient.count({ where: { ingredientId: id } }),
-      this.prisma.ingredientUnitConversion.count({
-        where: { ingredientId: id },
-      }),
-      this.prisma.purchaseOrderItem.count({ where: { ingredientId: id } }),
-    ]);
-    if (moves + recipes + packs + orders > 0) {
+    const [moves, recipes, packs, orders, requests, quotes] = await Promise.all(
+      [
+        this.prisma.stockMovement.count({ where: { ingredientId: id } }),
+        this.prisma.recipeIngredient.count({ where: { ingredientId: id } }),
+        this.prisma.ingredientUnitConversion.count({
+          where: { ingredientId: id },
+        }),
+        this.prisma.purchaseOrderItem.count({ where: { ingredientId: id } }),
+        this.prisma.purchaseRequestItem.count({ where: { ingredientId: id } }),
+        this.prisma.supplierQuotationItem.count({
+          where: { ingredientId: id },
+        }),
+      ],
+    );
+    if (moves + recipes + packs + orders + requests + quotes > 0) {
       throw new BadRequestException(
-        'Base unit cannot change once the item has stock history, recipes, purchase orders or pack sizes — create a new item instead',
+        'Base unit cannot change once the item has stock history, recipes, purchase documents or pack sizes — create a new item instead',
       );
     }
   }

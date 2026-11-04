@@ -3,7 +3,11 @@
 --    quantity is rewritten or rescaled.
 --  * Cost columns widen from DECIMAL(12,4) to DECIMAL(14,6) so per-gram /
 --    per-ml costs converted from per-kg / per-litre prices are not truncated.
---    Widening precision and scale preserves every existing value exactly.
+--    Widening precision and scale preserves every existing value exactly
+--    (8 integer digits either way). Upgrade note: a scale change rewrites
+--    each affected table (ingredients, stock_batches, goods_receipt_items,
+--    waste_logs, stock_transfers) under an ACCESS EXCLUSIVE lock, so on a
+--    large install those tables are briefly locked while this migration runs.
 --  * New nullable "entered*" columns record what the user typed; NULL means
 --    the base unit (every existing row).
 --  * New per-ingredient pack-size table.
@@ -23,6 +27,9 @@ ADD COLUMN     "enteredUnit" "IngredientUnit";
 
 -- AlterTable
 ALTER TABLE "stock_batches" ALTER COLUMN "unitCost" SET DATA TYPE DECIMAL(14,6);
+
+-- AlterTable
+ALTER TABLE "stock_transfers" ALTER COLUMN "unitCost" SET DATA TYPE DECIMAL(14,6);
 
 -- AlterTable
 ALTER TABLE "waste_logs" ALTER COLUMN "unitCostAtWaste" SET DATA TYPE DECIMAL(14,6);
