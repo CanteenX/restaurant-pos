@@ -19,6 +19,8 @@ import {
   purchaseRequestSchema,
   setRecipeSchema,
   type SetRecipeDto,
+  inventoryBranchQuerySchema,
+  type InventoryBranchQueryDto,
   setUnitConversionsSchema,
   type SetUnitConversionsDto,
   menuItemTrackingSchema,
@@ -193,7 +195,8 @@ export class InventoryController {
   @Get('ingredients/:id/conversions')
   async listConversions(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query(new ZodValidationPipe(inventoryBranchQuerySchema, 'query'))
+    { branchId }: InventoryBranchQueryDto,
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -205,7 +208,8 @@ export class InventoryController {
   @UsePipes(new ZodValidationPipe(setUnitConversionsSchema))
   async setConversions(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query(new ZodValidationPipe(inventoryBranchQuerySchema, 'query'))
+    { branchId }: InventoryBranchQueryDto,
     @Param('id') id: string,
     @Body() body: unknown,
   ) {

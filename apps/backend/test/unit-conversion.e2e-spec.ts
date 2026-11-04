@@ -157,6 +157,61 @@ run('Unit conversion (e2e)', () => {
     expect(await stockOf(rice)).toBe(49.9); // 50.5 - 4 x 0.15
   });
 
+  it('pack-size routes require branchId and never cross tenants', async () => {
+    const rice = await ingredient('rice-tenant', 'KG');
+    await owner
+      .put(inv(`ingredients/${rice}/conversions`))
+      .send({ conversions: [{ unit: 'PACK', factor: 25 }] })
+      .expect(200);
+
+    const oe = `units-other-${tag}@example.com`;
+    const previousSignup = process.env.ALLOW_PUBLIC_SIGNUP;
+    process.env.ALLOW_PUBLIC_SIGNUP = 'true'; // a second restaurant
+    const registered = request(app.getHttpServer())
+      .post('/api/v1/auth/register')
+      .send({
+        ownerName: 'Other',
+        email: oe,
+        password: 'Password123!',
+        restaurantName: `Units Other ${tag}`,
+        branchName: 'Main',
+      });
+    try {
+      await registered.expect(201);
+    } finally {
+      if (previousSignup === undefined) delete process.env.ALLOW_PUBLIC_SIGNUP;
+      else process.env.ALLOW_PUBLIC_SIGNUP = previousSignup;
+    }
+    const other = request.agent(app.getHttpServer());
+    await other
+      .post('/api/v1/auth/login')
+      .send({ email: oe, password: 'Password123!' })
+      .expect(201);
+
+    const path = `/api/v1/inventory/ingredients/${rice}/conversions`;
+    // No branchId: rejected at the boundary, not matched across tenants.
+    await other.get(path).expect(400);
+    await other
+      .put(path)
+      .send({ conversions: [{ unit: 'PACK', factor: 1 }] })
+      .expect(400);
+    await other.get(`${path}?branchId=`).expect(400);
+    // The owner's own branchId belongs to another restaurant: forbidden.
+    await other.get(`${path}${q}`).expect(403);
+    await other
+      .put(`${path}${q}`)
+      .send({ conversions: [{ unit: 'PACK', factor: 1 }] })
+      .expect(403);
+    // Also blocked on the owner's own session without branchId.
+    await owner.get(path).expect(400);
+
+    const mine = await owner.get(inv(`ingredients/${rice}/conversions`));
+    expect(mine.status).toBe(200);
+    expect(mine.body).toEqual([
+      expect.objectContaining({ unit: 'PACK', factor: '25' }),
+    ]);
+  });
+
   it('logs waste and adjustments in a convertible unit', async () => {
     const milk = await ingredient('milk-ml', 'ML');
     await receive([

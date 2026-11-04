@@ -39,6 +39,14 @@ export const ingredientSchema = ingredientFields.extend({
 });
 export type IngredientDto = z.infer<typeof ingredientSchema>;
 
+/** Branch scope for inventory routes; a missing branchId is a 400, never "any branch". */
+export const inventoryBranchQuerySchema = z.object({
+  branchId: z.string().trim().min(1, "branchId is required"),
+});
+export type InventoryBranchQueryDto = z.infer<
+  typeof inventoryBranchQuerySchema
+>;
+
 /** PATCH: only the fields sent are written; omitted fields keep their value. */
 export const ingredientUpdateSchema = ingredientFields.partial();
 export type IngredientUpdateDto = z.infer<typeof ingredientUpdateSchema>;
