@@ -1605,5 +1605,21 @@
   "giftCards.hint.number": "Saisissez le montant sous forme de nombre.",
   "inventory.supplier.good": "Bon",
   "inventory.supplier.atRisk": "À risque",
-  "inventory.supplier.poor": "Médiocre"
+  "inventory.supplier.poor": "Médiocre",
+  "acct.exp.status.pending": "En attente",
+  "acct.exp.status.approved": "Approuvé",
+  "acct.exp.status.rejected": "Refusé",
+  "acct.exp.approvals.title": "En attente d'approbation",
+  "acct.exp.approvals.empty": "Aucune dépense en attente d'approbation.",
+  "acct.exp.approvals.by": "par {name}",
+  "acct.exp.approvals.approve": "Approuver",
+  "acct.exp.approvals.reject": "Refuser",
+  "acct.exp.approvals.approved": "Dépense approuvée",
+  "acct.exp.approvals.rejected": "Dépense refusée",
+  "acct.exp.approvals.pendingTotal": "Total en attente",
+  "acct.exp.threshold.title": "Seuil d'approbation",
+  "acct.exp.threshold.help": "Les dépenses au-dessus de ce montant doivent être approuvées. Laissez vide pour désactiver les approbations.",
+  "acct.exp.threshold.save": "Enregistrer le seuil",
+  "acct.exp.threshold.saved": "Seuil d'approbation enregistré",
+  "acct.exp.threshold.invalid": "Saisissez un nombre supérieur ou égal à 0, ou laissez vide"
 }

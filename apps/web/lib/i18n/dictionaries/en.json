@@ -1605,5 +1605,21 @@
   "giftCards.hint.number": "Enter the amount as a number.",
   "inventory.supplier.good": "Good",
   "inventory.supplier.atRisk": "At risk",
-  "inventory.supplier.poor": "Poor"
+  "inventory.supplier.poor": "Poor",
+  "acct.exp.status.pending": "Pending",
+  "acct.exp.status.approved": "Approved",
+  "acct.exp.status.rejected": "Rejected",
+  "acct.exp.approvals.title": "Awaiting approval",
+  "acct.exp.approvals.empty": "No expenses are waiting for approval.",
+  "acct.exp.approvals.by": "by {name}",
+  "acct.exp.approvals.approve": "Approve",
+  "acct.exp.approvals.reject": "Reject",
+  "acct.exp.approvals.approved": "Expense approved",
+  "acct.exp.approvals.rejected": "Expense rejected",
+  "acct.exp.approvals.pendingTotal": "Pending total",
+  "acct.exp.threshold.title": "Approval threshold",
+  "acct.exp.threshold.help": "Expenses above this amount need approval. Leave blank to turn approvals off.",
+  "acct.exp.threshold.save": "Save threshold",
+  "acct.exp.threshold.saved": "Approval threshold saved",
+  "acct.exp.threshold.invalid": "Enter a number of 0 or more, or leave blank"
 }
