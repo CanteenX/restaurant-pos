@@ -32,8 +32,10 @@ const DEFAULT_TIMEOUT_MS = 8000;
  * Inbound orders use the same signed webhook as the plain providers; this
  * adapter adds the outbound calls that tell the platform what happened.
  */
-const outletField = (o: PlatformCallOptions) =>
-  o.outletId ? { outletId: o.outletId } : {};
+const outletField = (o: PlatformCallOptions) => ({
+  ...(o.branchId ? { branchId: o.branchId } : {}),
+  ...(o.outletId ? { outletId: o.outletId } : {}),
+});
 
 export class PartnerApiProvider implements IntegrationProvider {
   readonly key = 'partner-api';

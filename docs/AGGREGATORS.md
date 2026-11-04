@@ -216,6 +216,9 @@ Canonical `order.created` gains optional fields; nothing monetary is trusted:
   once per platform outlet mapped to the branch, with `outletId` in the body;
   a branch with no outlet on a mapped connection is skipped (on-demand publish
   answers 400). Without an outlet map the call carries no `outletId`.
+  Every menu and availability body also carries our `branchId`, so a partner
+  serving a multi-branch merchant without an outlet map routes per branch
+  (as it does inbound) instead of overwriting one menu with another.
 - On-demand publish: `POST /integration-hub/:provider/menu-sync { branchId }`
   (`settings.manage`) queues only for that connection.
 - Prices sent are the tax-inclusive `price` (and `halfPrice` when the dish has

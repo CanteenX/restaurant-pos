@@ -11,9 +11,14 @@ import type {
   PlatformAvailabilityItem,
 } from '../aggregator-menu';
 
-/** Menu/availability calls: idempotency plus the platform outlet, if mapped. */
+/**
+ * Menu/availability calls: idempotency, our branch (always, so a merchant
+ * without an outlet map can still route per branch) and the platform outlet,
+ * if mapped.
+ */
 export interface PlatformCallOptions {
   idempotencyKey: string;
+  branchId?: string;
   outletId?: string;
 }
 

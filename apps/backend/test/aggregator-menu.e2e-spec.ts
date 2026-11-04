@@ -323,6 +323,51 @@ run('Aggregator menu sync (e2e)', () => {
     }
   });
 
+  it("with two branches and no outlet map, each push carries its own branchId (review #200 round 2)", async () => {
+    const second = await prisma.branch.create({
+      data: { restaurantId, name: `Third ${tag}` },
+    });
+    try {
+      await setActive(true);
+      await flushNow();
+      mock.menuByBranch = {};
+      mock.availabilityByBranch = {};
+      await owner
+        .post(`${H}/${P}/menu-sync`)
+        .send({ branchId: second.id })
+        .expect(201);
+      await owner
+        .post(`${H}/${P}/menu-sync`)
+        .send({ branchId: 'demo-branch' })
+        .expect(201);
+      await setActive(false);
+      await flushNow();
+      const a = mock.menuByBranch['demo-branch'] as {
+        branchId: string;
+        outletId?: string;
+        items: { externalItemId: string }[];
+      };
+      const b = mock.menuByBranch[second.id] as {
+        branchId: string;
+        items: unknown[];
+      };
+      expect(a.branchId).toBe('demo-branch');
+      expect(a.outletId).toBeUndefined();
+      expect(a.items.some((i) => i.externalItemId === EXT)).toBe(true);
+      expect(b.branchId).toBe(second.id);
+      expect(b.items).toEqual([]);
+      expect(mock.availabilityByBranch['demo-branch']).toEqual({
+        [EXT]: false,
+      });
+      expect(mock.availabilityByBranch[second.id]).toBeUndefined();
+    } finally {
+      await prisma.integrationOutbox.deleteMany({
+        where: { connectionId, branchId: second.id },
+      });
+      await prisma.branch.delete({ where: { id: second.id } });
+    }
+  });
+
   it('refuses a menu publish for a branch of another restaurant', async () => {
     await owner
       .post(`${H}/${P}/menu-sync`)

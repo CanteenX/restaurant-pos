@@ -54,11 +54,16 @@ const outletMap = (config: Prisma.JsonValue) =>
   (config as { outlets?: Record<string, string> } | null)?.outlets ??
   undefined;
 
-/** The row id is stable across retries, so the partner can dedupe. */
-const callOptions = (row: IntegrationOutbox, outlet: string | null) =>
-  outlet
-    ? { idempotencyKey: `${row.id}:${outlet}`, outletId: outlet }
-    : { idempotencyKey: row.id };
+/**
+ * The row id is stable across retries, so the partner can dedupe. Our
+ * branchId always rides along so a partner without an outlet map can keep
+ * one branch's menu from overwriting another's (review #200).
+ */
+const callOptions = (row: IntegrationOutbox, outlet: string | null) => ({
+  idempotencyKey: outlet ? `${row.id}:${outlet}` : row.id,
+  ...(row.branchId ? { branchId: row.branchId } : {}),
+  ...(outlet ? { outletId: outlet } : {}),
+});
 
 /**
  * Queues outbound partner calls and delivers them with retry, backoff and a

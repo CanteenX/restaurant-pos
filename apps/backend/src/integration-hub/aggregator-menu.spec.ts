@@ -192,6 +192,27 @@ describe('PartnerApiProvider menu calls against the mock partner', () => {
     expect(mock.menuByOutlet['out-a']).toBeUndefined();
   });
 
+  it('names our branch alongside the outlet, so a merchant without an outlet map can route by branch', async () => {
+    await provider.setItemAvailability(
+      ctx,
+      [{ externalItemId: 'zom-2', available: false }],
+      { idempotencyKey: 'k7', branchId: 'b1' },
+    );
+    expect(mock.availabilityByBranch['b1']).toEqual({ 'zom-2': false });
+    const menu = buildMenu([{ id: 'c1', name: 'Pizza' }], [], undefined);
+    await provider.pushMenu(ctx, menu, {
+      idempotencyKey: 'k8',
+      branchId: 'b2',
+      outletId: 'out-b',
+    });
+    expect(mock.menuByBranch['b2']).toEqual({
+      ...menu,
+      branchId: 'b2',
+      outletId: 'out-b',
+    });
+    expect(mock.menuByBranch['b1']).toBeUndefined();
+  });
+
   it('reports a retryable error when the partner is down', async () => {
     mock.failNext('500');
     await expect(
