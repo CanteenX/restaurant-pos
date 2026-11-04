@@ -1,5 +1,6 @@
 "use client";
 
+import { useI18n } from "@/lib/i18n/context";
 import { useState } from "react";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,7 @@ import { useCreateStaff, useDepartments, useStaffRoles } from "@/hooks/use-staff
 import { ApiError } from "@/lib/api";
 
 export function AddStaffDialog() {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -58,11 +60,11 @@ export function AddStaffDialog() {
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!roleId) {
-      toast.error("Choose a role");
+      toast.error(t("settings.addStaff.chooseRole"));
       return;
     }
     if (branchIds.length === 0) {
-      toast.error("Select at least one branch");
+      toast.error(t("settings.addStaff.selectBranch"));
       return;
     }
     createStaff.mutate(
@@ -77,43 +79,43 @@ export function AddStaffDialog() {
       },
       {
         onSuccess: () => {
-          toast.success(`${name} added`);
+          toast.success(t("settings.addStaff.added", { name }));
           setOpen(false);
           reset();
         },
         onError: (err) =>
-          toast.error(err instanceof ApiError ? err.message : "Could not add staff account"),
+          toast.error(err instanceof ApiError ? err.message : t("settings.addStaff.addFailed")),
       },
     );
   };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button size="sm">Add staff</Button>} />
+      <DialogTrigger render={<Button size="sm">{t("settings.addStaff.trigger")}</Button>} />
       <DialogContent className="sm:max-w-md">
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>New staff account</DialogTitle>
+            <DialogTitle>{t("settings.addStaff.title")}</DialogTitle>
           </DialogHeader>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="s-name">Name</Label>
+            <Label htmlFor="s-name">{t("settings.addStaff.name")}</Label>
             <Input id="s-name" value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-2">
-              <Label htmlFor="s-email">Email</Label>
+              <Label htmlFor="s-email">{t("settings.addStaff.email")}</Label>
               <Input id="s-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="s-phone">Phone</Label>
+              <Label htmlFor="s-phone">{t("settings.addStaff.phone")}</Label>
               <Input id="s-phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
             </div>
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="s-password">Password</Label>
+            <Label htmlFor="s-password">{t("settings.addStaff.password")}</Label>
             <PasswordInput
               id="s-password"
               
@@ -125,10 +127,10 @@ export function AddStaffDialog() {
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label>Role</Label>
+            <Label>{t("settings.addStaff.role")}</Label>
             <Select value={roleId} onValueChange={(v) => setRoleId(v ?? "")}>
               <SelectTrigger>
-                <SelectValue placeholder="Select role" />
+                <SelectValue placeholder={t("settings.addStaff.selectRole")} />
               </SelectTrigger>
               <SelectContent>
                 {roles?.map((role) => (
@@ -142,10 +144,10 @@ export function AddStaffDialog() {
 
           {departments && departments.length > 0 && (
             <div className="flex flex-col gap-2">
-              <Label>Department (optional)</Label>
+              <Label>{t("settings.addStaff.department")}</Label>
               <Select value={departmentId} onValueChange={(v) => setDepartmentId(v ?? "")}>
                 <SelectTrigger>
-                  <SelectValue placeholder="No department" />
+                  <SelectValue placeholder={t("settings.addStaff.noDepartment")} />
                 </SelectTrigger>
                 <SelectContent>
                   {departments.map((d) => (
@@ -159,7 +161,7 @@ export function AddStaffDialog() {
           )}
 
           <div className="flex flex-col gap-2">
-            <Label>Branches</Label>
+            <Label>{t("settings.addStaff.branches")}</Label>
             <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
               {branches.map((b) => (
                 <label key={b.id} className="flex items-center gap-2 text-sm">
@@ -175,7 +177,7 @@ export function AddStaffDialog() {
 
           <DialogFooter>
             <Button type="submit" disabled={createStaff.isPending}>
-              {createStaff.isPending ? "Adding…" : "Add staff"}
+              {createStaff.isPending ? t("settings.addStaff.adding") : t("settings.addStaff.submit")}
             </Button>
           </DialogFooter>
         </form>

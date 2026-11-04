@@ -1,5 +1,6 @@
 "use client";
 
+import { useI18n } from "@/lib/i18n/context";
 import { CheckCircle2, RefreshCw, XCircle } from "lucide-react";
 import { useState } from "react";
 import { StatusNote, useNoteToast } from "@/components/ui/status-note";
@@ -14,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api";
 
 export function PrinterDiagnosticsCard() {
+  const { t } = useI18n();
   const { branchId } = useBranch();
   const { data, isLoading, isFetching, refetch } = usePrinterDiagnostics(branchId);
   const { data: settings } = useSettings(branchId);
@@ -27,8 +29,8 @@ export function PrinterDiagnosticsCard() {
   const [columns, setColumns] = useState<string | null>(null);
   const save = (dto: Parameters<typeof updateBranch.mutate>[0]) =>
     updateBranch.mutate(dto, {
-      onSuccess: () => toast.success("Printer settings saved"),
-      onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not save printer settings"),
+      onSuccess: () => toast.success(t("settings.printerDiag.saved")),
+      onError: (err) => toast.error(err instanceof ApiError ? err.message : t("settings.printerDiag.saveFailed")),
     });
   const openDrawer = useOpenCashDrawer();
 
@@ -36,10 +38,9 @@ export function PrinterDiagnosticsCard() {
     <Card className="flex flex-col gap-4 p-6">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Thermal printer (receipts &amp; kitchen tickets)</h2>
+          <h2 className="text-sm font-semibold text-foreground">{t("settings.printerDiag.title")}</h2>
           <p className="text-sm text-muted-foreground">
-            Native ESC/POS printing, independent of the browser print dialog. The printer must be reachable
-            from the machine running Nventra POS: USB on a Linux host, or a network printer on port 9100.
+            {t("settings.printerDiag.intro")}
           </p>
         </div>
         <Button variant="ghost" size="icon" onClick={() => refetch()} disabled={isFetching}>
@@ -59,24 +60,24 @@ export function PrinterDiagnosticsCard() {
                 <CheckCircle2 className="h-4 w-4 text-success" />
                 <span className="text-foreground">
                   {data.connection === "NETWORK" && data.network
-                    ? `Printer reachable at ${data.network.host}:${data.network.port}`
-                    : "Printer detected"}
+                    ? t("settings.printerDiag.reachable", { host: data.network.host, port: data.network.port })
+                    : t("settings.printerDiag.detected")}
                 </span>
               </>
             ) : (
               <>
                 <XCircle className="h-4 w-4 text-destructive" />
                 <span className="text-foreground">
-                  {data.connection === "NETWORK" ? "Printer not reachable" : "No printer detected"}
+                  {data.connection === "NETWORK" ? t("settings.printerDiag.notReachable") : t("settings.printerDiag.noneDetected")}
                 </span>
               </>
             )}
           </div>
           {data.lpDevices.length > 0 && (
-            <p className="text-xs text-muted-foreground">Kernel device(s): {data.lpDevices.join(", ")}</p>
+            <p className="text-xs text-muted-foreground">{t("settings.printerDiag.kernelDevices", { devices: data.lpDevices.join(", ") })}</p>
           )}
           {data.libusbPrinter && (
-            <p className="text-xs text-muted-foreground">USB device: {data.libusbPrinter.id}</p>
+            <p className="text-xs text-muted-foreground">{t("settings.printerDiag.usbDevice", { id: data.libusbPrinter.id })}</p>
           )}
           {data.notes.map((note) => (
             <p key={note} className="text-xs text-muted-foreground">
@@ -89,8 +90,8 @@ export function PrinterDiagnosticsCard() {
       {branch && (
         <div className="flex flex-col gap-3 rounded-lg border border-border p-3">
           <div className="flex flex-col gap-1.5">
-            <Label>Connection</Label>
-            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Printer connection">
+            <Label>{t("settings.printerDiag.connection")}</Label>
+            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label={t("settings.printerDiag.connectionAria")}>
               {(["USB", "NETWORK"] as const).map((c) => (
                 <Button
                   key={c}
@@ -102,19 +103,19 @@ export function PrinterDiagnosticsCard() {
                   disabled={updateBranch.isPending}
                   onClick={() => save({ printerConnection: c })}
                 >
-                  {c === "USB" ? "USB (on this server)" : "Network (IP address)"}
+                  {c === "USB" ? t("settings.printerDiag.connUsb") : t("settings.printerDiag.connNetwork")}
                 </Button>
               ))}
             </div>
             {branch.printerConnection === "USB" && !branch.printerHost && (
               <p className="text-xs text-muted-foreground">
-                For a network printer, enter its address below and save it, then choose Network.
+                {t("settings.printerDiag.networkHint")}
               </p>
             )}
           </div>
           <div className="grid grid-cols-[1fr_6rem] gap-3">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="printer-host">Printer address</Label>
+              <Label htmlFor="printer-host">{t("settings.printerDiag.address")}</Label>
               <Input
                 id="printer-host"
                 inputMode="url"
@@ -125,7 +126,7 @@ export function PrinterDiagnosticsCard() {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="printer-port">Port</Label>
+              <Label htmlFor="printer-port">{t("settings.printerDiag.port")}</Label>
               <Input
                 id="printer-port"
                 type="number"
@@ -148,21 +149,21 @@ export function PrinterDiagnosticsCard() {
                 if (port !== null) dto.printerPort = Number(port);
                 updateBranch.mutate(dto, {
                   onSuccess: () => {
-                    toast.success("Printer address saved");
+                    toast.success(t("settings.printerDiag.addressSaved"));
                     setHost(null);
                     setPort(null);
                     refetch();
                   },
-                  onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not save the address"),
+                  onError: (err) => toast.error(err instanceof ApiError ? err.message : t("settings.printerDiag.addressSaveFailed")),
                 });
               }}
             >
-              Save address
+              {t("settings.printerDiag.saveAddress")}
             </Button>
           )}
           <div className="flex flex-col gap-1.5">
-            <Label>Paper width</Label>
-            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Paper width">
+            <Label>{t("settings.printerDiag.paperWidth")}</Label>
+            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label={t("settings.printerDiag.paperWidth")}>
               {([58, 80] as const).map((mm) => (
                 <Button
                   key={mm}
@@ -181,7 +182,7 @@ export function PrinterDiagnosticsCard() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="printer-codepage">Character set</Label>
+              <Label htmlFor="printer-codepage">{t("settings.printerDiag.characterSet")}</Label>
               <select
                 id="printer-codepage"
                 className="h-10 rounded-lg border border-border bg-background px-2 text-sm"
@@ -189,14 +190,14 @@ export function PrinterDiagnosticsCard() {
                 disabled={updateBranch.isPending}
                 onChange={(e) => save({ printerCodepage: e.target.value as typeof branch.printerCodepage })}
               >
-                <option value="CP858">CP858 — Spanish/Western + € (recommended)</option>
-                <option value="CP850">CP850 — Western Europe</option>
-                <option value="CP437">CP437 — US / legacy</option>
-                <option value="CP1252">WPC1252 — Windows Latin</option>
+                <option value="CP858">{t("settings.printerDiag.cp858")}</option>
+                <option value="CP850">{t("settings.printerDiag.cp850")}</option>
+                <option value="CP437">{t("settings.printerDiag.cp437")}</option>
+                <option value="CP1252">{t("settings.printerDiag.wpc1252")}</option>
               </select>
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="printer-columns">Columns (blank = {branch.printerPaperWidthMm === 58 ? 32 : 48})</Label>
+              <Label htmlFor="printer-columns">{t("settings.printerDiag.columns", { default: branch.printerPaperWidthMm === 58 ? 32 : 48 })}</Label>
               <Input
                 id="printer-columns"
                 type="number"
@@ -209,7 +210,7 @@ export function PrinterDiagnosticsCard() {
                   if (columns === null) return;
                   const n = columns === "" ? null : Number(columns);
                   if (n !== null && (!Number.isInteger(n) || n < 20 || n > 64)) {
-                    toast.error("Columns must be between 20 and 64");
+                    toast.error(t("settings.printerDiag.columnsRange"));
                   } else if (n !== branch.printerColumns) {
                     save({ printerColumns: n });
                   }
@@ -219,8 +220,7 @@ export function PrinterDiagnosticsCard() {
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Text is sent as native printer text, not an image. Run &ldquo;Send test print&rdquo; after changing these:
-            the ruler line should fill one line exactly and the accents line should read correctly.
+            {t("settings.printerDiag.testHint")}
           </p>
         </div>
       )}
@@ -232,13 +232,13 @@ export function PrinterDiagnosticsCard() {
           disabled={testPrint.isPending}
           onClick={() =>
             testPrint.mutate(undefined, {
-              onSuccess: () => toast.success("Test slip sent"),
+              onSuccess: () => toast.success(t("settings.printerDiag.testSent")),
               onError: (err) =>
-                toast.error(err instanceof ApiError ? err.message : "Could not print a test slip"),
+                toast.error(err instanceof ApiError ? err.message : t("settings.printerDiag.testFailed")),
             })
           }
         >
-          {testPrint.isPending ? "Printing…" : "Send test print"}
+          {testPrint.isPending ? t("settings.printerDiag.printing") : t("settings.printerDiag.sendTest")}
         </Button>
         <Button
           variant="outline"
@@ -247,13 +247,13 @@ export function PrinterDiagnosticsCard() {
           disabled={testKot.isPending}
           onClick={() =>
             testKot.mutate(undefined, {
-              onSuccess: () => toast.success("Sample kitchen ticket sent"),
+              onSuccess: () => toast.success(t("settings.printerDiag.kotSent")),
               onError: (err) =>
-                toast.error(err instanceof ApiError ? err.message : "Could not print the sample kitchen ticket"),
+                toast.error(err instanceof ApiError ? err.message : t("settings.printerDiag.kotFailed")),
             })
           }
         >
-          {testKot.isPending ? "Printing…" : "Test kitchen ticket"}
+          {testKot.isPending ? t("settings.printerDiag.printing") : t("settings.printerDiag.testKot")}
         </Button>
         <Button
           variant="outline"
@@ -262,17 +262,16 @@ export function PrinterDiagnosticsCard() {
           disabled={openDrawer.isPending}
           onClick={() =>
             openDrawer.mutate(branchId, {
-              onSuccess: () => toast.success("Cash drawer pulse sent"),
+              onSuccess: () => toast.success(t("settings.printerDiag.drawerSent")),
               onError: (err) =>
-                toast.error(err instanceof ApiError ? err.message : "Could not open the cash drawer"),
+                toast.error(err instanceof ApiError ? err.message : t("settings.printerDiag.drawerFailed")),
             })
           }
         >
-          Open cash drawer
+          {t("settings.printerDiag.openDrawer")}
         </Button>
         <p className="mt-2 text-xs text-muted-foreground">
-          The drawer must be plugged into the printer&rsquo;s drawer (RJ11) port. Receipts printed via USB for cash
-          payments open it automatically.
+          {t("settings.printerDiag.drawerHint")}
         </p>
       </div>
     </Card>
