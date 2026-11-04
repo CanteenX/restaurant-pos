@@ -89,10 +89,10 @@ export function UserMenu({ user }: { user?: SessionUser }) {
           <DropdownMenuItem
             onClick={() => {
               if (!confirm("Sign out on every device, including this one? Each device will need to sign in again.")) return;
-              revokeAll.mutate(undefined, {
-                onSuccess: () => router.push("/login"),
-                onError: (e) => toast.error(e instanceof ApiError ? e.message : "Could not sign out other devices"),
-              });
+              revokeAll.mutateAsync().then(
+                () => router.push("/login"),
+                (e) => toast.error(e instanceof ApiError ? e.message : "Could not sign out other devices"),
+              );
             }}
           >
             <MonitorX className="h-4 w-4" />

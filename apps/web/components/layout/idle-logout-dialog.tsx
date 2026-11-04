@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,17 +21,23 @@ import { useIdleLogout } from "@/hooks/use-idle-logout";
 export function IdleLogoutDialog() {
   const router = useRouter();
   const logout = useLogout();
-  const signOut = () =>
-    logout.mutate(undefined, {
-      // Even if the request fails (server down), leave the signed-in screens.
-      onSettled: () => router.replace("/login"),
-    });
+  // mutateAsync, not mutate callbacks: clearing the cache on sign-out can
+  // unmount this component first, which drops per-call callbacks. Even if
+  // the request fails (server down), leave the signed-in screens.
+  const signOut = () => {
+    void logout
+      .mutateAsync()
+      .catch(() => undefined)
+      .finally(() => router.replace("/login"));
+  };
   const { state, stay } = useIdleLogout(signOut);
+  // Focus the safe choice: a stray Enter must not sign the user out.
+  const stayRef = useRef<HTMLButtonElement>(null);
   const seconds = state.phase === "warning" ? Math.ceil(state.remainingMs / 1000) : 0;
 
   return (
     <Dialog open={state.phase === "warning"} onOpenChange={(open) => !open && stay()}>
-      <DialogContent className="max-w-sm" showCloseButton={false}>
+      <DialogContent className="max-w-sm" showCloseButton={false} initialFocus={stayRef}>
         <DialogHeader>
           <DialogTitle>Still there?</DialogTitle>
           <DialogDescription>
@@ -42,7 +49,9 @@ export function IdleLogoutDialog() {
           <Button variant="outline" onClick={signOut} disabled={logout.isPending}>
             Sign out now
           </Button>
-          <Button onClick={stay}>Stay signed in</Button>
+          <Button ref={stayRef} onClick={stay}>
+            Stay signed in
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
