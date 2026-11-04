@@ -102,13 +102,26 @@ export function localizePermission(
   return { ...c, pk, row };
 }
 
+/** Largest HLC Postgres can store, minus room for the trigger's `+ 1`. */
+const MAX_HLC = 9_223_372_036_854_775_807n - 1n;
+/**
+ * How far ahead of the receiver's clock an incoming HLC may be. Beyond it a
+ * skewed (or hostile) device would win LWW for that row until real time
+ * caught up, or overflow the next local edit's `hlc + 1` (#81 review).
+ */
+export const MAX_HLC_SKEW_MS = 5 * 60_000;
+
 /** Checks a change from the wire before any SQL touches it. */
-export function assertWellFormed(c: SyncChange): void {
+export function assertWellFormed(c: SyncChange, nowMs = Date.now()): void {
   if (!c || typeof c.tbl !== 'string' || typeof c.pkKey !== 'string')
     throw new Error('malformed change');
   if (c.op !== 'U' && c.op !== 'D') throw new Error('malformed change op');
   if (typeof c.hlc !== 'string' || !/^\d{1,19}$/.test(c.hlc))
     throw new Error('change without a valid hlc');
+  const hlc = BigInt(c.hlc);
+  if (hlc >= MAX_HLC) throw new Error('change hlc out of range');
+  if (hlc > (BigInt(Math.floor(nowMs + MAX_HLC_SKEW_MS)) + 1n) * HLC_SHIFT - 1n)
+    throw new Error('change hlc too far in the future');
   if (typeof c.peer !== 'string' || !c.peer)
     throw new Error('change without a peer');
   if (c.op === 'U' && (!c.row || typeof c.row !== 'object'))

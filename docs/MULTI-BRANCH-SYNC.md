@@ -324,6 +324,19 @@ the table list if answered differently:
   `sync_rejected` table (`side` = `push` / `pull`, the full change and the
   error) in the same transaction. `GET /sync/status` reports the count as
   `rejectedChanges`. Replaying them is an admin action (#82).
+- **Cursors never pass an open writer**: `seq` is assigned at insert, not at
+  commit, so an entry can become visible after a higher one. Each
+  transaction that writes outbox entries first reads the sequence head and
+  holds a shared advisory lock on `2^40 + head` until it ends.
+  `sync_safe_seq()` reads the head, then those locks, and returns a bound
+  below every open writer's entries. Server pull and client push only read
+  `seq <= bound` (bound read in its own statement first), so `nextSeq`,
+  `lastPushSeq` and the client's `DELETE … seq <= pushedTo` only move over
+  entries that are already visible.
+- **Incoming HLCs are bounded**: a change whose HLC is at the bigint limit or
+  more than 5 min (`MAX_HLC_SKEW_MS`) ahead of the receiver's clock is
+  rejected (and dead-lettered). Otherwise one bad device could lock a row
+  everywhere (`hlc + 1` overflow) or win LWW until real time caught up.
 - **Upgrade path**: entries queued before this migration (no HLC, no peer)
   are backfilled by `sync_backfill_legacy()`: HLC from their `ts`, strictly
   increasing per row in outbox order; peer = this device for local entries,
@@ -351,3 +364,8 @@ Known limits, to address in #82:
 - Compaction drops tombstones below the floor, so a device that joins later
   in `merge` mode with its own copy of a deleted row never receives that
   delete and will push the row back.
+- Legacy `role_permissions` / `user_permission_overrides` entries backfilled
+  by `sync_backfill_legacy()` still carry the sender's `permissionId`, not
+  `permissionKey`. They fail on FK elsewhere and are dead-lettered.
+- The trigger reads and upserts `sync_versions` on every captured write;
+  measure this on the order hot path when #82 adds the apply side.

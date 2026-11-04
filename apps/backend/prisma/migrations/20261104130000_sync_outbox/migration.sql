@@ -87,6 +87,43 @@ BEGIN
   RETURN pkv;
 END $$;
 
+-- In-flight writers (#81 review). seq is assigned at INSERT, not at commit,
+-- so a reader can see seq N+1 committed while N's transaction is still open;
+-- a cursor moved to N+1 would skip N for good. Every transaction that writes
+-- outbox entries therefore first reads the sequence head h and holds a shared
+-- transaction advisory lock on key 2^40 + h until it ends; its entries all get
+-- seq > h. sync_safe_seq() reads the head, THEN the held locks, and returns a
+-- bound below every open writer's entries. Read it in its own statement before
+-- the outbox SELECT (whose snapshot must be newer); every entry <= the bound
+-- that will ever commit is then visible. Other advisory locks in this app are
+-- hashtext() int4 keys, far below 2^40.
+CREATE OR REPLACE FUNCTION sync_seq_head() RETURNS bigint
+LANGUAGE sql VOLATILE AS $$
+  SELECT CASE WHEN is_called THEN last_value ELSE last_value - 1 END FROM sync_changes_seq_seq
+$$;
+
+CREATE OR REPLACE FUNCTION sync_mark_inflight() RETURNS void
+LANGUAGE plpgsql VOLATILE AS $$
+BEGIN
+  -- Transaction-local: reset at commit and on ROLLBACK TO SAVEPOINT, as is
+  -- the lock taken inside that savepoint.
+  IF coalesce(current_setting('app.sync_inflight', true), '') = '1' THEN RETURN; END IF;
+  PERFORM pg_advisory_xact_lock_shared((1::bigint << 40) + sync_seq_head());
+  PERFORM set_config('app.sync_inflight', '1', true);
+END $$;
+
+CREATE OR REPLACE FUNCTION sync_safe_seq() RETURNS bigint
+LANGUAGE plpgsql VOLATILE AS $$
+DECLARE hi bigint; lb bigint;
+BEGIN
+  hi := sync_seq_head();
+  SELECT min(((l.classid::bigint << 32) | l.objid::bigint) - (1::bigint << 40)) INTO lb
+    FROM pg_locks l
+   WHERE l.locktype = 'advisory' AND l.objsubid = 1
+     AND ((l.classid::bigint << 32) | l.objid::bigint) >= (1::bigint << 40);
+  RETURN least(hi, lb);
+END $$;
+
 -- Row trigger. HLC = (ms << 16) + counter, advanced per row past the last
 -- known version so a slow or rewound clock can't order an edit before the
 -- one it replaced. A change applied from a peer keeps that peer's HLC.
@@ -129,6 +166,7 @@ BEGIN
     SET hlc = EXCLUDED.hlc, peer = EXCLUDED.peer, deleted = EXCLUDED.deleted,
         "branchId" = EXCLUDED."branchId", ts = EXCLUDED.ts;
   IF origin = '__skip' THEN RETURN NULL; END IF;
+  PERFORM sync_mark_inflight();
   INSERT INTO sync_changes (tbl, pk, "pkKey", op, row, ts, origin, hlc, peer, "branchId", "schemaVersion")
   VALUES (TG_TABLE_NAME, pkv, k,
           CASE WHEN TG_OP = 'DELETE' THEN 'D' ELSE 'U' END,
@@ -172,6 +210,7 @@ CREATE OR REPLACE FUNCTION sync_seed() RETURNS void
 LANGUAGE plpgsql AS $$
 DECLARE r record;
 BEGIN
+  PERFORM sync_mark_inflight();
   FOR r IN
     SELECT c.relname,
            (SELECT array_agg(a.attname::text ORDER BY a.attnum)

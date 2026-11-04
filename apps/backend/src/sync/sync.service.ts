@@ -349,6 +349,19 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     return true;
   }
 
+  /**
+   * Highest outbox seq below every still-open writer (sync_safe_seq in the
+   * migration). Must run as its own statement BEFORE the outbox read, so that
+   * read's snapshot sees every entry up to the bound that will ever commit;
+   * cursors and pruning then never pass an entry not yet visible.
+   */
+  private async safeSeq(): Promise<bigint> {
+    const r = await this.prisma.$queryRawUnsafe<{ s: bigint }[]>(
+      'SELECT sync_safe_seq() AS s',
+    );
+    return BigInt(r[0].s);
+  }
+
   // ---- server side -------------------------------------------------------
 
   async pull(since: bigint, device: string, limit = PULL_PAGE) {
@@ -359,9 +372,11 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       device,
       since,
     );
+    const upTo = await this.safeSeq();
     const rows = await this.prisma.$queryRawUnsafe<ChangeRow[]>(
-      `SELECT ${CHANGE_COLS} FROM sync_changes WHERE seq > $1 ORDER BY sync_changes.seq LIMIT $2`,
+      `SELECT ${CHANGE_COLS} FROM sync_changes WHERE seq > $1 AND seq <= $2 ORDER BY sync_changes.seq LIMIT $3`,
       since,
+      upTo,
       limit,
     );
     const nextSeq = rows.length ? rows[rows.length - 1].seq : since.toString();
@@ -563,10 +578,12 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       }
 
       let pushedTo = s.lastPushSeq;
+      const upTo = await this.safeSeq();
       for (;;) {
         const rows = await this.prisma.$queryRawUnsafe<ChangeRow[]>(
-          `SELECT ${CHANGE_COLS} FROM sync_changes WHERE seq > $1 ORDER BY sync_changes.seq LIMIT $2`,
+          `SELECT ${CHANGE_COLS} FROM sync_changes WHERE seq > $1 AND seq <= $2 ORDER BY sync_changes.seq LIMIT $3`,
           pushedTo,
+          upTo,
           PUSH_PAGE,
         );
         if (!rows.length) break;

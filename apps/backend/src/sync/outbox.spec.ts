@@ -5,6 +5,7 @@ import {
   hlcMs,
   isNewer,
   localizePermission,
+  MAX_HLC_SKEW_MS,
   nextHlc,
   rejectedChanges,
   SyncChange,
@@ -152,6 +153,43 @@ describe('wire validation', () => {
       /row/,
     );
     expect(() => assertWellFormed(ch(1, 'a', 1, 'D'))).not.toThrow();
+  });
+});
+
+describe('assertWellFormed hlc bounds', () => {
+  const now = Date.UTC(2026, 10, 4, 12, 0, 0);
+  const at = (ms: number) => (BigInt(ms) * HLC_SHIFT).toString();
+
+  it('rejects an hlc above the bigint range', () => {
+    for (const hlc of ['9223372036854775807', '9999999999999999999'])
+      expect(() => assertWellFormed({ ...ch(1, 'a', 1), hlc }, now)).toThrow(
+        /hlc/,
+      );
+  });
+
+  it('rejects an hlc more than the allowed skew ahead of this clock', () => {
+    expect(() =>
+      assertWellFormed(
+        { ...ch(1, 'a', 1), hlc: at(now + MAX_HLC_SKEW_MS + 1) },
+        now,
+      ),
+    ).toThrow(/future/);
+    expect(() =>
+      assertWellFormed(
+        { ...ch(1, 'a', 1), hlc: at(now + MAX_HLC_SKEW_MS) },
+        now,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertWellFormed(
+        { ...ch(1, 'a', 1), hlc: (BigInt(at(now)) + 65_535n).toString() },
+        now,
+      ),
+    ).not.toThrow();
+    // Seed entries carry hlc 0.
+    expect(() =>
+      assertWellFormed({ ...ch(1, 'a', 1), hlc: '0' }, now),
+    ).not.toThrow();
   });
 });
 

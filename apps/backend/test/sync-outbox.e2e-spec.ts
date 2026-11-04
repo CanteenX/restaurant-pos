@@ -484,4 +484,76 @@ describe('Sync outbox (e2e)', () => {
       2,
     );
   });
+  // A writer holds a lower seq while a later writer commits first (#81 review).
+  const holdOpenWrite = async (name: string) => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let wrote!: (id: string) => void;
+    const written = new Promise<string>((r) => (wrote = r));
+    const done = prisma.$transaction(
+      async (tx) => {
+        const f = await tx.floor.create({ data: { branchId, name } });
+        wrote(f.id);
+        await gate;
+      },
+      { timeout: 30_000 },
+    );
+    return { id: await written, commit: async () => (release(), done) };
+  };
+
+  it('an entry whose transaction commits after a higher seq is still pushed', async () => {
+    await prisma.$executeRawUnsafe('DELETE FROM sync_changes');
+    await prisma.$executeRawUnsafe(
+      `UPDATE sync_state SET "lastPushSeq" = 0, "lastPullSeq" = 0 WHERE id = 1`,
+    );
+    const slow = await holdOpenWrite(`Slow-${tag}`);
+    const fast = await prisma.floor.create({
+      data: { branchId, name: `Fast-${tag}` },
+    });
+    const received: string[] = [];
+    await fakeHq({ changes: [], nextSeq: '0' }, (changes) => {
+      for (const c of changes) received.push(String(c.pk.id));
+      return Promise.resolve({
+        applied: changes.length,
+        skipped: 0,
+        conflicts: [],
+      });
+    });
+    try {
+      await sync.runOnce();
+      // Nothing past the open writer's entry is pushed or pruned yet.
+      expect(received).not.toContain(fast.id);
+      expect(await outbox([fast.id])).toHaveLength(1);
+    } finally {
+      await slow.commit();
+    }
+    await sync.runOnce();
+    expect(received.filter((id) => id === slow.id)).toHaveLength(1);
+    expect(received.filter((id) => id === fast.id)).toHaveLength(1);
+    expect(await outbox([slow.id, fast.id])).toHaveLength(0);
+  });
+
+  it('server pull never moves a cursor past a still-open write', async () => {
+    await prisma.$executeRawUnsafe('DELETE FROM sync_changes');
+    const head = await prisma.$queryRawUnsafe<{ s: string }[]>(
+      `SELECT coalesce(max(seq), 0)::text AS s FROM sync_changes`,
+    );
+    const since = BigInt(head[0].s);
+    const slow = await holdOpenWrite(`SlowPull-${tag}`);
+    const fast = await prisma.floor.create({
+      data: { branchId, name: `FastPull-${tag}` },
+    });
+    const seen: string[] = [];
+    let page: Awaited<ReturnType<SyncService['pull']>>;
+    try {
+      page = await sync.pull(since, `other-${tag}`);
+      for (const c of page.changes) seen.push(String(c.pk.id));
+    } finally {
+      await slow.commit();
+    }
+    page = await sync.pull(BigInt(page.nextSeq), `other-${tag}`);
+    for (const c of page.changes) seen.push(String(c.pk.id));
+    expect(seen).toContain(slow.id);
+    expect(seen).toContain(fast.id);
+  });
 });
