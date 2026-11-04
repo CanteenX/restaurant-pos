@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import type { TranslationKey } from "@/lib/i18n/context";
 
 export interface DashboardSummary {
   todayRevenue: number;
@@ -59,14 +60,14 @@ export function useDashboardTrends(branchId: string | null, days = 14) {
 export const TOP_WIDGETS = ["kpis", "attention", "charts"] as const;
 export const CARD_WIDGETS = ["tables", "kitchen", "recent", "channels"] as const;
 export const TREND_DAY_OPTIONS = [7, 14, 30, 90] as const;
-export const WIDGET_LABELS: Record<string, string> = {
-  kpis: "Key figures",
-  attention: "Needs attention",
-  charts: "Revenue and waste charts",
-  tables: "Tables",
-  kitchen: "Kitchen queue",
-  recent: "Recent transactions",
-  channels: "Order channels",
+export const WIDGET_LABEL_KEYS: Record<string, TranslationKey> = {
+  kpis: "dashboard.widget.kpis",
+  attention: "dashboard.widget.attention",
+  charts: "dashboard.widget.charts",
+  tables: "dashboard.widget.tables",
+  kitchen: "dashboard.widget.kitchen",
+  recent: "dashboard.widget.recent",
+  channels: "dashboard.widget.channels",
 };
 
 export interface DashboardPrefs {
