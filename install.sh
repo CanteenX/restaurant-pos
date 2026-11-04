@@ -76,11 +76,16 @@ fi
 
 # The updater container holds the Docker socket, and UPDATER_TOKEN is all that
 # stands between it and every other container on the network. A .env from
-# before this was generated has none (compose then refuses to start) or the
-# value compose used to default to, which is public: give it a random one.
+# before this was generated has none (compose then refuses to start) or one of
+# the values compose used to default to (upstream's, then the rebrand's), which
+# are public: give it a random one.
 # A token you set yourself is left alone.
 current_token="$(sed -n 's/^UPDATER_TOKEN=//p' .env | tail -n 1 | tr -d "\"'\r")"
-if [ -z "$current_token" ] || [ "$current_token" = "nodedr-restaurant-updater" ]; then
+case "$current_token" in
+  ""|nodedr-restaurant-updater|nventra-pos-updater) replace_token=1 ;;
+  *) replace_token=0 ;;
+esac
+if [ "$replace_token" = 1 ]; then
   tmp_env="$(mktemp .env.XXXXXX)"
   grep -v '^UPDATER_TOKEN=' .env > "$tmp_env" || true
   # If the file had no trailing newline, keep its last line intact.

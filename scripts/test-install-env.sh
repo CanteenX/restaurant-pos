@@ -11,7 +11,10 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+# Values compose used to default to: upstream's, then the rebrand's. Both are
+# public, so install.sh must replace either.
 PUBLIC_DEFAULT="nodedr-restaurant-updater"
+REBRAND_DEFAULT="nventra-pos-updater"
 pass=0
 ok() { echo "ok   $*"; pass=$((pass + 1)); }
 fail() { echo "FAIL $*" >&2; exit 1; }
@@ -34,7 +37,7 @@ token_of() { sed -n 's/^UPDATER_TOKEN=//p' "$1/.env"; }
 expect_random_token() { # expect_random_token <dir> <label>
   local t; t="$(token_of "$1")"
   [ "$(grep -c '^UPDATER_TOKEN=' "$1/.env")" = 1 ] || fail "$2: expected exactly one UPDATER_TOKEN line"
-  [ "$t" != "$PUBLIC_DEFAULT" ] || fail "$2: token is the public default"
+  [ "$t" != "$PUBLIC_DEFAULT" ] && [ "$t" != "$REBRAND_DEFAULT" ] || fail "$2: token is a public default"
   [[ "$t" =~ ^[0-9a-f]{64}$ ]] || fail "$2: token '$t' is not 64 random hex chars"
 }
 case_dir() { mkdir -p "$WORK/$1"; echo "$WORK/$1"; }
@@ -82,14 +85,14 @@ run_install "$d"
 cmp -s "$d/.env" "$d/before" || fail "owner-set UPDATER_TOKEN was changed"
 ok "owner-set UPDATER_TOKEN is kept"
 
-for v in "$PUBLIC_DEFAULT" "\"$PUBLIC_DEFAULT\"" ""; do
+for v in "$PUBLIC_DEFAULT" "\"$PUBLIC_DEFAULT\"" "$REBRAND_DEFAULT" "'$REBRAND_DEFAULT'" ""; do
   d="$(case_dir "public-$RANDOM")"
   printf 'JWT_SECRET=x\nUPDATER_TOKEN=%s\nHOST_PORT=1995\n' "$v" >"$d/.env"
   run_install "$d"
   expect_random_token "$d" "UPDATER_TOKEN=$v"
   grep -qx 'JWT_SECRET=x' "$d/.env" && grep -qx 'HOST_PORT=1995' "$d/.env" || fail "other lines changed"
 done
-ok "UPDATER_TOKEN set to the public default (or empty) is replaced"
+ok "UPDATER_TOKEN set to a public default (upstream or rebrand, or empty) is replaced"
 
 # 5. No openssl: the fallback still writes a random token.
 d="$(case_dir no-openssl)"
@@ -98,7 +101,10 @@ expect_random_token "$d" "no openssl"
 ok "without openssl the token is still random"
 
 # 6. Compose files: no published default anywhere; root compose requires it.
-if grep -n "$PUBLIC_DEFAULT" "$ROOT/docker-compose.yml" "$ROOT/casaos/docker-compose.yml" "$ROOT/packaging/deb/docker-compose.yml"; then
+# (nventra-pos-updater is also the updater's image/container name, so only
+# UPDATER_TOKEN lines are checked for it.)
+if grep -n "$PUBLIC_DEFAULT" "$ROOT/docker-compose.yml" "$ROOT/casaos/docker-compose.yml" "$ROOT/packaging/deb/docker-compose.yml" \
+  || grep -nE "UPDATER_TOKEN.*$REBRAND_DEFAULT" "$ROOT/docker-compose.yml" "$ROOT/casaos/docker-compose.yml" "$ROOT/packaging/deb/docker-compose.yml"; then
   fail "a compose file still ships the public UPDATER_TOKEN"
 fi
 [ "$(grep -c 'UPDATER_TOKEN: "${UPDATER_TOKEN:?' "$ROOT/docker-compose.yml")" = 2 ] \

@@ -18,6 +18,10 @@ e2e/tests/branding.spec.ts                           # asserts old name is absen
 apps/backend/src/modules/orders/escpos-receipt.spec.ts  # asserts old name is absent
 apps/backend/test/auth-cookie.e2e-spec.ts            # asserts legacy cookie is rejected
 apps/web/app/(dashboard)/settings/page.tsx           # AGPL upstream attribution block
+install.sh                                           # replaces the old public UPDATER_TOKEN default (#145)
+updater/server.js                                    # refuses the old public UPDATER_TOKEN default (#145)
+updater/server.test.js                               # asserts the old public token is refused (#145)
+scripts/test-install-env.sh                          # asserts install.sh replaces the old public token (#145)
 
 # --- Deferred: needs a human decision (see PR for #6) ---
 .github/workflows/            # agents may not edit workflows; release infra disabled

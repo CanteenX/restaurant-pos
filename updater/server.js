@@ -152,9 +152,14 @@ async function run(version) {
 
 // This container holds the Docker socket (host root), so a guessable token
 // would hand that to anything on the internal network. Values that have been
-// published (the old compose default, the CasaOS placeholder) or are too short
+// published (the old compose defaults, upstream's and the rebrand's, and the
+// CasaOS placeholder) or are too short
 // to be a secret disable the updater instead.
-const PUBLISHED_TOKENS = new Set(['nodedr-restaurant-updater', 'change-me-to-a-long-random-updater-token']);
+const PUBLISHED_TOKENS = new Set([
+  'nodedr-restaurant-updater',
+  'nventra-pos-updater',
+  'change-me-to-a-long-random-updater-token',
+]);
 const MIN_TOKEN_LENGTH = 24;
 function tokenProblem(token) {
   if (!token) return 'UPDATER_TOKEN is not set';

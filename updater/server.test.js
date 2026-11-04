@@ -38,8 +38,10 @@ test('redact removes the token from error text', () => {
 test('tokenProblem refuses missing, short and published tokens', () => {
   assert.match(tokenProblem(''), /not set/);
   assert.match(tokenProblem('short-token'), /at least 24/);
-  // The value the compose files used to default to, and the CasaOS placeholder.
+  // The values the compose files used to default to (upstream, then the
+  // rebrand), and the CasaOS placeholder.
   assert.match(tokenProblem('nodedr-restaurant-updater'), /published/);
+  assert.match(tokenProblem('nventra-pos-updater'), /published/);
   assert.match(tokenProblem('change-me-to-a-long-random-updater-token'), /published/);
   assert.equal(tokenProblem('3f9a1c0e8b7d6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f'), null);
 });
@@ -72,10 +74,19 @@ test('updater with the published token answers 503 even to that token', async ()
   });
 });
 
+test('updater with the rebrand default token answers 503 even to that token', async () => {
+  await withServer('nventra-pos-updater', async (get) => {
+    const res = await get('/v1/status', 'nventra-pos-updater');
+    assert.equal(res.status, 503);
+    assert.match((await res.json()).error, /published/);
+  });
+});
+
 test('updater with a random token rejects other bearers and accepts its own', async () => {
   const token = require('node:crypto').randomBytes(32).toString('hex');
   await withServer(token, async (get) => {
     assert.equal((await get('/v1/status', 'nodedr-restaurant-updater')).status, 401);
+    assert.equal((await get('/v1/status', 'nventra-pos-updater')).status, 401);
     assert.equal((await get('/v1/status', '')).status, 401);
     assert.equal((await get('/v1/status', token)).status, 200);
   });
