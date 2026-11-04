@@ -12,6 +12,7 @@ import { useBranch } from "@/hooks/use-branch";
 import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { DayHourHeatmap, TableHeatmap } from "@/components/reports/heatmap";
+import { PriceVarianceTable } from "@/components/reports/price-variance-table";
 import { SchedulesPanel } from "@/components/reports/schedules-panel";
 
 interface CatalogEntry {
@@ -115,6 +116,9 @@ export default function ReportsPage() {
               <>
               {key === "peak-hours" && <DayHourHeatmap rows={data.rows} />}
               {key === "table-turnover" && <TableHeatmap rows={data.rows} />}
+              {key === "price-variance" ? (
+                <PriceVarianceTable columns={data.columns} rows={data.rows} csvHref={canExport ? `/api/v1/reports/${key}/export?${qs}&format=csv` : null} />
+              ) : (
               <table className="w-full text-sm">
                 <thead className="text-left text-xs text-muted-foreground">
                   <tr>
@@ -133,6 +137,7 @@ export default function ReportsPage() {
                   ))}
                 </tbody>
               </table>
+              )}
               </>
             ) : (
               <p className="py-8 text-center text-sm text-muted-foreground">No data for this period.</p>
