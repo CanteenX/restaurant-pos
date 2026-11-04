@@ -143,6 +143,28 @@ export const purchaseReturnReasonSchema = z.enum([
 ]);
 export type PurchaseReturnReason = z.infer<typeof purchaseReturnReasonSchema>;
 
+/**
+ * Query for every branch-scoped inventory route. `branchId` is required: a
+ * missing one would otherwise drop the tenant filter from the queries.
+ */
+export const inventoryBranchQuerySchema = z.object({
+  branchId: z.string().trim().min(1, "branchId is required"),
+});
+export type InventoryBranchQueryDto = z.infer<
+  typeof inventoryBranchQuerySchema
+>;
+
+export const purchaseReturnListQuerySchema = inventoryBranchQuerySchema.extend({
+  supplierId: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => v || undefined),
+});
+export type PurchaseReturnListQueryDto = z.infer<
+  typeof purchaseReturnListQuerySchema
+>;
+
 export const purchaseReturnItemSchema = z.object({
   goodsReceiptItemId: z.string().min(1),
   quantity: z.coerce.number().positive().max(1_000_000),
@@ -214,7 +236,9 @@ export const supplierQuotationItemSchema = z.object({
   quantityQuoted: z.coerce.number().positive(),
   unitPrice: z.coerce.number().nonnegative(),
 });
-export type SupplierQuotationItemDto = z.infer<typeof supplierQuotationItemSchema>;
+export type SupplierQuotationItemDto = z.infer<
+  typeof supplierQuotationItemSchema
+>;
 
 export const supplierQuotationSchema = z.object({
   supplierId: z.string(),

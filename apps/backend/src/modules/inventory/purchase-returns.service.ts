@@ -197,6 +197,13 @@ export class PurchaseReturnsService {
       }
       requested.set(item, round3((requested.get(item) ?? 0) + line.quantity));
     }
+    for (const [item, quantity] of requested) {
+      if (quantity <= 0) {
+        throw new BadRequestException(
+          `Return quantity for item ${item.id} rounds to 0 — use at least 0.001`,
+        );
+      }
+    }
     return requested;
   }
 

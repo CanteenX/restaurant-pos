@@ -107,6 +107,18 @@ describe('PurchaseReturnsService.createReturn', () => {
     expect(prisma.purchaseReturn.create).not.toHaveBeenCalled();
   });
 
+  it('rejects a line whose quantity rounds to zero', async () => {
+    const { svc, prisma } = setup();
+    await expect(
+      svc.createReturn(
+        'br1',
+        'u1',
+        dto([{ goodsReceiptItemId: 'gi1', quantity: 0.0004 }]),
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.purchaseReturn.create).not.toHaveBeenCalled();
+  });
+
   it('cannot return more than was received', async () => {
     const { prisma, svc } = setup();
     await expect(

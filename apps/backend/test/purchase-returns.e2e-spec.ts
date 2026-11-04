@@ -285,6 +285,21 @@ describe('Purchase returns (e2e)', () => {
         items: [{ goodsReceiptItemId: grnItemId, quantity: 1 }],
       })
       .expect(403);
+    // Leaving out branchId must never drop the tenant filter.
+    await other.get(PR).expect(400);
+    await other.get(`${PR}/${firstReturnId}`).expect(400);
+    await other
+      .post(PR)
+      .send({
+        goodsReceiptId: grnId,
+        reason: 'DAMAGED',
+        items: [{ goodsReceiptItemId: grnItemId, quantity: 1 }],
+      })
+      .expect(400);
+    await other
+      .get(`/api/v1/inventory/suppliers/${supplierId}/balance`)
+      .expect(400);
+    await other.get(`${PR}?branchId=`).expect(400);
     // From its own branch, A's records simply do not exist.
     await other
       .post(`${PR}${oq}`)
