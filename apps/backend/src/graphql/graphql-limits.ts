@@ -94,11 +94,16 @@ export function costLimitRule(
         if (s.kind === Kind.FIELD) {
           if (s.name.value === '__typename') continue;
           const def = fieldDef(parent, s.name.value);
-          total += 1;
-          if (s.selectionSet && def) {
-            const page = pageSize(def, s, vars);
-            total += page * cost(s.selectionSet, getNamedType(def.type), seen);
-          }
+          const below =
+            s.selectionSet && def
+              ? cost(s.selectionSet, getNamedType(def.type), seen)
+              : 0;
+          // A paged field is charged at least one per row it asks for, so a
+          // free sub-selection (`__typename`) or a leaf list cannot hide it.
+          total +=
+            def && isPaged(def)
+              ? 1 + pageSize(def, s, vars) * Math.max(1, below)
+              : 1 + below;
         } else if (s.kind === Kind.INLINE_FRAGMENT) {
           total += cost(s.selectionSet, narrow(schema, s, parent), seen);
         } else {
@@ -139,8 +144,14 @@ function narrow(
 
 const PAGE_ARGS = ['first', 'last', 'limit', 'take'];
 
+function isPaged(def: GraphQLField<unknown, unknown>): boolean {
+  return def.args.some((a) => PAGE_ARGS.includes(a.name));
+}
+
 // Uses the argument values the resolver will actually receive: literal,
-// variable (or its default) and, when omitted, the schema's default.
+// variable (or its default) and, when omitted, the schema's default. An
+// explicit null is charged like an omitted argument (the schema default),
+// matching clampPage() in the resolvers.
 function pageSize(
   def: GraphQLField<unknown, unknown>,
   node: FieldNode,
@@ -153,12 +164,35 @@ function pageSize(
     return 1; // invalid arguments: execute() rejects the field anyway
   }
   for (const name of PAGE_ARGS) {
-    const v = Number(args[name]);
-    if (args[name] != null && Number.isFinite(v)) {
+    const argDef = def.args.find((a) => a.name === name);
+    if (!argDef) continue;
+    const value = args[name] ?? argDef.defaultValue;
+    const v = Number(value);
+    if (value != null && Number.isFinite(v)) {
       return v > 1 ? Math.ceil(v) : 1;
     }
   }
   return 1;
+}
+
+export interface PageLimits {
+  /** Page size used when the argument is omitted or null. */
+  defaultSize: number;
+  /** Server-side maximum; larger requests are cut to this. */
+  max: number;
+}
+
+/**
+ * The page size a list resolver must use: omitted or null means the
+ * default (never "no limit"), and every value is clamped to [1, max].
+ */
+export function clampPage(
+  value: number | null | undefined,
+  limits: PageLimits,
+): number {
+  const raw = value ?? limits.defaultSize;
+  const n = Number.isFinite(raw) ? Math.floor(raw) : limits.defaultSize;
+  return Math.min(limits.max, Math.max(1, n));
 }
 
 function viaFragment(

@@ -5,7 +5,8 @@ import type { GraphqlContext } from './graphql-context';
 // docs/graphql-api.md for why. Resolvers for menu/orders/customers are added
 // by the follow-up issues; each must call requireAccess() and filter by
 // ctx.restaurantId / scopedBranchId(ctx, …). Every list field needs a page
-// argument (first/last/limit/take) that the resolver clamps server-side: the
+// argument (first/last/limit/take) that the resolver runs through
+// clampPage() (null/omitted = default page, capped at a server maximum): the
 // cost rule charges a list without one as a single item.
 export const typeDefs = /* GraphQL */ `
   enum PrincipalKind {

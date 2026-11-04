@@ -56,16 +56,25 @@ curl -X POST https://your-domain/api/v1/graphql \
 | Parser tokens | 5000 | `GRAPHQL_MAX_TOKENS` |
 | Query text | 50 000 chars | — |
 
-**Cost:** each field costs 1. A field with a `first`, `last`, `limit` or
-`take` argument multiplies the cost of its sub-selection by that value. The
-value is the one the resolver will receive: a literal, a variable, the
-variable's default in the operation, or the schema's default when the
-argument is left out. Aliases and repeated fragment spreads are charged every
-time they appear. `__typename` is free.
+**Cost:** a field without a page argument costs 1 plus the cost of its
+sub-selection. A field with a `first`, `last`, `limit` or `take` argument
+(a paged list) costs `1 + page × max(1, cost of its sub-selection)`, so it is
+always charged at least one per row it asks for: a leaf list such as
+`tags(first: 100)` costs 101, and `items(first: 100) { __typename }` costs
+101 too. The page value is the one the resolver will use: a literal, a
+variable, the variable's default in the operation, or the schema's default
+when the argument is left out or passed as `null` (with no schema default,
+1). Aliases and repeated fragment spreads are charged every time they appear.
+`__typename` itself costs nothing, but it does not make a page free.
 
 **For resolver authors:** every list field must take a page argument (a
-list without one is charged as a single item), and the resolver must clamp
-it to a server-side maximum. The cost rule is one cap, not the only one.
+list without one is charged as a single item), and the resolver must pass
+it through `clampPage(value, { defaultSize, max })` from
+`apps/backend/src/graphql/graphql-limits.ts`. That treats an omitted or
+`null` argument as the default page, never as "no limit", and clamps every
+value to a server-side maximum. Keep `defaultSize` equal to the schema's
+argument default so the cost rule charges what the resolver loads. The cost
+rule is one cap, not the only one.
 
 A request over a limit, or with invalid syntax or fields, gets `400` with
 `{"errors": [...]}` and nothing runs. Over the rate limit you get `429` with
