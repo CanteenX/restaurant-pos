@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type { WasteLogDto } from '@nventra/types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StockService } from './stock.service';
+import { converterFor, withConversions } from './unit-conversion.service';
 
 @Injectable()
 export class WasteService {
@@ -29,15 +30,17 @@ export class WasteService {
   async logWaste(branchId: string, userId: string, dto: WasteLogDto) {
     const ingredient = await this.prisma.ingredient.findFirst({
       where: { id: dto.ingredientId, branchId },
+      include: withConversions,
     });
     if (!ingredient) throw new NotFoundException('Ingredient not found');
+    const quantity = converterFor(ingredient).quantity(dto.quantity, dto.unit);
 
     return this.prisma.$transaction(async (tx) => {
       const portions = await this.stockService.consumeStock(
         tx,
         branchId,
         dto.ingredientId,
-        dto.quantity,
+        quantity,
         { type: 'WASTE', note: dto.notes, userId, allowNegative: false },
       );
 

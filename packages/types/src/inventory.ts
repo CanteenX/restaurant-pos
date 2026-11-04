@@ -39,12 +39,47 @@ export const ingredientSchema = ingredientFields.extend({
 });
 export type IngredientDto = z.infer<typeof ingredientSchema>;
 
+/** Branch scope for inventory routes; a missing branchId is a 400, never "any branch". */
+export const inventoryBranchQuerySchema = z.object({
+  branchId: z.string().trim().min(1, "branchId is required"),
+});
+export type InventoryBranchQueryDto = z.infer<
+  typeof inventoryBranchQuerySchema
+>;
+
 /** PATCH: only the fields sent are written; omitted fields keep their value. */
 export const ingredientUpdateSchema = ingredientFields.partial();
 export type IngredientUpdateDto = z.infer<typeof ingredientUpdateSchema>;
 
+// Quantities on recipe lines, goods receipts, waste and adjustments may be
+// entered in any unit convertible to the ingredient's base unit (KG<->G,
+// L<->ML, DOZEN<->PIECE, or a pack size set on the ingredient). Omitted =
+// the base unit. The server converts and stores base units only.
+const enteredUnit = ingredientUnitSchema.optional();
+
+export const unitConversionSchema = z.object({
+  unit: ingredientUnitSchema,
+  // How many base units one `unit` holds, e.g. PACK = 25 (KG). Stored as
+  // DECIMAL(14,6), so at most 6 decimal places: anything finer would be
+  // rounded (or zeroed) silently and skew every later conversion.
+  factor: z.coerce
+    .number()
+    .min(0.000001)
+    .max(1_000_000)
+    .refine((v) => Number(v.toFixed(6)) === v, {
+      message: "Use at most 6 decimal places",
+    }),
+});
+export type UnitConversionDto = z.infer<typeof unitConversionSchema>;
+
+export const setUnitConversionsSchema = z.object({
+  conversions: z.array(unitConversionSchema).max(8),
+});
+export type SetUnitConversionsDto = z.infer<typeof setUnitConversionsSchema>;
+
 export const stockAdjustmentSchema = z.object({
   quantity: z.coerce.number(), // signed: positive to add, negative to remove
+  unit: enteredUnit,
   note: z.string().min(1),
 });
 export type StockAdjustmentDto = z.infer<typeof stockAdjustmentSchema>;
@@ -52,6 +87,7 @@ export type StockAdjustmentDto = z.infer<typeof stockAdjustmentSchema>;
 export const recipeLineSchema = z.object({
   ingredientId: z.string(),
   quantity: z.coerce.number().positive(),
+  unit: enteredUnit,
 });
 export type RecipeLineDto = z.infer<typeof recipeLineSchema>;
 
@@ -116,6 +152,7 @@ export const goodsReceiptItemSchema = z.object({
   ingredientId: z.string(),
   purchaseOrderItemId: z.string().optional(),
   quantity: z.coerce.number().positive(),
+  unit: enteredUnit, // unit of both quantity and unitCost
   unitCost: z.coerce.number().nonnegative(),
   batchNumber: z.string().optional(), // auto-generated server-side if omitted
   expiryDate: z.coerce.date().optional(),
@@ -192,6 +229,7 @@ export type WasteReason = z.infer<typeof wasteReasonSchema>;
 export const wasteLogSchema = z.object({
   ingredientId: z.string(),
   quantity: z.coerce.number().positive(),
+  unit: enteredUnit,
   reason: wasteReasonSchema,
   notes: z.string().optional(),
 });

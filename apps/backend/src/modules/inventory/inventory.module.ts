@@ -17,6 +17,7 @@ import { SupplierInvoicesService } from './supplier-invoices.service';
 import { SupplierQuotationsService } from './supplier-quotations.service';
 import { TransfersController } from './transfers.controller';
 import { TransfersService } from './transfers.service';
+import { UnitConversionService } from './unit-conversion.service';
 import { WasteService } from './waste.service';
 
 @Module({
@@ -32,6 +33,7 @@ import { WasteService } from './waste.service';
     GoodsReceiptsService,
     WasteService,
     StockService,
+    UnitConversionService,
     StockAlertsService,
     TransfersService,
     PurchaseRequestsService,

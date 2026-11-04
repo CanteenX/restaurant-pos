@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AccountingService } from '../accounting/accounting.service';
 import type { CsvValue } from './csv';
 import { computePriceVariance } from './price-variance';
+import { inventoryValuationRows } from './inventory-valuation';
 
 export interface ReportResult {
   key: string;
@@ -719,25 +720,16 @@ export class ReportsService {
           },
           orderBy: { name: 'asc' },
         });
-        const rows = ing.map((i) => [
-          i.name,
-          i.unit,
-          Number(i.currentStock),
-          round2(Number(i.costPerUnit)),
-          round2(Number(i.currentStock) * Number(i.costPerUnit)),
-        ]);
         return out(
           ['Ingredient', 'Unit', 'In stock', 'Cost per unit', 'Value'],
-          [
-            ...rows,
-            [
-              'Total',
-              '',
-              '',
-              '',
-              round2(rows.reduce((s, r) => s + Number(r[4]), 0)),
-            ],
-          ],
+          inventoryValuationRows(
+            ing.map((i) => ({
+              name: i.name,
+              unit: i.unit,
+              currentStock: Number(i.currentStock),
+              costPerUnit: Number(i.costPerUnit),
+            })),
+          ),
         );
       }
     }

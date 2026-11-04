@@ -688,10 +688,12 @@ enum SpiceLevel {
 // ---------------------------------------------------------------------------
 // Inventory & Store Management (Phase 4)
 //
-// Deliberate scope-cut vs. the full spec ("units + unit conversion"): each
-// Ingredient has ONE base unit, used consistently for its recipe quantities,
-// PO/GRN quantities, and stock. A real conversion engine (buy a 25kg bag,
-// stock/recipe in kg) is deferred — see ROADMAP.md — rather than guessed at.
+// Each Ingredient has ONE base unit, used consistently for its recipe
+// quantities, PO/GRN quantities, and stock. Other units are accepted at the
+// API boundary and converted into the base unit before anything is stored
+// (src/modules/inventory/unit-conversion.ts): a fixed global table (KG/G,
+// L/ML, DOZEN/PIECE) plus per-ingredient pack sizes (IngredientUnitConversion,
+// e.g. 1 PACK = 25 KG). The unit the user typed is kept alongside for display.
 //
 // Costing is weighted-average (WAC), recomputed on every GRN receipt:
 // newCost = ((oldStock * oldCost) + (receivedQty * receivedCost)) /
@@ -735,7 +737,7 @@ model Ingredient {
   // Cached from the StockMovement ledger — see note above on why these are
   // safe (transactional read-then-set, never `increment`).
   currentStock Decimal @default(0) @db.Decimal(12, 3)
-  costPerUnit  Decimal @default(0) @db.Decimal(12, 4) // weighted-average cost
+  costPerUnit  Decimal @default(0) @db.Decimal(14, 6) // weighted-average cost per base unit
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -752,6 +754,7 @@ model Ingredient {
 
   purchaseRequestItems   PurchaseRequestItem[]
   supplierQuotationItems SupplierQuotationItem[]
+  unitConversions        IngredientUnitConversion[]
 
   @@unique([branchId, name])
   @@index([branchId])
@@ -766,13 +769,32 @@ model RecipeIngredient {
   ingredientId String
   ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
 
-  quantity  Decimal  @db.Decimal(12, 3) // in ingredient.unit
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  quantity        Decimal         @db.Decimal(12, 3) // in ingredient.unit (base)
+  // What the user typed, when not the base unit (display only; null = base).
+  enteredUnit     IngredientUnit?
+  enteredQuantity Decimal?        @db.Decimal(12, 3)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
 
   @@unique([menuItemId, ingredientId])
   @@index([menuItemId])
   @@map("recipe_ingredients")
+}
+
+// Per-ingredient pack size: 1 `unit` = `factor` of the ingredient's base unit.
+// Only for units the global table cannot convert (PACK, BOX, or a
+// cross-dimension size such as grams of a counted item).
+model IngredientUnitConversion {
+  id           String         @id @default(cuid())
+  ingredientId String
+  ingredient   Ingredient     @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  unit         IngredientUnit
+  factor       Decimal        @db.Decimal(14, 6)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@unique([ingredientId, unit])
+  @@map("ingredient_unit_conversions")
 }
 
 model Supplier {
@@ -895,11 +917,15 @@ model GoodsReceiptItem {
   purchaseOrderItemId String?
   purchaseOrderItem   PurchaseOrderItem? @relation(fields: [purchaseOrderItemId], references: [id], onDelete: SetNull)
 
-  quantity    Decimal   @db.Decimal(12, 3)
-  unitCost    Decimal   @db.Decimal(12, 4)
-  batchNumber String
-  expiryDate  DateTime?
-  createdAt   DateTime  @default(now())
+  quantity        Decimal         @db.Decimal(12, 3) // base unit
+  unitCost        Decimal         @db.Decimal(14, 6) // per base unit
+  // As written on the supplier's paperwork, when not the base unit.
+  enteredUnit     IngredientUnit?
+  enteredQuantity Decimal?        @db.Decimal(12, 3)
+  enteredUnitCost Decimal?        @db.Decimal(14, 6)
+  batchNumber     String
+  expiryDate      DateTime?
+  createdAt       DateTime        @default(now())
 
   stockBatch  StockBatch?
   returnItems PurchaseReturnItem[]
@@ -1077,7 +1103,7 @@ model StockBatch {
   batchNumber       String
   quantityReceived  Decimal   @db.Decimal(12, 3)
   quantityRemaining Decimal   @db.Decimal(12, 3)
-  unitCost          Decimal   @db.Decimal(12, 4)
+  unitCost          Decimal   @db.Decimal(14, 6)
   expiryDate        DateTime?
   receivedAt        DateTime  @default(now())
 
@@ -1216,7 +1242,7 @@ model WasteLog {
 
   quantity        Decimal     @db.Decimal(12, 3)
   reason          WasteReason
-  unitCostAtWaste Decimal     @db.Decimal(12, 4)
+  unitCostAtWaste Decimal     @db.Decimal(14, 6)
   notes           String?
 
   createdById String
@@ -2443,7 +2469,7 @@ model StockTransfer {
   ingredientName String
   unit           String
   quantity       Decimal  @db.Decimal(12, 3)
-  unitCost       Decimal  @db.Decimal(12, 4)
+  unitCost       Decimal  @db.Decimal(14, 6)
   note           String?
   createdById    String
   createdAt      DateTime @default(now())

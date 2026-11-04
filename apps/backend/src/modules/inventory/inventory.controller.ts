@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UsePipes,
 } from '@nestjs/common';
@@ -17,6 +18,11 @@ import {
   purchaseOrderSchema,
   purchaseRequestSchema,
   setRecipeSchema,
+  type SetRecipeDto,
+  inventoryBranchQuerySchema,
+  type InventoryBranchQueryDto,
+  setUnitConversionsSchema,
+  type SetUnitConversionsDto,
   menuItemTrackingSchema,
   type MenuItemTrackingDto,
   stockAdjustmentSchema,
@@ -46,6 +52,7 @@ import { parseInvoiceText, MAX_INVOICE_TEXT } from './invoice-text';
 import { z } from 'zod';
 import { SupplierInvoicesService } from './supplier-invoices.service';
 import { SupplierQuotationsService } from './supplier-quotations.service';
+import { UnitConversionService } from './unit-conversion.service';
 import { WasteService } from './waste.service';
 
 const parseInvoiceTextSchema = z.object({
@@ -66,6 +73,7 @@ export class InventoryController {
     private readonly supplierQuotationsService: SupplierQuotationsService,
     private readonly supplierInvoicesService: SupplierInvoicesService,
     private readonly branchAccess: BranchAccessService,
+    private readonly unitConversions: UnitConversionService,
   ) {}
 
   // --- Ingredients ------------------------------------------------------------
@@ -181,6 +189,35 @@ export class InventoryController {
     return this.stockService.listBatches(branchId, id);
   }
 
+  // Pack sizes: "1 PACK = 25 KG". Global units (KG/G, L/ML, DOZEN/PIECE)
+  // always convert and are not listed here.
+  @Auth('inventory.manage')
+  @Get('ingredients/:id/conversions')
+  async listConversions(
+    @CurrentUser() user: SessionUser,
+    @Query(new ZodValidationPipe(inventoryBranchQuerySchema, 'query'))
+    { branchId }: InventoryBranchQueryDto,
+    @Param('id') id: string,
+  ) {
+    await this.branchAccess.assertAccess(user.restaurantId, branchId);
+    return this.unitConversions.list(branchId, id);
+  }
+
+  @Auth('inventory.manage')
+  @Put('ingredients/:id/conversions')
+  @UsePipes(new ZodValidationPipe(setUnitConversionsSchema))
+  async setConversions(
+    @CurrentUser() user: SessionUser,
+    @Query(new ZodValidationPipe(inventoryBranchQuerySchema, 'query'))
+    { branchId }: InventoryBranchQueryDto,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    await this.branchAccess.assertAccess(user.restaurantId, branchId);
+    const { conversions } = body as SetUnitConversionsDto;
+    return this.unitConversions.replace(branchId, id, conversions, user.id);
+  }
+
   // --- Recipe costing -----------------------------------------------------------
 
   @Auth('inventory.manage')
@@ -204,9 +241,7 @@ export class InventoryController {
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
-    const { lines } = body as {
-      lines: { ingredientId: string; quantity: number }[];
-    };
+    const { lines } = body as SetRecipeDto;
     return this.inventoryService.setRecipe(branchId, id, lines);
   }
 
