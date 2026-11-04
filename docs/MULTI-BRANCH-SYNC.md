@@ -300,7 +300,9 @@ the table list if answered differently:
   for this install's connections) and the new `sync_versions` /
   `sync_cursors` are Local; `stock_batches` is LWW with `quantityRemaining`
   Derived, because FIFO consumption updates it in place; `purchase_returns` /
-  `purchase_return_items` (#63) are Branch-owned LWW like goods receipts.
+  `purchase_return_items` (#63) are Branch-owned LWW like goods receipts, and
+  `ingredient_unit_conversions` (#69 pack sizes) is Branch-owned LWW via its
+  ingredient.
 - **Capture SQL is generated** from that file at every boot
   (`capture-sql.ts`: `sync_is_synced_table`, `sync_branch_of`,
   `sync_capture_row`), then `sync_install_triggers()` adds the row trigger

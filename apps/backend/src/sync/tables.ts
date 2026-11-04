@@ -100,6 +100,8 @@ export const SYNC_TABLES: Readonly<Record<string, SyncTable>> = {
   gift_cards: br(col(), 'lww', { derived: ['balance'] }),
   gift_card_redemptions: br(via('gift_cards', 'giftCardId'), 'append'),
   ingredients: br(col(), 'lww', { derived: ['currentStock'] }),
+  // Pack sizes (#69) belong to their branch's ingredient.
+  ingredient_unit_conversions: br(via('ingredients', 'ingredientId')),
   stock_movements: br(col(), 'append'),
   // FIFO consumption updates quantityRemaining in place, so the batch row is
   // LWW and the remaining quantity is recomputed from stock_movements.
