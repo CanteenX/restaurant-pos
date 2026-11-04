@@ -63,6 +63,9 @@ export class AggregatorMock {
   readonly calls: RecordedCall[] = [];
   menu: unknown = null;
   availability: Record<string, boolean> = {};
+  /** Per platform outlet, for calls that name one (`outletId` in the body). */
+  menuByOutlet: Record<string, unknown> = {};
+  availabilityByOutlet: Record<string, Record<string, boolean>> = {};
   private readonly statuses = new Map<string, string[]>();
   private readonly idempotent = new Map<
     string,
@@ -234,16 +237,22 @@ export class AggregatorMock {
     }
     if (path === '/v1/items/availability' && method === 'POST') {
       if (!Array.isArray(b.items)) return done(400, { error: 'invalid_items' });
+      const outlet = typeof b.outletId === 'string' ? b.outletId : null;
       for (const i of b.items as {
         externalItemId: string;
         available: boolean;
       }[]) {
         this.availability[i.externalItemId] = !!i.available;
+        if (outlet) {
+          (this.availabilityByOutlet[outlet] ??= {})[i.externalItemId] =
+            !!i.available;
+        }
       }
       return done(200, { ok: true });
     }
     if (path === '/v1/menu' && method === 'PUT') {
       this.menu = body;
+      if (typeof b.outletId === 'string') this.menuByOutlet[b.outletId] = body;
       return done(200, { ok: true, itemIds: {} });
     }
     return send(404, { error: 'not_found' });

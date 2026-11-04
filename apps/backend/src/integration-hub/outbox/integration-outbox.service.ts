@@ -3,11 +3,13 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import type { IntegrationOutbox, Prisma } from '@prisma/client';
 import { NotificationsService } from '../../notifications/notifications.service';
 import {
-  availabilityDedupeKey,
+  availabilityKeyPrefix,
   buildMenu,
   ITEM_AVAILABILITY_KIND,
   MENU_PUSH_KIND,
-  menuPushDedupeKey,
+  menuPushKeyPrefix,
+  outletsForBranch,
+  queuedKey,
   toPlatformAvailability,
   type ItemMap,
 } from '../aggregator-menu';
@@ -47,6 +49,16 @@ interface OrderStatusPayload {
   reason?: string;
   at: string;
 }
+
+const outletMap = (config: Prisma.JsonValue) =>
+  (config as { outlets?: Record<string, string> } | null)?.outlets ??
+  undefined;
+
+/** The row id is stable across retries, so the partner can dedupe. */
+const callOptions = (row: IntegrationOutbox, outlet: string | null) =>
+  outlet
+    ? { idempotencyKey: `${row.id}:${outlet}`, outletId: outlet }
+    : { idempotencyKey: row.id };
 
 /**
  * Queues outbound partner calls and delivers them with retry, backoff and a
@@ -117,11 +129,15 @@ export class IntegrationOutboxService {
     return res.count;
   }
 
-  /** Connections of the branch's restaurant that can take `cap` calls. */
+  /**
+   * Connections of the branch's restaurant that can take `cap` calls and have
+   * a platform outlet for this branch (or no outlet map at all).
+   */
   private async menuConnections(
     tx: Prisma.TransactionClient,
     branchId: string,
     cap: 'itemAvailability' | 'menuSync',
+    connectionId?: string,
   ) {
     const keys = listProviders()
       .filter((p) => supports(p, cap))
@@ -132,14 +148,59 @@ export class IntegrationOutboxService {
       select: { restaurantId: true },
     });
     if (!branch) return [];
-    return tx.integrationConnection.findMany({
+    const conns = await tx.integrationConnection.findMany({
       where: {
         restaurantId: branch.restaurantId,
         provider: { in: keys },
         enabled: true,
+        ...(connectionId ? { id: connectionId } : {}),
       },
-      select: { id: true },
+      select: { id: true, config: true },
     });
+    return conns.filter(
+      (c) => outletsForBranch(outletMap(c.config), branchId).length > 0,
+    );
+  }
+
+  /**
+   * Queues one call per connection unless an unattempted PENDING row for the
+   * same thing exists. Delivery reads live state, so that row will carry this
+   * edit too. Touching the row takes its lock: a claim racing with this
+   * transaction waits for it to commit, so it never sends pre-edit state.
+   */
+  private async enqueueCoalesced(
+    tx: Prisma.TransactionClient,
+    conns: { id: string }[],
+    kind: string,
+    prefix: string,
+    branchId: string,
+    payload: Prisma.InputJsonValue,
+  ): Promise<number> {
+    let count = 0;
+    for (const c of conns) {
+      const pending = await tx.integrationOutbox.updateMany({
+        where: {
+          connectionId: c.id,
+          kind,
+          status: 'PENDING',
+          attempts: 0,
+          dedupeKey: { startsWith: prefix },
+        },
+        data: { nextAttemptAt: new Date() },
+      });
+      if (pending.count > 0) continue;
+      await tx.integrationOutbox.create({
+        data: {
+          connectionId: c.id,
+          kind,
+          dedupeKey: queuedKey(prefix),
+          branchId,
+          payload,
+        },
+      });
+      count += 1;
+    }
+    return count;
   }
 
   /**
@@ -154,40 +215,44 @@ export class IntegrationOutboxService {
   ): Promise<number> {
     if (changes.length === 0) return 0;
     const conns = await this.menuConnections(tx, branchId, 'itemAvailability');
+    if (conns.length === 0) return 0;
     let count = 0;
-    for (const ch of changes) {
-      const res = await tx.integrationOutbox.createMany({
-        data: conns.map((c) => ({
-          connectionId: c.id,
-          kind: ITEM_AVAILABILITY_KIND,
-          dedupeKey: availabilityDedupeKey(ch.menuItemId, ch.available),
-          branchId,
-          payload: { menuItemId: ch.menuItemId },
-        })),
-        skipDuplicates: true,
-      });
-      count += res.count;
+    for (const id of new Set(changes.map((ch) => ch.menuItemId))) {
+      count += await this.enqueueCoalesced(
+        tx,
+        conns,
+        ITEM_AVAILABILITY_KIND,
+        availabilityKeyPrefix(id),
+        branchId,
+        { menuItemId: id },
+      );
     }
     return count;
   }
 
-  /** Queues a full menu publish (at most one per branch per minute). */
+  /**
+   * Queues a full menu publish for the branch: to every menu-capable
+   * connection, or only `connectionId` (the on-demand settings action).
+   */
   async enqueueMenuPush(
     tx: Prisma.TransactionClient,
     branchId: string,
+    connectionId?: string,
   ): Promise<number> {
-    const conns = await this.menuConnections(tx, branchId, 'menuSync');
-    const res = await tx.integrationOutbox.createMany({
-      data: conns.map((c) => ({
-        connectionId: c.id,
-        kind: MENU_PUSH_KIND,
-        dedupeKey: menuPushDedupeKey(branchId),
-        branchId,
-        payload: { branchId },
-      })),
-      skipDuplicates: true,
-    });
-    return res.count;
+    const conns = await this.menuConnections(
+      tx,
+      branchId,
+      'menuSync',
+      connectionId,
+    );
+    return this.enqueueCoalesced(
+      tx,
+      conns,
+      MENU_PUSH_KIND,
+      menuPushKeyPrefix(branchId),
+      branchId,
+      { branchId },
+    );
   }
 
   @Cron(CronExpression.EVERY_10_SECONDS)
@@ -291,11 +356,15 @@ export class IntegrationOutboxService {
     };
     const itemMap =
       (conn.config as { itemMap?: ItemMap } | null)?.itemMap ?? undefined;
+    // Resolved at send time, so a fixed outlet map applies to queued rows.
+    const outlets = row.branchId
+      ? outletsForBranch(outletMap(conn.config), row.branchId)
+      : [null];
     if (row.kind === ITEM_AVAILABILITY_KIND) {
-      return this.deliverAvailability(provider, ctx, row, itemMap);
+      return this.deliverAvailability(provider, ctx, row, itemMap, outlets);
     }
     if (row.kind === MENU_PUSH_KIND) {
-      return this.deliverMenu(provider, ctx, row, itemMap);
+      return this.deliverMenu(provider, ctx, row, itemMap, outlets);
     }
     if (
       !provider.updateOrderStatus ||
@@ -319,6 +388,7 @@ export class IntegrationOutboxService {
     ctx: ProviderContext,
     row: IntegrationOutbox,
     itemMap: ItemMap | undefined,
+    outlets: (string | null)[],
   ) {
     if (
       !provider.setItemAvailability ||
@@ -332,14 +402,13 @@ export class IntegrationOutboxService {
       select: { isActive: true },
     });
     if (!item) return; // deleted since; nothing to tell the platform
-    await provider.setItemAvailability(
-      ctx,
-      toPlatformAvailability(
-        [{ menuItemId, available: item.isActive }],
-        itemMap,
-      ),
-      { idempotencyKey: row.id },
+    const items = toPlatformAvailability(
+      [{ menuItemId, available: item.isActive }],
+      itemMap,
     );
+    for (const outlet of outlets) {
+      await provider.setItemAvailability(ctx, items, callOptions(row, outlet));
+    }
   }
 
   private async deliverMenu(
@@ -347,6 +416,7 @@ export class IntegrationOutboxService {
     ctx: ProviderContext,
     row: IntegrationOutbox,
     itemMap: ItemMap | undefined,
+    outlets: (string | null)[],
   ) {
     if (!provider.pushMenu || !supports(provider, 'menuSync')) {
       throw new OutboundError('This integration cannot publish a menu', false);
@@ -368,9 +438,10 @@ export class IntegrationOutboxService {
         },
       }),
     ]);
-    await provider.pushMenu(ctx, buildMenu(categories, items, itemMap), {
-      idempotencyKey: row.id,
-    });
+    const menu = buildMenu(categories, items, itemMap);
+    for (const outlet of outlets) {
+      await provider.pushMenu(ctx, menu, callOptions(row, outlet));
+    }
   }
 
   private describe(row: IntegrationOutbox) {

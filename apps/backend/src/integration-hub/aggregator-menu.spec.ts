@@ -2,10 +2,12 @@
 // and the partner calls against the in-process mock partner.
 import { AggregatorMock } from '../../test/mocks/aggregator-mock';
 import {
-  availabilityDedupeKey,
+  availabilityKeyPrefix,
   buildMenu,
   externalItemId,
-  menuPushDedupeKey,
+  menuPushKeyPrefix,
+  outletsForBranch,
+  queuedKey,
   toPlatformAvailability,
   touchesMenu,
 } from './aggregator-menu';
@@ -22,23 +24,38 @@ describe('item ids and dedupe keys', () => {
     expect(externalItemId(undefined, 'b')).toBe('b');
   });
 
-  it('collapses repeats within a minute but not across states or minutes', () => {
-    const t = new Date('2026-11-04T10:00:10Z');
-    const same = new Date('2026-11-04T10:00:50Z');
-    const later = new Date('2026-11-04T10:01:05Z');
-    expect(availabilityDedupeKey('a', false, t)).toBe(
-      availabilityDedupeKey('a', false, same),
+  it('gives every queued call a fresh key under a per-item / per-branch prefix', () => {
+    // Coalescing happens only against a still-pending row (outbox service);
+    // a delivered row must never swallow a later edit (review #200 items 1-2).
+    const a = availabilityKeyPrefix('item1');
+    expect(a).toBe('item.availability:item1:');
+    expect(menuPushKeyPrefix('br1')).toBe('menu.push:br1:');
+    const k1 = queuedKey(a);
+    const k2 = queuedKey(a);
+    expect(k1.startsWith(a)).toBe(true);
+    expect(k1).not.toBe(k2);
+    // One id is never a prefix match for another.
+    expect(queuedKey(availabilityKeyPrefix('item10')).startsWith(a)).toBe(
+      false,
     );
-    expect(availabilityDedupeKey('a', false, t)).not.toBe(
-      availabilityDedupeKey('a', true, t),
-    );
-    expect(availabilityDedupeKey('a', false, t)).not.toBe(
-      availabilityDedupeKey('a', false, later),
-    );
-    expect(menuPushDedupeKey('br', t)).toBe(menuPushDedupeKey('br', same));
-    expect(menuPushDedupeKey('br', t)).not.toBe(menuPushDedupeKey('br', later));
+  });
+});
+
+describe('outletsForBranch', () => {
+  it('sends without an outlet when the connection has no outlet map', () => {
+    expect(outletsForBranch(undefined, 'b1')).toEqual([null]);
+    expect(outletsForBranch({}, 'b1')).toEqual([null]);
   });
 
+  it("returns only this branch's platform outlets", () => {
+    const map = { 'out-a': 'b1', 'out-b': 'b2', 'out-c': 'b1' };
+    expect(outletsForBranch(map, 'b1')).toEqual(['out-a', 'out-c']);
+    expect(outletsForBranch(map, 'b2')).toEqual(['out-b']);
+  });
+
+  it('skips a branch that has no outlet on a mapped connection', () => {
+    expect(outletsForBranch({ 'out-a': 'b1' }, 'b2')).toEqual([]);
+  });
   it('keeps only the last change per item', () => {
     expect(
       toPlatformAvailability(
@@ -73,6 +90,7 @@ describe('buildMenu', () => {
           description: null,
           categoryId: 'c1',
           price: '249.00',
+          halfPrice: '149.00',
           taxRatePercent: '5.00',
           isVeg: true,
           isActive: false,
@@ -97,6 +115,7 @@ describe('buildMenu', () => {
         description: null,
         categoryId: 'c1',
         price: 249,
+        halfPrice: 149,
         taxRatePercent: 5,
         isVeg: true,
         available: false,
@@ -155,6 +174,22 @@ describe('PartnerApiProvider menu calls against the mock partner', () => {
     await provider.pushMenu(ctx, menu, { idempotencyKey: 'k3' });
     expect(mock.menu).toEqual(menu);
     expect(mock.calls.at(-1)!.method).toBe('PUT');
+  });
+
+  it('names the platform outlet when one is given', async () => {
+    await provider.setItemAvailability(
+      ctx,
+      [{ externalItemId: 'zom-1', available: false }],
+      { idempotencyKey: 'k5', outletId: 'out-a' },
+    );
+    expect(mock.availabilityByOutlet['out-a']).toEqual({ 'zom-1': false });
+    const menu = buildMenu([{ id: 'c1', name: 'Pizza' }], [], undefined);
+    await provider.pushMenu(ctx, menu, {
+      idempotencyKey: 'k6',
+      outletId: 'out-b',
+    });
+    expect(mock.menuByOutlet['out-b']).toEqual({ ...menu, outletId: 'out-b' });
+    expect(mock.menuByOutlet['out-a']).toBeUndefined();
   });
 
   it('reports a retryable error when the partner is down', async () => {

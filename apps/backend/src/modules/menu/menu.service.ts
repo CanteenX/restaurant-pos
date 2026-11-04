@@ -8,6 +8,7 @@ import type {
   MenuItemDto,
   ModifierGroupDto,
 } from '@nventra/types';
+import type { Prisma } from '@prisma/client';
 import { AuditService } from '../../audit/audit.service';
 import { IntegrationOutboxService } from '../../integration-hub/outbox/integration-outbox.service';
 import { touchesMenu } from '../../integration-hub/aggregator-menu';
@@ -32,7 +33,9 @@ export class MenuService {
   }
 
   createCategory(branchId: string, dto: MenuCategoryDto) {
-    return this.prisma.menuCategory.create({ data: { ...dto, branchId } });
+    return this.withMenuPush(branchId, (tx) =>
+      tx.menuCategory.create({ data: { ...dto, branchId } }),
+    );
   }
 
   async updateCategory(
@@ -41,13 +44,33 @@ export class MenuService {
     dto: Partial<MenuCategoryDto>,
   ) {
     await this.assertCategoryInBranch(branchId, id);
-    return this.prisma.menuCategory.update({ where: { id }, data: dto });
+    return this.withMenuPush(branchId, (tx) =>
+      tx.menuCategory.update({ where: { id }, data: dto }),
+    );
   }
 
   async deleteCategory(branchId: string, id: string) {
     await this.assertCategoryInBranch(branchId, id);
-    await this.prisma.menuCategory.delete({ where: { id } });
+    await this.withMenuPush(branchId, (tx) =>
+      tx.menuCategory.delete({ where: { id } }),
+    );
     return { ok: true };
+  }
+
+  /**
+   * Runs a menu write and queues a menu publish to connected delivery
+   * platforms (#59) in the same transaction, so a rolled-back edit never
+   * reaches them.
+   */
+  private withMenuPush<T>(
+    branchId: string,
+    write: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return this.prisma.$transaction(async (tx) => {
+      const out = await write(tx);
+      await this.outbox.enqueueMenuPush(tx, branchId);
+      return out;
+    });
   }
 
   private async assertCategoryInBranch(branchId: string, id: string) {
@@ -101,19 +124,21 @@ export class MenuService {
   async createItem(branchId: string, dto: MenuItemDto) {
     const { modifierGroupIds, ...rest } = dto;
     await this.assertModifierGroupsInBranch(branchId, modifierGroupIds);
-    return this.prisma.menuItem.create({
-      data: {
-        ...rest,
-        branchId,
-        modifierGroups: {
-          create: modifierGroupIds.map((modifierGroupId, index) => ({
-            modifierGroupId,
-            sortOrder: index,
-          })),
+    return this.withMenuPush(branchId, (tx) =>
+      tx.menuItem.create({
+        data: {
+          ...rest,
+          branchId,
+          modifierGroups: {
+            create: modifierGroupIds.map((modifierGroupId, index) => ({
+              modifierGroupId,
+              sortOrder: index,
+            })),
+          },
         },
-      },
-      include: { modifierGroups: { include: { modifierGroup: true } } },
-    });
+        include: { modifierGroups: { include: { modifierGroup: true } } },
+      }),
+    );
   }
 
   async updateItem(
@@ -188,12 +213,7 @@ export class MenuService {
   async bulkPriceChange(
     branchId: string,
     userId: string,
-    input: {
-      percent: number;
-      categoryId?: string;
-      roundToWhole: boolean;
-      preview: boolean;
-    },
+    input: { percent: number; categoryId?: string; roundToWhole: boolean; preview: boolean },
   ) {
     const { percent, categoryId, roundToWhole, preview } = input;
     const items = await this.prisma.menuItem.findMany({
@@ -212,41 +232,31 @@ export class MenuService {
       halfBefore: i.halfPrice == null ? null : Number(i.halfPrice),
       halfAfter: i.halfPrice == null ? null : move(Number(i.halfPrice)),
     }));
-    const changed = changes.filter(
-      (c) => c.before !== c.after || c.halfBefore !== c.halfAfter,
-    );
+    const changed = changes.filter((c) => c.before !== c.after || c.halfBefore !== c.halfAfter);
     if (!preview && changed.length > 0) {
-      await this.prisma.$transaction(
-        changed.map((c) =>
-          this.prisma.menuItem.update({
+      await this.prisma.$transaction(async (tx) => {
+        for (const c of changed) {
+          await tx.menuItem.update({
             where: { id: c.id },
-            data: {
-              price: c.after,
-              ...(c.halfAfter != null ? { halfPrice: c.halfAfter } : {}),
-            },
-          }),
-        ),
-      );
+            data: { price: c.after, ...(c.halfAfter != null ? { halfPrice: c.halfAfter } : {}) },
+          });
+        }
+        // New prices must reach the delivery platforms too (#59).
+        await this.outbox.enqueueMenuPush(tx, branchId);
+      }, { timeout: 30_000 });
       await this.audit.record({
         userId,
         action: 'menu_item.bulk_price_changed',
         entity: 'MenuItem',
         entityId: branchId,
-        metadata: {
-          percent,
-          categoryId: categoryId ?? null,
-          roundToWhole,
-          count: changed.length,
-        },
+        metadata: { percent, categoryId: categoryId ?? null, roundToWhole, count: changed.length },
       });
     }
     return {
       applied: !preview,
       count: changed.length,
       total: items.length,
-      sample: changed
-        .slice(0, 5)
-        .map((c) => ({ name: c.name, before: c.before, after: c.after })),
+      sample: changed.slice(0, 5).map((c) => ({ name: c.name, before: c.before, after: c.after })),
     };
   }
 
@@ -267,7 +277,9 @@ export class MenuService {
 
   async deleteItem(branchId: string, id: string) {
     await this.getItem(branchId, id);
-    await this.prisma.menuItem.delete({ where: { id } });
+    await this.withMenuPush(branchId, (tx) =>
+      tx.menuItem.delete({ where: { id } }),
+    );
     return { ok: true };
   }
 
@@ -296,7 +308,7 @@ export class MenuService {
     await this.assertModifierGroupInBranch(branchId, id);
 
     const { modifiers, ...rest } = dto;
-    return this.prisma.$transaction(async (tx) => {
+    return this.withMenuPush(branchId, async (tx) => {
       if (modifiers) {
         await tx.modifier.deleteMany({ where: { groupId: id } });
         await tx.modifier.createMany({
@@ -313,7 +325,9 @@ export class MenuService {
 
   async deleteModifierGroup(branchId: string, id: string) {
     await this.assertModifierGroupInBranch(branchId, id);
-    await this.prisma.modifierGroup.delete({ where: { id } });
+    await this.withMenuPush(branchId, (tx) =>
+      tx.modifierGroup.delete({ where: { id } }),
+    );
     return { ok: true };
   }
 

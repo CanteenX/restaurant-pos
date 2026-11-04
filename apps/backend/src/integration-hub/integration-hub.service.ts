@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type { IntegrationConnection, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { outletsForBranch } from './aggregator-menu';
 import { getProvider, listProviders } from './providers/registry';
 import type { IntegrationProvider, TestResult } from './providers/provider';
 import { IntegrationOutboxService } from './outbox/integration-outbox.service';
@@ -261,8 +262,14 @@ export class IntegrationHubService {
       select: { id: true },
     });
     if (!branch) throw new NotFoundException('Unknown branch');
+    const outlets = (c.config as StoredConfig)?.outlets;
+    if (outletsForBranch(outlets ?? undefined, branch.id).length === 0) {
+      throw new BadRequestException(
+        'No platform outlet is mapped to this branch',
+      );
+    }
     const queued = await this.prisma.$transaction((tx) =>
-      this.outbox.enqueueMenuPush(tx, branch.id),
+      this.outbox.enqueueMenuPush(tx, branch.id, c.id),
     );
     await this.log(c.id, 'INFO', 'menu_sync', 'Menu publish queued');
     return { queued };

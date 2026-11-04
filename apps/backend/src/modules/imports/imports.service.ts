@@ -4,6 +4,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { IntegrationOutboxService } from '../../integration-hub/outbox/integration-outbox.service';
 import { AuditService } from '../../audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CsvError, parseCsv, type ParsedCsv } from './csv';
@@ -90,6 +91,7 @@ export class ImportsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly outbox: IntegrationOutboxService,
   ) {}
 
   async run(
@@ -440,6 +442,11 @@ export class ImportsService {
         if (u.stationName)
           u.data.stationId = stationId.get(lower(u.stationName));
         await db.menuItem.update({ where: { id: u.id }, data: u.data });
+      }
+      // New dishes, prices and names must reach delivery platforms (#59).
+      // `apply` only runs inside run()'s transaction.
+      if (creates.length || updates.length || newCategories.length) {
+        await this.outbox.enqueueMenuPush(db, branchId);
       }
     }
     return {

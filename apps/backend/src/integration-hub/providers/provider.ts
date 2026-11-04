@@ -11,6 +11,12 @@ import type {
   PlatformAvailabilityItem,
 } from '../aggregator-menu';
 
+/** Menu/availability calls: idempotency plus the platform outlet, if mapped. */
+export interface PlatformCallOptions {
+  idempotencyKey: string;
+  outletId?: string;
+}
+
 export type IntegrationCategory =
   | 'FOOD_DELIVERY'
   | 'PAYMENT'
@@ -125,13 +131,13 @@ export interface IntegrationProvider {
   setItemAvailability?(
     ctx: ProviderContext,
     items: PlatformAvailabilityItem[],
-    opts: { idempotencyKey: string },
+    opts: PlatformCallOptions,
   ): Promise<void>;
   /** Publish the whole menu to the platform (#59). Throws OutboundError. */
   pushMenu?(
     ctx: ProviderContext,
     menu: CanonicalMenu,
-    opts: { idempotencyKey: string },
+    opts: PlatformCallOptions,
   ): Promise<void>;
 }
 
