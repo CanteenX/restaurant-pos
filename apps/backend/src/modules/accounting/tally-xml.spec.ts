@@ -144,6 +144,30 @@ describe('buildTallyXml', () => {
     expect(xml).toContain('Till&apos;s Cash');
   });
 
+  // #147: every mapped name is user-entered text; none may break the document.
+  it('escapes quotes, markup and control characters in every mapped ledger name', () => {
+    const hostile = (k: string) => `${k} "q" 'a' <x>&y\u0001\u0008\u000B\u001F`;
+    const mapping = Object.fromEntries(
+      Object.keys(M).map((k) => [k, hostile(k)]),
+    ) as typeof M;
+    const { xml } = buildTallyXml({
+      orders: [plain, discounted],
+      refunds: [refund],
+      mapping,
+    });
+    const names = [
+      ...xml.matchAll(/<(?:LEDGERNAME|PARTYLEDGERNAME)>([^<]*)</g),
+    ].map((m) => m[1]);
+    expect(names.length).toBeGreaterThan(0);
+    for (const n of names) {
+      expect(n).toMatch(/&quot;q&quot; &apos;a&apos; &lt;x&gt;&amp;y$/);
+    }
+    // eslint-disable-next-line no-control-regex -- asserting none survive
+    expect(xml).not.toMatch(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/);
+    expect(xml).not.toMatch(/&(?!(?:amp|lt|gt|quot|apos);)/);
+    expect(xml).not.toMatch(/"q"|'a'|<x>/);
+  });
+
   it('books a round-off line when total differs from the lines', () => {
     const { xml } = buildTallyXml({
       orders: [{ ...plain, totalAmount: 118.4 }],

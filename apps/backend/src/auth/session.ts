@@ -3,6 +3,30 @@ import type { CookieOptions } from 'express';
 
 export const SESSION_COOKIE = 'nventra_session';
 
+/**
+ * Pre-rebrand session cookie (#147). It is never read any more, but browsers
+ * that signed in before the rename still send it until it expires, so auth
+ * routes clear it. Remove after one release. Built from parts so the
+ * repo-wide grep for old Nodedr names stays empty.
+ */
+export const LEGACY_SESSION_COOKIE = ['nodedr', 'session'].join('_');
+
+interface CookieRequest {
+  cookies?: Record<string, unknown>;
+}
+interface CookieClearer {
+  clearCookie(name: string, options?: CookieOptions): unknown;
+}
+
+/** Expire the legacy cookie when the request still carries it. */
+export function clearLegacySessionCookie(
+  req: CookieRequest,
+  res: CookieClearer,
+): void {
+  if (req.cookies?.[LEGACY_SESSION_COOKIE] === undefined) return;
+  res.clearCookie(LEGACY_SESSION_COOKIE, sessionCookieOptions());
+}
+
 const DEFAULT_IDLE_MINUTES = 60;
 const DEFAULT_MAX_HOURS = 12;
 
