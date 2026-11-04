@@ -485,6 +485,35 @@ export function usePurchaseRequests(branchId: string | null, status?: PurchaseRe
   });
 }
 
+export interface ReorderSuggestionLine {
+  ingredientId: string;
+  name: string;
+  unit: string;
+  currentStock: number;
+  reorderLevel: number;
+  avgDailyConsumption: number;
+  suggestedQuantity: number;
+  packSize: number | null;
+  packs: number | null;
+}
+
+export interface ReorderSuggestionGroup {
+  supplierId: string | null;
+  supplierName: string | null;
+  suggestions: ReorderSuggestionLine[];
+}
+
+export function useReorderSuggestions(branchId: string | null) {
+  return useQuery({
+    queryKey: ["inventory", "reorder-suggestions", branchId],
+    queryFn: () =>
+      api.get<{ days: number; groups: ReorderSuggestionGroup[] }>(
+        `/inventory/reorder-suggestions?branchId=${branchId}`,
+      ),
+    enabled: !!branchId,
+  });
+}
+
 export function useCreatePurchaseRequest(branchId: string | null) {
   const qc = useQueryClient();
   return useMutation({

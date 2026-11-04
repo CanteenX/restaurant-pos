@@ -1962,5 +1962,14 @@
   "reports.variance.threshold": "Pourcentage du seuil d'écart",
   "reports.variance.onlyHigh": "Écart élevé uniquement",
   "reports.variance.csv": "CSV",
-  "reports.variance.none": "Aucune ligne ne correspond au filtre."
+  "reports.variance.none": "Aucune ligne ne correspond au filtre.",
+  "inv.reorder.title": "Suggestions de réapprovisionnement",
+  "inv.reorder.subtitle": "Articles au niveau cible ou en dessous, groupés par fournisseur. Modifiez les quantités puis créez une demande.",
+  "inv.reorder.noSupplier": "Aucun fournisseur préféré",
+  "inv.reorder.create": "Créer la demande",
+  "inv.reorder.ingredient": "Ingrédient",
+  "inv.reorder.stock": "En stock",
+  "inv.reorder.quantity": "Quantité à commander",
+  "inv.reorder.quantityFor": "Quantité à commander pour {name}",
+  "inv.reorder.empty": "Rien à réapprovisionner pour le moment."
 }
