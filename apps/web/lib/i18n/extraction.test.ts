@@ -26,6 +26,9 @@ const EXTRACTED_PATHS = [
   "components/inventory",
   "app/(dashboard)/accounting",
   "components/accounting",
+  "app/(dashboard)/team",
+  "components/team",
+  "components/settings",
 ];
 
 for (const path of EXTRACTED_PATHS) {

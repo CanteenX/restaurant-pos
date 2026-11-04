@@ -6,11 +6,14 @@ import { hasPermission, useCurrentUser } from "@/hooks/use-auth";
 import { useNavBadges } from "@/hooks/use-nav-badges";
 import { useBranch } from "@/hooks/use-branch";
 import { useSettings } from "@/hooks/use-settings";
+import { useI18n, type TranslationKey } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 import { NavDot } from "@/components/layout/nav-dot";
 
 interface SettingsTab {
-  label: string;
+  /** Dictionary key; omit when `label` is a brand name that is never translated. */
+  labelKey?: TranslationKey;
+  label?: string;
   href: string;
   /** Omit to show the tab to anyone who can reach /settings at all. */
   permission?: string;
@@ -19,22 +22,23 @@ interface SettingsTab {
 }
 
 const TABS: SettingsTab[] = [
-  { label: "General", href: "/settings" },
-  { label: "Staff", href: "/settings/staff", permission: "users.manage" },
-  { label: "Roles", href: "/settings/roles", permission: "roles.manage" },
-  { label: "Memberships", href: "/settings/memberships", permission: "memberships.manage" },
-  { label: "Audit Log", href: "/settings/audit-log", permission: "audit_log.view" },
-  { label: "Backup", href: "/settings/backup", permission: "backup.manage" },
-  { label: "Updates", href: "/settings/updates", permission: "system.update" },
-  { label: "Server Sync", href: "/settings/sync", permission: "settings.manage" },
-  { label: "Integrations", href: "/settings/integrations", permission: "settings.manage" },
-  { label: "API Keys", href: "/settings/api-keys" },
-  { label: "Security", href: "/settings/security" },
-  { label: "Webhooks", href: "/settings/webhooks", permission: "settings.manage" },
+  { labelKey: "settings.tabs.general", href: "/settings" },
+  { labelKey: "settings.tabs.staff", href: "/settings/staff", permission: "users.manage" },
+  { labelKey: "settings.tabs.roles", href: "/settings/roles", permission: "roles.manage" },
+  { labelKey: "settings.tabs.memberships", href: "/settings/memberships", permission: "memberships.manage" },
+  { labelKey: "settings.tabs.auditLog", href: "/settings/audit-log", permission: "audit_log.view" },
+  { labelKey: "settings.tabs.backup", href: "/settings/backup", permission: "backup.manage" },
+  { labelKey: "settings.tabs.updates", href: "/settings/updates", permission: "system.update" },
+  { labelKey: "settings.tabs.sync", href: "/settings/sync", permission: "settings.manage" },
+  { labelKey: "settings.tabs.integrations", href: "/settings/integrations", permission: "settings.manage" },
+  { labelKey: "settings.tabs.apiKeys", href: "/settings/api-keys" },
+  { labelKey: "settings.tabs.security", href: "/settings/security" },
+  { labelKey: "settings.tabs.webhooks", href: "/settings/webhooks", permission: "settings.manage" },
   { label: "VERI*FACTU", href: "/settings/verifactu", permission: "settings.manage", country: "ES" },
 ];
 
 export function SettingsTabs() {
+  const { t } = useI18n();
   const pathname = usePathname();
   const { data } = useCurrentUser();
   const user = data?.user;
@@ -64,7 +68,7 @@ export function SettingsTabs() {
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
           >
-            {tab.label}
+            {tab.labelKey ? t(tab.labelKey) : tab.label}
             {badges.settingsTabs[tab.href] ? <NavDot className="ml-0" /> : null}
           </Link>
         );

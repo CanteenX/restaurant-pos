@@ -1,5 +1,6 @@
 "use client";
 
+import { useI18n } from "@/lib/i18n/context";
 import { useState } from "react";
 import { toast } from "@/lib/toast";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
@@ -18,9 +19,13 @@ import {
 } from "@/hooks/use-sync";
 import { ApiError } from "@/lib/api";
 
+const SYNC_KEY_SETTING = "SYNC_API_KEY";
+const SERVER_URL_EXAMPLE = "https://orders.example.com";
+
 const errMsg = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
 export default function SyncSettingsPage() {
+  const { t } = useI18n();
   const { data, isLoading } = useSyncStatus();
   const test = useTestSync();
   const enable = useEnableSync();
@@ -36,7 +41,7 @@ export default function SyncSettingsPage() {
     if (
       mode === "adopt" &&
       !window.confirm(
-        "This PC's current data will be replaced by the server's data, and you will be signed out. Sign in again with an account from the server. Continue?",
+        t("settings.sync.confirmAdopt"),
       )
     )
       return;
@@ -44,10 +49,10 @@ export default function SyncSettingsPage() {
       { ...conn, mode },
       {
         onSuccess: () => {
-          toast.success("Connected — syncing. Sign in again if you are asked to.");
+          toast.success(t("settings.sync.connectedToast"));
           setApiKey("");
         },
-        onError: (e) => toast.error(errMsg(e, "Could not connect")),
+        onError: (e) => toast.error(errMsg(e, t("settings.sync.connectFailed"))),
       },
     );
   };
@@ -58,10 +63,9 @@ export default function SyncSettingsPage() {
 
       <Card className="flex flex-col gap-4 p-6">
         <div>
-          <h2 className="text-base font-medium">Server sync</h2>
+          <h2 className="text-base font-medium">{t("settings.sync.heading")}</h2>
           <p className="text-sm text-muted-foreground">
-            Keep this PC and your central server in step, both ways. Work continues offline and
-            catches up when the connection returns. Newest edit wins.
+            {t("settings.sync.intro")}
           </p>
         </div>
 
@@ -69,25 +73,35 @@ export default function SyncSettingsPage() {
           <Skeleton className="h-24 w-full" />
         ) : data.role === "server" ? (
           <p className="text-sm text-muted-foreground">
-            This installation is the sync server. Other PCs connect to it with the sync key set in
-            its <code>SYNC_API_KEY</code> setting.
+            {(() => {
+              const [before, after] = t("settings.sync.serverNote", { setting: "\u0000" }).split("\u0000");
+              return (
+                <>
+                  {before}
+                  <code>{SYNC_KEY_SETTING}</code>
+                  {after}
+                </>
+              );
+            })()}
           </p>
         ) : data.enabled ? (
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <Badge variant={data.lastError ? "destructive" : "secondary"}>
-                {data.lastError ? "Not connected" : "Connected"}
+                {data.lastError ? t("settings.sync.notConnected") : t("settings.sync.connected")}
               </Badge>
               <span className="text-muted-foreground">{data.serverUrl}</span>
             </div>
             <p className="text-sm text-muted-foreground">
-              Last synced: {data.lastSyncAt ? new Date(data.lastSyncAt).toLocaleString() : "never"}
-              {" · "}waiting to upload: {data.pendingChanges}
+              {t("settings.sync.lastSynced", {
+                when: data.lastSyncAt ? new Date(data.lastSyncAt).toLocaleString() : t("settings.sync.never"),
+                pending: data.pendingChanges,
+              })}
             </p>
             {data.lastError && <p className="text-sm text-destructive">{data.lastError}</p>}
             {data.conflicts.length > 0 && (
               <details className="text-sm">
-                <summary>{data.conflicts.length} change(s) could not be applied</summary>
+                <summary>{t("settings.sync.conflicts", { count: data.conflicts.length })}</summary>
                 <ul className="mt-2 list-disc pl-5 text-muted-foreground">
                   {data.conflicts.slice(0, 10).map((c, i) => (
                     <li key={i}>
@@ -103,36 +117,36 @@ export default function SyncSettingsPage() {
                 disabled={syncNow.isPending}
                 onClick={() =>
                   syncNow.mutate(undefined, {
-                    onSuccess: (r) => toast.success(`Synced: ${r.pulled} down, ${r.pushed} up`),
-                    onError: (e) => toast.error(errMsg(e, "Sync failed")),
+                    onSuccess: (r) => toast.success(t("settings.sync.synced", { pulled: r.pulled, pushed: r.pushed })),
+                    onError: (e) => toast.error(errMsg(e, t("settings.sync.syncFailed"))),
                   })
                 }
               >
-                {syncNow.isPending ? "Syncing…" : "Sync now"}
+                {syncNow.isPending ? t("settings.sync.syncing") : t("settings.sync.syncNow")}
               </Button>
               <Button
                 size="sm"
                 variant="outline"
                 disabled={disable.isPending}
-                onClick={() => disable.mutate(undefined, { onSuccess: () => toast.success("Sync turned off") })}
+                onClick={() => disable.mutate(undefined, { onSuccess: () => toast.success(t("settings.sync.turnedOff")) })}
               >
-                Turn off
+                {t("settings.sync.turnOff")}
               </Button>
             </div>
           </div>
         ) : (
           <div className="flex max-w-xl flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="sync-url">Server address</Label>
+              <Label htmlFor="sync-url">{t("settings.sync.serverAddress")}</Label>
               <Input
                 id="sync-url"
-                placeholder="https://orders.example.com"
+                placeholder={SERVER_URL_EXAMPLE}
                 value={serverUrl}
                 onChange={(e) => setServerUrl(e.target.value)}
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="sync-key">Sync key</Label>
+              <Label htmlFor="sync-key">{t("settings.sync.syncKey")}</Label>
               <Input
                 id="sync-key"
                 type="password"
@@ -142,22 +156,22 @@ export default function SyncSettingsPage() {
               />
             </div>
             <fieldset className="flex flex-col gap-2 text-sm">
-              <legend className="mb-1 font-medium">First sync</legend>
+              <legend className="mb-1 font-medium">{t("settings.sync.firstSync")}</legend>
               <label className="flex items-start gap-2">
                 <input type="radio" checked={mode === "adopt"} onChange={() => setMode("adopt")} />
                 <span>
-                  Use the server&apos;s data
+                  {t("settings.sync.useServerData")}
                   <span className="block text-muted-foreground">
-                    Replaces this PC&apos;s data. Pick this for a new PC.
+                    {t("settings.sync.useServerDataHint")}
                   </span>
                 </span>
               </label>
               <label className="flex items-start gap-2">
                 <input type="radio" checked={mode === "merge"} onChange={() => setMode("merge")} />
                 <span>
-                  Merge both
+                  {t("settings.sync.mergeBoth")}
                   <span className="block text-muted-foreground">
-                    Keeps this PC&apos;s data and adds it to the server.
+                    {t("settings.sync.mergeBothHint")}
                   </span>
                 </span>
               </label>
@@ -169,19 +183,19 @@ export default function SyncSettingsPage() {
                 disabled={!conn.serverUrl || !conn.apiKey || test.isPending}
                 onClick={() =>
                   test.mutate(conn, {
-                    onSuccess: () => toast.success("Server reachable, key accepted"),
-                    onError: (e) => toast.error(errMsg(e, "Could not reach the server")),
+                    onSuccess: () => toast.success(t("settings.sync.reachable")),
+                    onError: (e) => toast.error(errMsg(e, t("settings.sync.unreachable"))),
                   })
                 }
               >
-                {test.isPending ? "Testing…" : "Test connection"}
+                {test.isPending ? t("settings.sync.testing") : t("settings.sync.test")}
               </Button>
               <Button
                 size="sm"
                 disabled={!conn.serverUrl || !conn.apiKey || enable.isPending}
                 onClick={connect}
               >
-                {enable.isPending ? "Connecting…" : "Connect & sync"}
+                {enable.isPending ? t("settings.sync.connecting") : t("settings.sync.connect")}
               </Button>
             </div>
           </div>
