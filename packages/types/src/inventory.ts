@@ -180,17 +180,6 @@ export const purchaseReturnReasonSchema = z.enum([
 ]);
 export type PurchaseReturnReason = z.infer<typeof purchaseReturnReasonSchema>;
 
-/**
- * Query for every branch-scoped inventory route. `branchId` is required: a
- * missing one would otherwise drop the tenant filter from the queries.
- */
-export const inventoryBranchQuerySchema = z.object({
-  branchId: z.string().trim().min(1, "branchId is required"),
-});
-export type InventoryBranchQueryDto = z.infer<
-  typeof inventoryBranchQuerySchema
->;
-
 export const purchaseReturnListQuerySchema = inventoryBranchQuerySchema.extend({
   supplierId: z
     .string()

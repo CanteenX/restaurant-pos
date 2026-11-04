@@ -274,6 +274,53 @@ describe('Purchase returns (e2e)', () => {
       .expect(403);
   });
 
+  it('keeps 6dp per-gram costs on the debit note and the average (#193)', async () => {
+    const saffron = (
+      await owner
+        .post(`/api/v1/inventory/ingredients${q}`)
+        .send({ name: `Saffron ${tag}`, unit: 'G' })
+        .expect(201)
+    ).body.id;
+    const receive = async (unitCost: number) =>
+      (
+        await owner
+          .post(`/api/v1/inventory/goods-receipts${q}`)
+          .send({
+            supplierId,
+            items: [{ ingredientId: saffron, quantity: 1000, unitCost }],
+          })
+          .expect(201)
+      ).body;
+    await receive(0.123456);
+    const second = await receive(0.234567);
+    const before = await prisma.ingredient.findUniqueOrThrow({
+      where: { id: saffron },
+    });
+    const avg = Number(before.costPerUnit);
+    expect(avg).toBe(0.179012); // (123.456 + 234.567) / 2000 at 6dp
+
+    const res = await owner
+      .post(`${PR}${q}`)
+      .send({
+        goodsReceiptId: second.id,
+        reason: 'DAMAGED',
+        items: [{ goodsReceiptItemId: second.items[0].id, quantity: 500 }],
+      })
+      .expect(201);
+    expect(Number(res.body.items[0].unitCost)).toBe(0.234567);
+    expect(Number(res.body.items[0].lineTotal)).toBe(117.28); // 500 x 0.234567
+    expect(Number(res.body.totalAmount)).toBe(117.28);
+
+    const after = await prisma.ingredient.findUniqueOrThrow({
+      where: { id: saffron },
+    });
+    expect(Number(after.currentStock)).toBe(1500);
+    // Remaining 1000 g @ 0.123456 + 500 g @ 0.234567, kept at 6dp.
+    expect(Number(after.costPerUnit)).toBe(
+      Math.round(((2000 * avg - 500 * 0.234567) / 1500) * 1e6) / 1e6,
+    );
+  });
+
   it('isolates tenants', async () => {
     // B cannot use A's branch at all.
     await other.get(`${PR}${q}`).expect(403);
