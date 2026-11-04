@@ -105,11 +105,33 @@ export function localizePermission(
 /** Largest HLC Postgres can store, minus room for the trigger's `+ 1`. */
 const MAX_HLC = 9_223_372_036_854_775_807n - 1n;
 /**
- * How far ahead of the receiver's clock an incoming HLC may be. Beyond it a
- * skewed (or hostile) device would win LWW for that row until real time
- * caught up, or overflow the next local edit's `hlc + 1` (#81 review).
+ * Largest gap allowed between this PC's clock and the server's. Beyond it a
+ * client cycle stops before pulling or pushing (cursors untouched, nothing
+ * pruned) until the time is fixed, instead of dead-lettering real data
+ * (#81 review). Every device within it keeps HLCs at most 2x it apart.
  */
-export const MAX_HLC_SKEW_MS = 5 * 60_000;
+export const MAX_CLOCK_SKEW_MS = 5 * 60_000;
+/**
+ * Per-change ceiling: how far ahead of the receiver's clock an incoming HLC
+ * may be. Deliberately loose, so skew propagated through HLCs between
+ * devices that each pass the clock check is never rejected; it only stops a
+ * broken or hostile device from winning LWW for a row for days.
+ */
+export const MAX_HLC_FUTURE_MS = 24 * 60 * 60_000;
+
+/** Why this PC must not sync against a server reporting `serverMs`, or null. */
+export function clockSkewError(
+  localMs: number,
+  serverMs: number | undefined,
+): string | null {
+  if (typeof serverMs !== 'number' || !Number.isFinite(serverMs))
+    return 'The server did not report its clock; update it to the same version as this PC.';
+  const diff = localMs - serverMs;
+  if (Math.abs(diff) <= MAX_CLOCK_SKEW_MS) return null;
+  const min = Math.round(Math.abs(diff) / 60_000);
+  const way = diff > 0 ? 'ahead of' : 'behind';
+  return `This PC's clock is ${min} min ${way} the server; fix the time to resume sync.`;
+}
 
 /** Checks a change from the wire before any SQL touches it. */
 export function assertWellFormed(c: SyncChange, nowMs = Date.now()): void {
@@ -120,7 +142,10 @@ export function assertWellFormed(c: SyncChange, nowMs = Date.now()): void {
     throw new Error('change without a valid hlc');
   const hlc = BigInt(c.hlc);
   if (hlc >= MAX_HLC) throw new Error('change hlc out of range');
-  if (hlc > (BigInt(Math.floor(nowMs + MAX_HLC_SKEW_MS)) + 1n) * HLC_SHIFT - 1n)
+  if (
+    hlc >
+    (BigInt(Math.floor(nowMs + MAX_HLC_FUTURE_MS)) + 1n) * HLC_SHIFT - 1n
+  )
     throw new Error('change hlc too far in the future');
   if (typeof c.peer !== 'string' || !c.peer)
     throw new Error('change without a peer');

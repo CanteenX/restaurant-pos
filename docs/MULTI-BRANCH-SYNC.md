@@ -335,10 +335,21 @@ the table list if answered differently:
   `seq <= bound` (bound read in its own statement first), so `nextSeq`,
   `lastPushSeq` and the client's `DELETE … seq <= pushedTo` only move over
   entries that are already visible.
-- **Incoming HLCs are bounded**: a change whose HLC is at the bigint limit or
-  more than 5 min (`MAX_HLC_SKEW_MS`) ahead of the receiver's clock is
-  rejected (and dead-lettered). Otherwise one bad device could lock a row
-  everywhere (`hlc + 1` overflow) or win LWW until real time caught up.
+- **A PC with a wrong clock pauses, it never drops data**: HLCs come from
+  each PC's own clock, so `ping` returns the server's `now` and every client
+  cycle (and the settings page's connection test) compares it with this
+  PC's clock, at the middle of the round trip. More than 5 min apart
+  (`MAX_CLOCK_SKEW_MS`) and the cycle stops before pulling or pushing, with
+  `lastError` = "This PC's clock is 6 min ahead of the server; fix the time
+  to resume sync." Cursors don't move and nothing is pruned or
+  dead-lettered; the queued changes go out once the clock is fixed.
+- **Incoming HLCs are bounded**: a change whose HLC is at the bigint limit
+  (the trigger's `hlc + 1` would overflow and lock the row everywhere), or
+  more than 24 h (`MAX_HLC_FUTURE_MS`) ahead of the receiver's clock, is
+  malformed: rejected and dead-lettered. The 24 h ceiling is deliberately
+  loose: devices that each pass the 5 min clock check can still carry HLCs
+  up to ~10 min apart (HLCs keep the highest clock seen), and those must
+  apply normally.
 - **Upgrade path**: entries queued before this migration (no HLC, no peer)
   are backfilled by `sync_backfill_legacy()`: HLC from their `ts`, strictly
   increasing per row in outbox order; peer = this device for local entries,
@@ -371,3 +382,7 @@ Known limits, to address in #82:
   `permissionKey`. They fail on FK elsewhere and are dead-lettered.
 - The trigger reads and upserts `sync_versions` on every captured write;
   measure this on the order hot path when #82 adds the apply side.
+- `sync_safe_seq()` stops at the oldest open writer, so one connection left
+  idle in a transaction after writing a synced row stalls pull and push for
+  every device until it ends. Consider `idle_in_transaction_session_timeout`
+  on the app role, or a "waiting on an open transaction" status.

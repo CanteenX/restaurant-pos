@@ -240,7 +240,8 @@ describe('Sync outbox (e2e)', () => {
       const path = new URL(url).pathname.split('/').pop();
       const reply = (body: unknown) =>
         Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
-      if (path === 'ping') return reply({ ok: true, role: 'server', schema });
+      if (path === 'ping')
+        return reply({ ok: true, role: 'server', schema, now: Date.now() });
       if (path === 'pull')
         return reply({ changes: [], nextSeq: '0', hasMore: false });
       pushes++;
@@ -333,17 +334,27 @@ describe('Sync outbox (e2e)', () => {
     expect(kept.map((r) => r.row?.name)).toEqual([`C3-${tag}`]);
   });
 
-  /** HQ stand-in: ping ok, `pull` from the given page, `push` via handler. */
+  /**
+   * HQ stand-in: ping ok (its clock `offsetMs` from ours), `pull` from the
+   * given page, `push` via handler.
+   */
   const fakeHq = async (
     pull: { changes: SyncChange[]; nextSeq: string },
     push: (changes: SyncChange[]) => Promise<unknown>,
+    offsetMs = 0,
   ) => {
     const schema = await sync.schemaVersion();
     global.fetch = async (url: string, init?: RequestInit) => {
       const path = new URL(url).pathname.split('/').pop();
       const reply = (body: unknown) =>
         new Response(JSON.stringify(body), { status: 200 });
-      if (path === 'ping') return reply({ ok: true, role: 'server', schema });
+      if (path === 'ping')
+        return reply({
+          ok: true,
+          role: 'server',
+          schema,
+          now: Date.now() + offsetMs,
+        });
       if (path === 'pull') return reply({ ...pull, hasMore: false });
       const body = JSON.parse(init?.body as string) as {
         changes: SyncChange[];
@@ -555,5 +566,65 @@ describe('Sync outbox (e2e)', () => {
     for (const c of page.changes) seen.push(String(c.pk.id));
     expect(seen).toContain(slow.id);
     expect(seen).toContain(fast.id);
+  });
+  it('a PC whose clock is off stops before syncing and loses nothing', async () => {
+    await prisma.$executeRawUnsafe('DELETE FROM sync_changes');
+    await prisma.$executeRawUnsafe('DELETE FROM sync_rejected');
+    await prisma.$executeRawUnsafe(
+      `UPDATE sync_state SET "lastPushSeq" = 0, "lastPullSeq" = 0 WHERE id = 1`,
+    );
+    const floor = await prisma.floor.create({
+      data: { branchId, name: `Skew-${tag}` },
+    });
+    const hqChange: SyncChange = {
+      seq: '42',
+      tbl: 'floors',
+      pk: { id: `hq-${tag}` },
+      pkKey: key(`hq-${tag}`),
+      op: 'D',
+      row: null,
+      ts: new Date().toISOString(),
+      hlc: (BigInt(Date.now()) * 65536n).toString(),
+      peer: 'hq',
+    };
+    const pushed: SyncChange[] = [];
+    for (const offsetMs of [6 * 60_000, -6 * 60_000]) {
+      await fakeHq(
+        { changes: [hqChange], nextSeq: '42' },
+        (changes) => {
+          pushed.push(...changes);
+          return Promise.resolve({ applied: 0, skipped: 0, conflicts: [] });
+        },
+        offsetMs,
+      );
+      const way = offsetMs > 0 ? 'behind' : 'ahead of';
+      await expect(sync.runOnce()).rejects.toThrow(
+        `This PC's clock is 6 min ${way} the server; fix the time to resume sync.`,
+      );
+      const s = await sync.state();
+      expect(s.lastError).toMatch(/clock is 6 min/);
+      expect(s.lastPullSeq).toBe(0n);
+      expect(s.lastPushSeq).toBe(0n);
+    }
+    expect(pushed).toHaveLength(0);
+    expect(await outbox([floor.id])).toHaveLength(1);
+    const rejected = await prisma.$queryRawUnsafe<{ n: bigint }[]>(
+      `SELECT count(*) AS n FROM sync_rejected`,
+    );
+    expect(Number(rejected[0].n)).toBe(0);
+
+    // Clock fixed: the same entry goes out and the error clears.
+    await fakeHq({ changes: [], nextSeq: '0' }, (changes) => {
+      pushed.push(...changes);
+      return Promise.resolve({
+        applied: changes.length,
+        skipped: 0,
+        conflicts: [],
+      });
+    });
+    await sync.runOnce();
+    expect(pushed.map((c) => c.pk.id)).toContain(floor.id);
+    expect(await outbox([floor.id])).toHaveLength(0);
+    expect((await sync.state()).lastError).toBeNull();
   });
 });

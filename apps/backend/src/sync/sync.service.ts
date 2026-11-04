@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { captureSql } from './capture-sql';
 import {
   assertWellFormed,
+  clockSkewError,
   compact,
   Conflict,
   localizePermission,
@@ -447,11 +448,21 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     return (await res.json()) as T;
   }
 
+  /**
+   * Checks the server before any data moves: it is a sync server, on the same
+   * schema, and its clock agrees with this PC's (HLCs come from local clocks,
+   * so a skewed PC must stop here rather than have its changes rejected).
+   */
   async testConnection(serverUrl: string, apiKey: string) {
-    const r = await this.call<{ ok: boolean; role: string; schema: string }>(
-      { serverUrl, apiKey },
-      'ping',
-    );
+    const sent = Date.now();
+    const r = await this.call<{
+      ok: boolean;
+      role: string;
+      schema: string;
+      now?: number;
+    }>({ serverUrl, apiKey }, 'ping');
+    // The server read its clock somewhere in the round trip: take the middle.
+    const localAtServer = (sent + Date.now()) / 2;
     const local = await this.schemaVersion();
     if (r.role !== 'server')
       throw new Error(
@@ -462,6 +473,8 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         `App versions differ (this PC: ${local}, server: ${r.schema}). Update both to the same version first.`,
       );
     }
+    const skew = clockSkewError(localAtServer, r.now);
+    if (skew) throw new Error(skew);
     return { ok: true, schema: r.schema };
   }
 

@@ -1,11 +1,13 @@
 import {
   assertWellFormed,
+  clockSkewError,
   compact,
   HLC_SHIFT,
   hlcMs,
   isNewer,
   localizePermission,
-  MAX_HLC_SKEW_MS,
+  MAX_CLOCK_SKEW_MS,
+  MAX_HLC_FUTURE_MS,
   nextHlc,
   rejectedChanges,
   SyncChange,
@@ -167,16 +169,15 @@ describe('assertWellFormed hlc bounds', () => {
       );
   });
 
-  it('rejects an hlc more than the allowed skew ahead of this clock', () => {
+  it('accepts a few minutes of propagated skew, rejects beyond the loose ceiling', () => {
+    // Clocks inside the per-device limit compound through HLCs (a +4 min
+    // device's edit reaching a -2 min one): that must not be dead-lettered.
+    expect(() =>
+      assertWellFormed({ ...ch(1, 'a', 1), hlc: at(now + 10 * 60_000) }, now),
+    ).not.toThrow();
     expect(() =>
       assertWellFormed(
-        { ...ch(1, 'a', 1), hlc: at(now + MAX_HLC_SKEW_MS + 1) },
-        now,
-      ),
-    ).toThrow(/future/);
-    expect(() =>
-      assertWellFormed(
-        { ...ch(1, 'a', 1), hlc: at(now + MAX_HLC_SKEW_MS) },
+        { ...ch(1, 'a', 1), hlc: at(now + MAX_HLC_FUTURE_MS) },
         now,
       ),
     ).not.toThrow();
@@ -186,10 +187,40 @@ describe('assertWellFormed hlc bounds', () => {
         now,
       ),
     ).not.toThrow();
+    expect(() =>
+      assertWellFormed(
+        { ...ch(1, 'a', 1), hlc: at(now + MAX_HLC_FUTURE_MS + 1) },
+        now,
+      ),
+    ).toThrow(/future/);
     // Seed entries carry hlc 0.
     expect(() =>
       assertWellFormed({ ...ch(1, 'a', 1), hlc: '0' }, now),
     ).not.toThrow();
+  });
+});
+
+describe('clockSkewError', () => {
+  const server = Date.UTC(2026, 10, 4, 12, 0, 0);
+
+  it('is null while this PC is within the allowed skew', () => {
+    expect(clockSkewError(server, server)).toBeNull();
+    expect(clockSkewError(server + MAX_CLOCK_SKEW_MS, server)).toBeNull();
+    expect(clockSkewError(server - MAX_CLOCK_SKEW_MS, server)).toBeNull();
+  });
+
+  it('says how far and which way the clock is off beyond it', () => {
+    expect(clockSkewError(server + 6 * 60_000, server)).toBe(
+      "This PC's clock is 6 min ahead of the server; fix the time to resume sync.",
+    );
+    expect(clockSkewError(server - 6 * 60_000 - 20_000, server)).toBe(
+      "This PC's clock is 6 min behind the server; fix the time to resume sync.",
+    );
+  });
+
+  it('refuses a server that does not report its clock', () => {
+    expect(clockSkewError(server, undefined)).toMatch(/clock/);
+    expect(clockSkewError(server, Number.NaN)).toMatch(/clock/);
   });
 });
 
