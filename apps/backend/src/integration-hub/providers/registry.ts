@@ -1,3 +1,4 @@
+import { PartnerApiProvider } from './partner-api.provider';
 import { WebhookOrderProvider } from './webhook-order.provider';
 import type { IntegrationProvider } from './provider';
 import { MockPaymentGateway } from '../payments/mock-gateway';
@@ -29,6 +30,7 @@ const PROVIDERS: IntegrationProvider[] = [
     NOTE,
     'aggregator',
   ),
+  new PartnerApiProvider(),
 ];
 
 // The mock gateway never moves money; it exists for tests and demos only.

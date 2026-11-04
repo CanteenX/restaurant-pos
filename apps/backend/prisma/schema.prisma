@@ -42,16 +42,16 @@ enum TaxMode {
 
 model Restaurant {
   departments Department[]
-  id        String  @id @default(cuid())
-  name      String
-  legalName String?
+  id          String       @id @default(cuid())
+  name        String
+  legalName   String?
   // The restaurant's own branding, shown in the app shell (sidebar header,
   // login screen) in place of the Nventra POS product mark — this is
   // white-label self-hosted software, so the operator's brand should lead;
   // the product name stays as a small credit line instead (see BrandFooter).
-  logoUrl   String?
-  currency  String  @default("INR")
-  timezone  String  @default("Asia/Kolkata")
+  logoUrl     String?
+  currency    String       @default("INR")
+  timezone    String       @default("Asia/Kolkata")
 
   // UPI payee for the dynamic QR shown at checkout and on the customer
   // display (NPCI deep link, see apps/web/lib/upi.ts). Optional: when unset
@@ -220,7 +220,7 @@ model Permission {
   label    String
   category String // grouping for the settings UI, e.g. "Orders", "Inventory"
 
-  roles RolePermission[]
+  roles         RolePermission[]
   userOverrides UserPermissionOverride[]
 
   @@map("permissions")
@@ -251,13 +251,13 @@ model Department {
 // temporary access (cover shift, audit week) self-revoking.
 model UserPermissionOverride {
   userId       String
-  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   permissionId String
-  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  permission   Permission       @relation(fields: [permissionId], references: [id], onDelete: Cascade)
   effect       PermissionEffect
   reason       String?
   expiresAt    DateTime?
-  createdAt    DateTime   @default(now())
+  createdAt    DateTime         @default(now())
 
   @@id([userId, permissionId])
   @@map("user_permission_overrides")
@@ -1273,12 +1273,12 @@ model Customer {
   marketingOptOut Boolean @default(false)
   walletBalance   Decimal @default(0) @db.Decimal(12, 2) // store credit
 
-  createdAt        DateTime          @default(now())
+  createdAt        DateTime             @default(now())
   orders           Order[]
   giftCards        GiftCard[]
   addresses        CustomerAddress[]
-  referralsMade    Referral[]        @relation("ReferralReferrer")
-  referralReceived Referral?         @relation("ReferralReferred")
+  referralsMade    Referral[]           @relation("ReferralReferrer")
+  referralReceived Referral?            @relation("ReferralReferred")
   pointsLedger     PointsLedger[]
   memberships      CustomerMembership[]
 
@@ -2558,7 +2558,8 @@ model IntegrationConnection {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  logs IntegrationLog[]
+  logs   IntegrationLog[]
+  outbox IntegrationOutbox[]
 
   @@unique([restaurantId, provider])
   @@map("integration_connections")
@@ -2575,6 +2576,33 @@ model IntegrationLog {
 
   @@index([connectionId, createdAt])
   @@map("integration_logs")
+}
+
+// Outbound calls to a platform (order statuses now, item availability and
+// menu pushes in #59), retried with backoff and dead-lettered when they keep
+// failing. Rows are written in the same transaction as the POS change they
+// report, so a status is never lost or invented (docs/AGGREGATORS.md 4.3).
+model IntegrationOutbox {
+  id            String                @id @default(cuid())
+  connectionId  String
+  connection    IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  kind          String // order.status | item.availability | menu.push
+  dedupeKey     String // e.g. "order.status:<externalOrderId>:READY"
+  // Our order, when the row is about one; rows for one order go out in order.
+  orderId       String?
+  branchId      String?
+  payload       Json
+  status        String                @default("PENDING") // PENDING | DONE | DEAD
+  attempts      Int                   @default(0)
+  nextAttemptAt DateTime              @default(now())
+  lastError     String?
+  createdAt     DateTime              @default(now())
+  doneAt        DateTime?
+
+  @@unique([connectionId, dedupeKey])
+  @@index([status, nextAttemptAt])
+  @@index([connectionId, orderId, createdAt])
+  @@map("integration_outbox")
 }
 
 enum ReferralStatus {
