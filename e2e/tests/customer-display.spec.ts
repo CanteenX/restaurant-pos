@@ -19,3 +19,25 @@ test("paired display on another context mirrors the till cart", async ({ browser
   await expect(display.getByText("Your order")).toBeVisible({ timeout: 10_000 });
   await tablet.close();
 });
+
+// Keyboard/screen-reader access to the pairing popover (WCAG 2.1 AA).
+test("pair display popover opens by keyboard, closes on Esc, Unpair works", async ({ page }) => {
+  await page.goto("/pos");
+  await page.getByRole("button", { name: "Table 6" }).click();
+  const trigger = page.getByRole("button", { name: "Pair display" });
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  const unpair = page.getByRole("button", { name: "Unpair" });
+  await expect(unpair).toBeVisible();
+  const box = await unpair.boundingBox();
+  expect(box!.height).toBeGreaterThanOrEqual(44);
+
+  await page.keyboard.press("Escape");
+  await expect(unpair).toBeHidden();
+  await expect(page.getByRole("button", { name: /Paired/ })).toBeFocused();
+
+  await page.getByRole("button", { name: /Paired/ }).click();
+  await page.getByRole("button", { name: "Unpair" }).click();
+  await expect(page.getByRole("button", { name: "Pair display" })).toBeVisible();
+});
