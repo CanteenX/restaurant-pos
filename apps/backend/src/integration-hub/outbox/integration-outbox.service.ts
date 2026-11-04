@@ -2,8 +2,21 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import type { IntegrationOutbox, Prisma } from '@prisma/client';
 import { NotificationsService } from '../../notifications/notifications.service';
+import {
+  availabilityDedupeKey,
+  buildMenu,
+  ITEM_AVAILABILITY_KIND,
+  MENU_PUSH_KIND,
+  menuPushDedupeKey,
+  toPlatformAvailability,
+  type ItemMap,
+} from '../aggregator-menu';
 import { PrismaService } from '../../prisma/prisma.service';
-import { OutboundError, type PlatformOrderStatus } from '../providers/provider';
+import {
+  OutboundError,
+  type PlatformOrderStatus,
+  type ProviderContext,
+} from '../providers/provider';
 import {
   getProvider,
   listProviders,
@@ -104,6 +117,79 @@ export class IntegrationOutboxService {
     return res.count;
   }
 
+  /** Connections of the branch's restaurant that can take `cap` calls. */
+  private async menuConnections(
+    tx: Prisma.TransactionClient,
+    branchId: string,
+    cap: 'itemAvailability' | 'menuSync',
+  ) {
+    const keys = listProviders()
+      .filter((p) => supports(p, cap))
+      .map((p) => p.key);
+    if (keys.length === 0) return [];
+    const branch = await tx.branch.findUnique({
+      where: { id: branchId },
+      select: { restaurantId: true },
+    });
+    if (!branch) return [];
+    return tx.integrationConnection.findMany({
+      where: {
+        restaurantId: branch.restaurantId,
+        provider: { in: keys },
+        enabled: true,
+      },
+      select: { id: true },
+    });
+  }
+
+  /**
+   * Queues "this item was switched on/off" for every connected platform.
+   * The call sends the item's state as it is when delivered, so a quick
+   * off-on-off never leaves the platform behind. Same transaction as the change.
+   */
+  async enqueueItemAvailability(
+    tx: Prisma.TransactionClient,
+    branchId: string,
+    changes: { menuItemId: string; available: boolean }[],
+  ): Promise<number> {
+    if (changes.length === 0) return 0;
+    const conns = await this.menuConnections(tx, branchId, 'itemAvailability');
+    let count = 0;
+    for (const ch of changes) {
+      const res = await tx.integrationOutbox.createMany({
+        data: conns.map((c) => ({
+          connectionId: c.id,
+          kind: ITEM_AVAILABILITY_KIND,
+          dedupeKey: availabilityDedupeKey(ch.menuItemId, ch.available),
+          branchId,
+          payload: { menuItemId: ch.menuItemId },
+        })),
+        skipDuplicates: true,
+      });
+      count += res.count;
+    }
+    return count;
+  }
+
+  /** Queues a full menu publish (at most one per branch per minute). */
+  async enqueueMenuPush(
+    tx: Prisma.TransactionClient,
+    branchId: string,
+  ): Promise<number> {
+    const conns = await this.menuConnections(tx, branchId, 'menuSync');
+    const res = await tx.integrationOutbox.createMany({
+      data: conns.map((c) => ({
+        connectionId: c.id,
+        kind: MENU_PUSH_KIND,
+        dedupeKey: menuPushDedupeKey(branchId),
+        branchId,
+        payload: { branchId },
+      })),
+      skipDuplicates: true,
+    });
+    return res.count;
+  }
+
   @Cron(CronExpression.EVERY_10_SECONDS)
   async tick() {
     await this.flush();
@@ -181,11 +267,8 @@ export class IntegrationOutboxService {
       throw new OutboundError('The integration is disabled', true);
     }
     const provider = getProvider(conn.provider);
-    if (
-      !provider?.updateOrderStatus ||
-      !supports(provider, 'updateOrderStatus')
-    ) {
-      throw new OutboundError('This integration cannot send statuses', false);
+    if (!provider) {
+      throw new OutboundError('This integration is no longer available', false);
     }
     let credentials: Record<string, string>;
     try {
@@ -201,13 +284,28 @@ export class IntegrationOutboxService {
         false,
       );
     }
+    const ctx = {
+      restaurantId: conn.restaurantId,
+      externalAccountId: conn.externalAccountId,
+      credentials,
+    };
+    const itemMap =
+      (conn.config as { itemMap?: ItemMap } | null)?.itemMap ?? undefined;
+    if (row.kind === ITEM_AVAILABILITY_KIND) {
+      return this.deliverAvailability(provider, ctx, row, itemMap);
+    }
+    if (row.kind === MENU_PUSH_KIND) {
+      return this.deliverMenu(provider, ctx, row, itemMap);
+    }
+    if (
+      !provider.updateOrderStatus ||
+      !supports(provider, 'updateOrderStatus')
+    ) {
+      throw new OutboundError('This integration cannot send statuses', false);
+    }
     const p = row.payload as unknown as OrderStatusPayload;
     await provider.updateOrderStatus(
-      {
-        restaurantId: conn.restaurantId,
-        externalAccountId: conn.externalAccountId,
-        credentials,
-      },
+      ctx,
       p.externalOrderId,
       p.status,
       // The row id is stable across retries, so the partner can dedupe.
@@ -215,7 +313,70 @@ export class IntegrationOutboxService {
     );
   }
 
+  /** Sends the item's state as it is now, not as it was when queued. */
+  private async deliverAvailability(
+    provider: NonNullable<ReturnType<typeof getProvider>>,
+    ctx: ProviderContext,
+    row: IntegrationOutbox,
+    itemMap: ItemMap | undefined,
+  ) {
+    if (
+      !provider.setItemAvailability ||
+      !supports(provider, 'itemAvailability')
+    ) {
+      throw new OutboundError('This integration cannot switch items', false);
+    }
+    const { menuItemId } = row.payload as unknown as { menuItemId: string };
+    const item = await this.prisma.menuItem.findUnique({
+      where: { id: menuItemId },
+      select: { isActive: true },
+    });
+    if (!item) return; // deleted since; nothing to tell the platform
+    await provider.setItemAvailability(
+      ctx,
+      toPlatformAvailability(
+        [{ menuItemId, available: item.isActive }],
+        itemMap,
+      ),
+      { idempotencyKey: row.id },
+    );
+  }
+
+  private async deliverMenu(
+    provider: NonNullable<ReturnType<typeof getProvider>>,
+    ctx: ProviderContext,
+    row: IntegrationOutbox,
+    itemMap: ItemMap | undefined,
+  ) {
+    if (!provider.pushMenu || !supports(provider, 'menuSync')) {
+      throw new OutboundError('This integration cannot publish a menu', false);
+    }
+    const { branchId } = row.payload as unknown as { branchId: string };
+    const [categories, items] = await Promise.all([
+      this.prisma.menuCategory.findMany({
+        where: { branchId, isActive: true },
+        orderBy: { sortOrder: 'asc' },
+        select: { id: true, name: true },
+      }),
+      this.prisma.menuItem.findMany({
+        where: { branchId, category: { isActive: true } },
+        orderBy: { sortOrder: 'asc' },
+        include: {
+          modifierGroups: {
+            include: { modifierGroup: { include: { modifiers: true } } },
+          },
+        },
+      }),
+    ]);
+    await provider.pushMenu(ctx, buildMenu(categories, items, itemMap), {
+      idempotencyKey: row.id,
+    });
+  }
+
   private describe(row: IntegrationOutbox) {
+    if (row.kind === ITEM_AVAILABILITY_KIND)
+      return 'an item availability change';
+    if (row.kind === MENU_PUSH_KIND) return 'the menu';
     const p = row.payload as unknown as OrderStatusPayload;
     return `${p.status} for order ${p.externalOrderId}`;
   }

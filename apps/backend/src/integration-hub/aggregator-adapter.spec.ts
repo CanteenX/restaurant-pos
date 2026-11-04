@@ -151,7 +151,9 @@ describe('registry', () => {
     expect(p).toBeInstanceOf(PartnerApiProvider);
     expect(supports(p, 'updateOrderStatus')).toBe(true);
     expect(supports(p, 'cancelOrders')).toBe(true);
-    expect(supports(p, 'itemAvailability')).toBe(false);
+    expect(supports(p, 'itemAvailability')).toBe(true); // #59
+    expect(supports(p, 'menuSync')).toBe(true);
+    expect(supports(getProvider('zomato')!, 'itemAvailability')).toBe(false);
     expect(sourceOf(p)).toBe('partner-api');
     const secretKeys = p.credentialFields
       .filter((f) => f.secret)

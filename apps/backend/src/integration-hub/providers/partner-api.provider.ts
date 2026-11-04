@@ -6,6 +6,10 @@ import {
   type ResolvedTarget,
   type WebhookNetOptions,
 } from '../../modules/webhooks/net-guard';
+import type {
+  CanonicalMenu,
+  PlatformAvailabilityItem,
+} from '../aggregator-menu';
 import { signAggregatorBody } from '../aggregator-signing';
 import {
   NO_CAPABILITIES,
@@ -43,6 +47,8 @@ export class PartnerApiProvider implements IntegrationProvider {
     updateOrderStatus: true,
     cancelOrders: true,
     webhooks: true,
+    itemAvailability: true,
+    menuSync: true,
   };
   readonly credentialFields: CredentialField[] = [
     {
@@ -107,6 +113,34 @@ export class PartnerApiProvider implements IntegrationProvider {
       'POST',
       `/v1/orders/${encodeURIComponent(externalOrderId)}/status`,
       body,
+      o.idempotencyKey,
+    );
+  }
+
+  async setItemAvailability(
+    ctx: ProviderContext,
+    items: PlatformAvailabilityItem[],
+    o: { idempotencyKey: string },
+  ): Promise<void> {
+    await this.call(
+      ctx,
+      'POST',
+      '/v1/items/availability',
+      JSON.stringify({ items }),
+      o.idempotencyKey,
+    );
+  }
+
+  async pushMenu(
+    ctx: ProviderContext,
+    menu: CanonicalMenu,
+    o: { idempotencyKey: string },
+  ): Promise<void> {
+    await this.call(
+      ctx,
+      'PUT',
+      '/v1/menu',
+      JSON.stringify(menu),
       o.idempotencyKey,
     );
   }

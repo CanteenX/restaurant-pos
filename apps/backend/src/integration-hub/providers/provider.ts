@@ -6,6 +6,11 @@
 // Writing a new adapter: implement IntegrationProvider, then add it to
 // providers/registry.ts. Nothing in POS, KDS or order management changes.
 
+import type {
+  CanonicalMenu,
+  PlatformAvailabilityItem,
+} from '../aggregator-menu';
+
 export type IntegrationCategory =
   | 'FOOD_DELIVERY'
   | 'PAYMENT'
@@ -116,6 +121,18 @@ export interface IntegrationProvider {
     rawBody: string,
   ): Promise<{ externalOrderId?: string }>;
   refreshCredentials?(ctx: ProviderContext): Promise<Record<string, string>>;
+  /** Switch items on/off on the platform (#59). Throws OutboundError. */
+  setItemAvailability?(
+    ctx: ProviderContext,
+    items: PlatformAvailabilityItem[],
+    opts: { idempotencyKey: string },
+  ): Promise<void>;
+  /** Publish the whole menu to the platform (#59). Throws OutboundError. */
+  pushMenu?(
+    ctx: ProviderContext,
+    menu: CanonicalMenu,
+    opts: { idempotencyKey: string },
+  ): Promise<void>;
 }
 
 export const NO_CAPABILITIES: ProviderCapabilities = {
