@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
+import { parseDownloadFilename, tallyExportPath, tallyFilename } from "@/lib/tally-export";
 
 export interface ExpenseRow {
   id: string;
@@ -116,5 +117,34 @@ export function useAccountingActions(branchId: string | null) {
         api.post(`/accounting/closing?${q(branchId)}`, dto),
       onSuccess: done,
     }),
+  };
+}
+
+export type TallyMapping = Record<string, string>;
+
+export function useTallyMapping() {
+  return useQuery({
+    queryKey: ["acct", "tally-mapping"],
+    queryFn: () => api.get<TallyMapping>("/accounting/tally-mapping"),
+  });
+}
+export function useSaveTallyMapping() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (dto: TallyMapping) => api.put<TallyMapping>("/accounting/tally-mapping", dto),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["acct", "tally-mapping"] }),
+  });
+}
+
+/** Fetches the Tally XML (with the session cookie) and returns it as a Blob + filename. */
+export async function fetchTallyExport(branchId: string, from: string, to: string) {
+  const res = await fetch(`/api/v1${tallyExportPath(branchId, from, to)}`, { credentials: "include" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ message: res.statusText }));
+    throw new ApiError(body.message ?? "Export failed", res.status);
+  }
+  return {
+    blob: await res.blob(),
+    filename: parseDownloadFilename(res.headers.get("Content-Disposition"), tallyFilename(from, to)),
   };
 }
