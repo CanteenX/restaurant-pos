@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import type { UpdateProgress } from "@/lib/update-progress";
 
 export interface VersionInfo {
   currentVersion: string;
@@ -31,5 +32,17 @@ export function useApplyUpdate() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["system", "update-check"] });
     },
+  });
+}
+
+// Last thing the updater reported. After a failed update the backend may have
+// been restarted (rolled back) underneath the page, so the page reads this on
+// load to show "rolled back" instead of silently showing the old version.
+export function useUpdateProgress(enabled = true) {
+  return useQuery({
+    enabled,
+    queryKey: ["system", "update-progress"],
+    queryFn: () => api.get<UpdateProgress>("/system/update/progress"),
+    staleTime: 30 * 1000,
   });
 }

@@ -16,6 +16,14 @@ export interface VersionInfo {
   checkedAt: string;
 }
 
+export interface UpdateProgress {
+  state: string;
+  version?: string | null;
+  step?: string | null;
+  error?: string | null;
+  rolledBackTo?: string | null;
+}
+
 const DEFAULT_UPDATE_REPO = 'CanteenX/restaurant-pos';
 const DEFAULT_IMAGE_REPO = 'canteenx/nventra-pos-backend';
 const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -167,11 +175,10 @@ export class UpdateService {
 
   // What the updater is doing right now, so the UI can surface a failure
   // (e.g. no internet to pull images) instead of waiting forever.
-  async getProgress(): Promise<{
-    state: string;
-    step?: string | null;
-    error?: string | null;
-  }> {
+  // `rolled_back` = the new version failed its health check and the updater
+  // restored `rolledBackTo`; `error` then holds the reason. `rollback_failed`
+  // = restoring the old version failed too (manual action needed).
+  async getProgress(): Promise<UpdateProgress> {
     const base = (process.env.UPDATER_URL ?? '').trim().replace(/\/$/, '');
     if (!base) return { state: 'unavailable' };
     try {
@@ -180,11 +187,7 @@ export class UpdateService {
         signal: AbortSignal.timeout(5000),
       });
       if (!res.ok) return { state: 'unknown' };
-      return (await res.json()) as {
-        state: string;
-        step?: string | null;
-        error?: string | null;
-      };
+      return (await res.json()) as UpdateProgress;
     } catch {
       return { state: 'unknown' };
     }

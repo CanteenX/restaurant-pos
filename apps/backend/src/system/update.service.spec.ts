@@ -167,4 +167,19 @@ describe('UpdateService', () => {
       expect(JSON.stringify(args)).not.toContain('ghp_secret_value');
     }
   });
+
+  it('passes a rolled-back update status through to the UI', async () => {
+    const reported = {
+      state: 'rolled_back',
+      version: '1.0.2',
+      rolledBackTo: '1.0.1',
+      error: 'nventra-pos-web failed its health check (unhealthy)',
+      step: null,
+    };
+    routes = (url) =>
+      url === 'http://updater:8080/v1/status'
+        ? jsonRes(200, reported)
+        : new Response(null, { status: 500 });
+    await expect(new UpdateService().getProgress()).resolves.toEqual(reported);
+  });
 });
