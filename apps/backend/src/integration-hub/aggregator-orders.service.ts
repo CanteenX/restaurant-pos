@@ -7,10 +7,17 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { OrdersService } from '../modules/orders/orders.service';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  isPriceMismatch,
+  matchLines,
+  platformMoneyNote,
+  resolveBranch,
+} from './aggregator-mapping';
+import { signAggregatorBody } from './aggregator-signing';
 import { decryptSecret } from './secret-box';
 import { getProvider, sourceOf } from './providers/registry';
 
@@ -33,6 +40,8 @@ export const aggregatorEventSchema = z.discriminatedUnion('event', [
     event: z.literal('order.created'),
     orderId: text(120).min(1),
     branchId: text(60).optional(),
+    /** The platform's outlet id, mapped to a branch in the connection settings. */
+    outletId: text(120).optional(),
     type: z.enum(['DELIVERY', 'TAKEAWAY']).default('DELIVERY'),
     paymentMode: z.enum(['PREPAID', 'COD']).optional(),
     customer: z.object({
@@ -53,6 +62,19 @@ export const aggregatorEventSchema = z.discriminatedUnion('event', [
             name: text(200).optional(),
             quantity: z.number().int().min(1).max(99),
             kitchenNote: text(200).optional(),
+            modifiers: z
+              .array(
+                z
+                  .object({
+                    modifierId: text(60).optional(),
+                    name: text(200).optional(),
+                  })
+                  .refine((m) => m.modifierId || m.name, {
+                    message: 'Each add-on needs modifierId or name',
+                  }),
+              )
+              .max(30)
+              .optional(),
           })
           .refine((i) => i.menuItemId || i.name, {
             message: 'Each item needs menuItemId or name',
@@ -60,17 +82,15 @@ export const aggregatorEventSchema = z.discriminatedUnion('event', [
       )
       .min(1)
       .max(100),
+    // Recorded and compared only - never charged (money is server-side).
+    platformTotal: z.number().min(0).max(10_000_000).optional(),
+    packagingCharge: z.number().min(0).max(1_000_000).optional(),
+    platformDiscount: z.number().min(0).max(10_000_000).optional(),
   }),
 ]);
 export type AggregatorEvent = z.infer<typeof aggregatorEventSchema>;
 
-export function signAggregatorBody(
-  secret: string,
-  timestamp: string,
-  rawBody: string,
-): string {
-  return `sha256=${createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex')}`;
-}
+export { signAggregatorBody };
 
 @Injectable()
 export class AggregatorOrdersService {
@@ -144,7 +164,11 @@ export class AggregatorOrdersService {
 
     let parsed: AggregatorEvent;
     try {
-      parsed = aggregatorEventSchema.parse(JSON.parse(rawBody));
+      parsed = aggregatorEventSchema.parse(
+        provider.normalizeWebhook
+          ? provider.normalizeWebhook(headers, rawBody)
+          : JSON.parse(rawBody),
+      );
     } catch (e) {
       const msg =
         e instanceof z.ZodError
@@ -179,7 +203,11 @@ export class AggregatorOrdersService {
       return this.cancel(conn.id, restaurantId, source, parsed, markGood);
     }
     try {
-      const res = await this.createOrder(restaurantId, source, parsed);
+      const outlets =
+        (conn.config as { outlets?: Record<string, string> } | null)?.outlets ??
+        {};
+      const res = await this.createOrder(restaurantId, source, parsed, outlets);
+      if (!res.duplicate) await this.checkPlatformTotal(conn.id, parsed, res);
       await markGood(
         'order_received',
         `${provider.name} order ${parsed.orderId} -> #${res.orderNumber}${res.duplicate ? ' (repeat delivery, ignored)' : ''}`,
@@ -223,6 +251,7 @@ export class AggregatorOrdersService {
         order.id,
         userId,
         ev.reason || 'Cancelled by the platform',
+        { origin: 'platform' },
       );
       await markGood('order_cancelled', `Order ${ev.orderId} cancelled`);
       return { ok: true, cancelled: true };
@@ -248,29 +277,44 @@ export class AggregatorOrdersService {
     return id;
   }
 
+  // The platform's own total is only compared: a drift means our menu price
+  // and the platform listing disagree, which the owner must fix.
+  private async checkPlatformTotal(
+    connectionId: string,
+    ev: Extract<AggregatorEvent, { event: 'order.created' }>,
+    res: { orderId: string; orderNumber: number | string },
+  ) {
+    if (ev.platformTotal === undefined) return;
+    const o = await this.prisma.order.findUnique({
+      where: { id: res.orderId },
+      select: { totalAmount: true },
+    });
+    if (!o || !isPriceMismatch(ev.platformTotal, o.totalAmount.toString()))
+      return;
+    await this.log(
+      connectionId,
+      'WARN',
+      'price_mismatch',
+      `Order ${ev.orderId} (#${res.orderNumber}): platform total ${ev.platformTotal.toFixed(2)} vs our ${o.totalAmount.toFixed(2)} - check the menu prices on the platform`,
+    );
+  }
+
   private async createOrder(
     restaurantId: string,
     source: string,
     ev: Extract<AggregatorEvent, { event: 'order.created' }>,
+    outlets: Record<string, string>,
   ) {
     const branches = await this.prisma.branch.findMany({
       where: { restaurantId },
       select: { id: true },
       orderBy: { createdAt: 'asc' },
     });
-    let branchId: string;
-    if (ev.branchId) {
-      if (!branches.some((b) => b.id === ev.branchId)) {
-        throw new UnprocessableEntityException('Unknown branchId');
-      }
-      branchId = ev.branchId;
-    } else if (branches.length === 1) {
-      branchId = branches[0].id;
-    } else {
-      throw new UnprocessableEntityException(
-        'branchId is required when the restaurant has several branches',
-      );
-    }
+    const branchId = resolveBranch(
+      ev,
+      branches.map((b) => b.id),
+      outlets,
+    );
 
     const existing = await this.prisma.order.findFirst({
       where: {
@@ -288,30 +332,26 @@ export class AggregatorOrdersService {
     // the platform sees a failure instead of the kitchen silently losing a dish.
     const menu = await this.prisma.menuItem.findMany({
       where: { branchId },
-      select: { id: true, name: true },
-    });
-    const byId = new Map(menu.map((m) => [m.id, m.id]));
-    const byName = new Map(
-      menu.map((m) => [m.name.trim().toLowerCase(), m.id]),
-    );
-    const unmatched: string[] = [];
-    const lines = ev.items.flatMap((i) => {
-      const id =
-        (i.menuItemId && byId.get(i.menuItemId)) ||
-        (i.name && byName.get(i.name.trim().toLowerCase()));
-      if (!id) {
-        unmatched.push(i.name ?? i.menuItemId ?? '?');
-        return [];
-      }
-      return [
-        {
-          menuItemId: id,
-          quantity: i.quantity,
-          modifierIds: [] as string[],
-          kitchenNote: i.kitchenNote,
+      select: {
+        id: true,
+        name: true,
+        modifierGroups: {
+          select: {
+            modifierGroup: {
+              select: { modifiers: { select: { id: true, name: true } } },
+            },
+          },
         },
-      ];
+      },
     });
+    const { lines, unmatched } = matchLines(
+      ev.items,
+      menu.map((m) => ({
+        id: m.id,
+        name: m.name,
+        modifiers: m.modifierGroups.flatMap((g) => g.modifierGroup.modifiers),
+      })),
+    );
     if (unmatched.length) {
       throw new UnprocessableEntityException(
         `Items not found on the menu: ${[...new Set(unmatched)].join(', ')}`,
@@ -345,7 +385,9 @@ export class AggregatorOrdersService {
         : ev.paymentMode === 'COD'
           ? ' - COLLECT cash on delivery'
           : '';
-    const notes = `[${label} #${ev.orderId}${pay}] ${ev.notes ?? ''}`.trim();
+    const money = platformMoneyNote(ev);
+    const notes =
+      `[${label} #${ev.orderId}${pay}${money ? ` - ${money}` : ''}] ${ev.notes ?? ''}`.trim();
 
     for (let attempt = 1; ; attempt++) {
       try {

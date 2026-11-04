@@ -2,7 +2,8 @@
 
 Status: design, agreed for issues #57 (mock), #58 (status loop) and #59
 (menu / item on-off). What the inbound endpoint does today is documented in
-[INTEGRATIONS.md](INTEGRATIONS.md#zomato-swiggy-and-aggregators).
+[INTEGRATIONS.md](INTEGRATIONS.md#zomato-swiggy-and-aggregators). #57 and #58
+are built; section 7 lists what #58 shipped and where it differs.
 
 ## 1. Partner assumptions
 
@@ -257,3 +258,29 @@ Simulated conditions: `failNext('500' | '401' | '429' | 'timeout')`
 duplicate delivery (`push(..., { times: 2 })`), out-of-order delivery
 (`pushSequence(..., { reverse: true })`), bad signature (`badSignature`) and
 stale timestamp (`ageSeconds`). Its unit tests run with `pnpm test`.
+
+## 7. What #58 built
+
+- Contract (`providers/provider.ts`): `PlatformOrderStatus`,
+  `OutboundError { retryable, httpStatus }`, `itemAvailability` / `menuSync`
+  capabilities (false everywhere until #59), `normalizeWebhook` hook (called
+  before schema validation; signature checks stay in the hub).
+  `updateOrderStatus(ctx, externalOrderId, status, { reason, idempotencyKey,
+  at })` - the idempotency key is the outbox row id, stable across retries.
+- `PartnerApiProvider` (`providers/partner-api.provider.ts`), key
+  `partner-api`, as in 4.2. Outbound calls use the webhook SSRF guard
+  (`WEBHOOKS_ALLOW_PRIVATE` / `WEBHOOKS_ALLOW_INSECURE` relax it for local
+  mocks only).
+- `IntegrationOutbox` (migration `integration_outbox`) as in 4.3, plus
+  `orderId` / `branchId` columns used for per-order ordering and for the
+  dead-letter notification. Service: `outbox/integration-outbox.service.ts`
+  (global `IntegrationOutboxModule`); policy: `outbox/outbox-policy.ts`.
+- Hooks as in 4.4: `acceptOrder`, `withdrawOrder` (decline -> REJECTED,
+  cancel -> CANCELLED, `origin: 'platform'` skips), `updateKotStatus` (last
+  live ticket READY), `DeliveryService.setStatus` (PICKED_UP -> DISPATCHED,
+  DELIVERED).
+- Inbound mapping as in 4.5 (`aggregator-mapping.ts`): `outletId`, add-ons,
+  platform money recorded + `price_mismatch`. **Not yet:**
+  `items[].externalItemId` - it needs the #59 item map.
+- Tests: `src/integration-hub/aggregator-adapter.spec.ts`,
+  `test/aggregator-flow.e2e-spec.ts` (`AGG_E2E=1`, against the mock).

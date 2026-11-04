@@ -20,6 +20,10 @@ import { IntegrationHubService } from './integration-hub.service';
 const connectSchema = z.object({
   externalAccountId: z.string().trim().max(120).optional(),
   credentials: z.record(z.string().max(60), z.string().max(500)).default({}),
+  outlets: z
+    .record(z.string().trim().min(1).max(120), z.string().trim().min(1).max(60))
+    .refine((o) => Object.keys(o).length <= 200, 'At most 200 outlets')
+    .optional(),
 });
 const enabledSchema = z.object({ enabled: z.boolean() });
 
@@ -65,6 +69,13 @@ export class IntegrationHubController {
     body: z.infer<typeof enabledSchema>,
   ) {
     return this.hub.setEnabled(u.restaurantId, provider, body.enabled);
+  }
+
+  @Auth('settings.manage')
+  @AuditAction('integration.retried', 'IntegrationConnection')
+  @Post(':provider/outbox/retry')
+  retry(@CurrentUser() u: SessionUser, @Param('provider') provider: string) {
+    return this.hub.retryFailed(u.restaurantId, provider);
   }
 
   @Auth('settings.manage')

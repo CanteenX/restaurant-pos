@@ -26,6 +26,7 @@ import { GiftCardsService } from '../gift-cards/gift-cards.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { MarketingService } from '../marketing/marketing.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { IntegrationOutboxService } from '../../integration-hub/outbox/integration-outbox.service';
 import { resolveProfile } from './escpos/encoder';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeGateway } from '../../realtime/realtime.gateway';
@@ -73,6 +74,7 @@ export class OrdersService {
     private readonly webhooks: WebhooksService,
     private readonly verifactu: VerifactuService,
     private readonly referrals: ReferralsService,
+    private readonly outbox: IntegrationOutboxService,
   ) {}
 
   async listOpen(branchId: string, tableId?: string) {
@@ -377,7 +379,9 @@ export class OrdersService {
           guestName: dto.guestName,
           notes: dto.notes,
           clientRequestId: options.clientRequestId,
-          ...(options.historical ? { createdAt: options.historical.createdAt } : {}),
+          ...(options.historical
+            ? { createdAt: options.historical.createdAt }
+            : {}),
           integrationKeyId: options.integrationKeyId,
           clientRequestHash: options.clientRequestHash,
           externalSource: options.externalSource,
@@ -687,6 +691,7 @@ export class OrdersService {
           'This order was just accepted or declined by someone else',
         );
       }
+      await this.outbox.enqueueOrderStatus(tx, order, 'ACCEPTED');
       if (!this.isDeferred(order.scheduledFor ?? undefined)) {
         await this.generateKots(tx, orderId, branchId, order.items);
       }
@@ -727,11 +732,14 @@ export class OrdersService {
     orderId: string,
     userId: string,
     reason: string,
+    // 'platform': the platform itself cancelled, so nothing is sent back.
+    opts: { origin?: 'platform' } = {},
   ) {
     return this.withdrawOrder(branchId, orderId, userId, {
       reason,
       source: 'ONLINE_DECLINED',
       declineIncoming: true,
+      origin: opts.origin,
     });
   }
 
@@ -881,6 +889,7 @@ export class OrdersService {
       source: 'STAFF' | 'CUSTOMER' | 'KITCHEN_REJECTED' | 'ONLINE_DECLINED';
       confirmStarted?: boolean;
       declineIncoming?: boolean;
+      origin?: 'platform';
     },
   ) {
     const reason = options.reason?.trim() || undefined;
@@ -948,6 +957,14 @@ export class OrdersService {
       if (flipped.count === 0) {
         throw new ConflictException(
           'This order was just paid or changed - refresh and check it',
+        );
+      }
+      if (options.origin !== 'platform') {
+        await this.outbox.enqueueOrderStatus(
+          tx,
+          order,
+          options.declineIncoming ? 'REJECTED' : 'CANCELLED',
+          reason,
         );
       }
       await tx.kot.updateMany({
@@ -2377,6 +2394,9 @@ export class OrdersService {
           select: {
             id: true,
             orderNumber: true,
+            branchId: true,
+            externalSource: true,
+            externalOrderId: true,
             table: { select: { assignedWaiterId: true, number: true } },
           },
         },
@@ -2414,6 +2434,7 @@ export class OrdersService {
         where: { kotId },
         data: { status: target },
       });
+      if (target === 'READY') await this.platformReadyIfDone(tx, kot.order);
       return tx.kot.findUniqueOrThrow({ where: { id: kotId } });
     });
 
@@ -2458,6 +2479,29 @@ export class OrdersService {
     }
 
     return updated;
+  }
+
+  // Tells a delivery platform the order is ready once its last live ticket is
+  // READY (or already SERVED). Queued in the caller's transaction; deduped.
+  private async platformReadyIfDone(
+    tx: Prisma.TransactionClient,
+    order: {
+      id: string;
+      branchId: string;
+      externalSource: string | null;
+      externalOrderId: string | null;
+    },
+  ) {
+    if (!order.externalSource) return;
+    const cooking = await tx.kot.count({
+      where: {
+        orderId: order.id,
+        status: { notIn: ['READY', 'SERVED', 'CANCELLED', 'REJECTED'] },
+      },
+    });
+    if (cooking === 0) {
+      await this.outbox.enqueueOrderStatus(tx, order, 'READY');
+    }
   }
 
   // The kitchen declining a ticket. It is never a silent disappearance: the

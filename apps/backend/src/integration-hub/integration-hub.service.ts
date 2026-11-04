@@ -8,13 +8,21 @@ import type { IntegrationConnection, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getProvider, listProviders } from './providers/registry';
 import type { IntegrationProvider, TestResult } from './providers/provider';
+import { IntegrationOutboxService } from './outbox/integration-outbox.service';
 import { decryptSecret, encryptSecret } from './secret-box';
 
 export interface ConnectInput {
   externalAccountId?: string;
   /** Only the fields being set or changed; omitted secrets keep their stored value. */
   credentials: Record<string, string>;
+  /** Platform outlet id -> our branch id. Replaces the stored map when given. */
+  outlets?: Record<string, string>;
 }
+
+type StoredConfig = {
+  credentialKeys?: string[];
+  outlets?: Record<string, string>;
+} | null;
 
 const ctxKey = (restaurantId: string, provider: string) =>
   `${restaurantId}:${provider}`;
@@ -23,7 +31,10 @@ const ctxKey = (restaurantId: string, provider: string) =>
 export class IntegrationHubService {
   private readonly logger = new Logger(IntegrationHubService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly outbox: IntegrationOutboxService,
+  ) {}
 
   private provider(key: string): IntegrationProvider {
     const p = getProvider(key);
@@ -32,11 +43,16 @@ export class IntegrationHubService {
   }
 
   /** What the API may show: never the credentials, only which fields are set. */
-  private view(c: IntegrationConnection | null) {
+  private view(
+    c: IntegrationConnection | null,
+    outbox: { pending: number; dead: number } = { pending: 0, dead: 0 },
+  ) {
     if (!c) return null;
-    const keys = (c.config as { credentialKeys?: string[] } | null)
-      ?.credentialKeys;
+    const cfg = c.config as StoredConfig;
+    const keys = cfg?.credentialKeys;
     return {
+      outlets: cfg?.outlets ?? {},
+      outbox,
       id: c.id,
       enabled: c.enabled,
       status: c.status,
@@ -54,6 +70,7 @@ export class IntegrationHubService {
       where: { restaurantId },
     });
     const byProvider = new Map(rows.map((r) => [r.provider, r]));
+    const counts = await this.outbox.counts(rows.map((r) => r.id));
     return listProviders().map((p) => ({
       key: p.key,
       name: p.name,
@@ -66,7 +83,10 @@ export class IntegrationHubService {
         : null,
       requirements: p.requirements ?? null,
       credentialFields: p.credentialFields,
-      connection: this.view(byProvider.get(p.key) ?? null),
+      connection: this.view(
+        byProvider.get(p.key) ?? null,
+        counts.get(byProvider.get(p.key)?.id ?? ''),
+      ),
     }));
   }
 
@@ -138,6 +158,10 @@ export class IntegrationHubService {
     }
     const accountId =
       input.externalAccountId?.trim() || existing?.externalAccountId || null;
+    const outlets =
+      input.outlets !== undefined
+        ? await this.checkOutlets(restaurantId, input.outlets)
+        : ((existing?.config as StoredConfig)?.outlets ?? undefined);
     if (provider.accountIdLabel && !provider.accountIdOptional && !accountId) {
       throw new BadRequestException(`Enter the ${provider.accountIdLabel}`);
     }
@@ -148,7 +172,10 @@ export class IntegrationHubService {
         JSON.stringify(merged),
         ctxKey(restaurantId, providerKey),
       ),
-      config: { credentialKeys: Object.keys(merged) } as Prisma.InputJsonValue,
+      config: {
+        credentialKeys: Object.keys(merged),
+        ...(outlets ? { outlets } : {}),
+      } as Prisma.InputJsonValue,
       // Saving keys is not the same as a working connection: only a test
       // that the adapter itself observed succeeding can set CONNECTED.
       status:
@@ -172,6 +199,36 @@ export class IntegrationHubService {
         });
     await this.log(row.id, 'INFO', 'credentials_saved', 'Credentials saved');
     return this.view(row);
+  }
+
+  /** Every mapped branch must belong to this restaurant. */
+  private async checkOutlets(
+    restaurantId: string,
+    outlets: Record<string, string>,
+  ) {
+    const ids = [...new Set(Object.values(outlets))];
+    const own = await this.prisma.branch.count({
+      where: { restaurantId, id: { in: ids } },
+    });
+    if (own !== ids.length) {
+      throw new BadRequestException(
+        'An outlet is mapped to a branch that is not part of this restaurant',
+      );
+    }
+    return outlets;
+  }
+
+  /** Re-queues the platform calls that gave up, e.g. after fixing the API key. */
+  async retryFailed(restaurantId: string, providerKey: string) {
+    const c = await this.require(restaurantId, providerKey);
+    const res = await this.outbox.retryDead(c.id);
+    await this.log(
+      c.id,
+      'INFO',
+      'outbox_retry',
+      `Retrying ${res.requeued} failed platform update(s)`,
+    );
+    return res;
   }
 
   async setEnabled(
