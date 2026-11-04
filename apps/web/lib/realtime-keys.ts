@@ -17,7 +17,8 @@ export function realtimeInvalidations(event: string, branchId: string): string[]
     case "order.deleted":
       // ["kds"]: incoming orders waiting to be accepted, and tickets that a
       // cancel/decline/payment changed, live on the kitchen screen too.
-      return [["dashboard"], ["floors", branchId], ["orders"], ["kds"]];
+      // ["gift-cards", branchId]: a checkout may have redeemed a card.
+      return [["dashboard"], ["floors", branchId], ["orders"], ["kds"], ["gift-cards", branchId]];
     case "reservation.created":
     case "reservation.updated":
       return [["reservations", branchId], ["dashboard"]];

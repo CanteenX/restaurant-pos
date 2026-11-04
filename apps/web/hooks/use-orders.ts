@@ -101,6 +101,8 @@ export function useCheckoutOrder(branchId: string | null) {
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["floors", branchId] });
       queryClient.invalidateQueries({ queryKey: ["dashboard", "summary", branchId] });
+      // A gift card may have been redeemed at this checkout.
+      queryClient.invalidateQueries({ queryKey: ["gift-cards", branchId] });
     },
   });
 }
