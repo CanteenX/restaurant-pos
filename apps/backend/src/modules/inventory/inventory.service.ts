@@ -6,6 +6,7 @@ import {
 import type { Prisma } from '@prisma/client';
 import type {
   IngredientDto,
+  IngredientUpdateDto,
   SupplierDto,
   RecipeLineDto,
   MenuItemTrackingDto,
@@ -49,6 +50,7 @@ export class InventoryService {
     dto: IngredientDto,
     userId?: string,
   ) {
+    await this.assertSupplierInBranch(branchId, dto.preferredSupplierId);
     const created = await this.prisma.ingredient.create({
       data: { ...dto, branchId },
     });
@@ -65,10 +67,11 @@ export class InventoryService {
   async updateIngredient(
     branchId: string,
     id: string,
-    dto: Partial<IngredientDto>,
+    dto: IngredientUpdateDto,
     userId?: string,
   ) {
     const existing = await this.getIngredient(branchId, id);
+    await this.assertSupplierInBranch(branchId, dto.preferredSupplierId);
     const updated = await this.prisma.ingredient.update({
       where: { id },
       data: dto,
@@ -106,6 +109,25 @@ export class InventoryService {
       metadata: { branchId, name: existing.name },
     });
     return { ok: true };
+  }
+
+  // Supplier is branch-scoped: a preferred supplier must belong to the same
+  // branch, so an id from another branch/tenant (or an unknown id, which
+  // would otherwise surface as an FK 500) is rejected with a 400.
+  private async assertSupplierInBranch(
+    branchId: string,
+    supplierId: string | null | undefined,
+  ): Promise<void> {
+    if (!supplierId) return;
+    const supplier = await this.prisma.supplier.findFirst({
+      where: { id: supplierId, branchId },
+      select: { id: true },
+    });
+    if (!supplier) {
+      throw new BadRequestException(
+        'Preferred supplier not found in this branch',
+      );
+    }
   }
 
   async lowStockIngredients(branchId: string) {

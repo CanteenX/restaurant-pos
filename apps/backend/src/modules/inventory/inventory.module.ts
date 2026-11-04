@@ -7,6 +7,7 @@ import { GoodsReceiptsService } from './goods-receipts.service';
 import { InventoryController } from './inventory.controller';
 import { InventoryService } from './inventory.service';
 import { PurchaseOrdersService } from './purchase-orders.service';
+import { ReorderSuggestionsService } from './reorder-suggestions.service';
 import { PurchaseRequestsService } from './purchase-requests.service';
 import { StockAlertsService } from './stock-alerts.service';
 import { StockService } from './stock.service';
@@ -28,6 +29,7 @@ import { WasteService } from './waste.service';
     StockAlertsService,
     TransfersService,
     PurchaseRequestsService,
+    ReorderSuggestionsService,
     SupplierQuotationsService,
     SupplierInvoicesService,
     BranchAccessService,

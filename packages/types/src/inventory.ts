@@ -13,14 +13,35 @@ export const ingredientUnitSchema = z.enum([
 ]);
 export type IngredientUnit = z.infer<typeof ingredientUnitSchema>;
 
-export const ingredientSchema = z.object({
+// Base fields with NO defaults, shared by create and update (zod 4 keeps
+// .default() inside .partial(), which would reset omitted fields on PATCH).
+const ingredientFields = z.object({
   name: z.string().min(1),
   sku: z.string().optional(),
   unit: ingredientUnitSchema,
-  reorderLevel: z.coerce.number().nonnegative().default(0),
-  isActive: z.boolean().default(true),
+  reorderLevel: z.coerce.number().nonnegative(),
+  // capped like the reorder `days` window (1..365)
+  leadTimeDays: z.coerce
+    .number()
+    .int()
+    .nonnegative()
+    .max(365)
+    .nullable()
+    .optional(),
+  packSize: z.coerce.number().positive().nullable().optional(),
+  preferredSupplierId: z.string().min(1).nullable().optional(),
+  isActive: z.boolean(),
+});
+
+export const ingredientSchema = ingredientFields.extend({
+  reorderLevel: ingredientFields.shape.reorderLevel.default(0),
+  isActive: ingredientFields.shape.isActive.default(true),
 });
 export type IngredientDto = z.infer<typeof ingredientSchema>;
+
+/** PATCH: only the fields sent are written; omitted fields keep their value. */
+export const ingredientUpdateSchema = ingredientFields.partial();
+export type IngredientUpdateDto = z.infer<typeof ingredientUpdateSchema>;
 
 export const stockAdjustmentSchema = z.object({
   quantity: z.coerce.number(), // signed: positive to add, negative to remove
@@ -202,3 +223,11 @@ export const supplierPaymentSchema = z.object({
   reference: z.string().optional(),
 });
 export type SupplierPaymentDto = z.infer<typeof supplierPaymentSchema>;
+
+export const reorderSuggestionsQuerySchema = z.object({
+  branchId: z.string().min(1),
+  days: z.coerce.number().int().min(1).max(365).default(30),
+});
+export type ReorderSuggestionsQuery = z.infer<
+  typeof reorderSuggestionsQuerySchema
+>;
