@@ -17,16 +17,22 @@ import {
   useUpdateKotStatus,
   type KotTicket,
 } from "@/hooks/use-kds";
+import { useI18n, type TranslationKey } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 
-const STATUS_LABEL: Record<string, string> = {
-  NEW: "Accept",
-  ACCEPTED: "Start preparing",
-  PREPARING: "Mark ready",
-  READY: "Mark served",
+const STATUS_LABEL: Record<string, TranslationKey> = {
+  NEW: "kds.ticket.accept",
+  ACCEPTED: "kds.ticket.startPreparing",
+  PREPARING: "kds.ticket.markReady",
+  READY: "kds.ticket.markServed",
 };
 
-const REJECT_REASONS = ["Out of stock", "Item unavailable", "Kitchen too busy", "Equipment problem"];
+const REJECT_REASONS: TranslationKey[] = [
+  "kds.reject.reason.outOfStock",
+  "kds.reject.reason.unavailable",
+  "kds.reject.reason.busy",
+  "kds.reject.reason.equipment",
+];
 
 // A ticket this young is new enough to draw the eye (and it stops on its own).
 const FRESH_MINUTES = 2;
@@ -52,6 +58,7 @@ function customerPhone(order: KotTicket["order"]) {
 }
 
 export function TicketCard({ ticket, branchId }: { ticket: KotTicket; branchId: string | null }) {
+  const { t } = useI18n();
   const elapsed = useElapsedMinutes(ticket.createdAt);
   const updateStatus = useUpdateKotStatus(branchId);
   const setPriority = useSetKotPriority(branchId);
@@ -83,16 +90,16 @@ export function TicketCard({ ticket, branchId }: { ticket: KotTicket; branchId: 
       <ReasonDialog
         open={rejectOpen}
         onOpenChange={setRejectOpen}
-        title={`Reject ticket for order #${ticket.order.orderNumber}?`}
+        title={t("kds.reject.title", { number: ticket.order.orderNumber })}
         description={
           ticket.order.table
-            ? `Table ${ticket.order.table.number} will be told the kitchen cannot make this. The ticket stays on record with your name and reason.`
-            : "The guest will be told the kitchen cannot make this. The ticket stays on record with your name and reason."
+            ? t("kds.reject.descriptionTable", { number: ticket.order.table.number })
+            : t("kds.reject.description")
         }
-        warning={started ? "This ticket is already being prepared. Rejecting it means the food in progress is wasted." : undefined}
-        reasons={REJECT_REASONS}
-        confirmLabel="Reject ticket"
-        keepLabel="Keep ticket"
+        warning={started ? t("kds.reject.warning") : undefined}
+        reasons={REJECT_REASONS.map((k) => t(k))}
+        confirmLabel={t("kds.reject.confirm")}
+        keepLabel={t("kds.reject.keep")}
         onSubmit={(reason) =>
           reject.mutateAsync({ id: ticket.id, reason, confirmStarted: started ? true : undefined })
         }
@@ -100,28 +107,28 @@ export function TicketCard({ ticket, branchId }: { ticket: KotTicket; branchId: 
       <ContactDetailsDialog
         open={detailsOpen}
         onOpenChange={setDetailsOpen}
-        title={`Order #${ticket.order.orderNumber}`}
+        title={t("kds.ticket.orderTitle", { number: ticket.order.orderNumber })}
         name={customerDisplayName(ticket.order)}
-        subtitle={ticket.order.table ? `Table ${ticket.order.table.number}` : ticket.order.type}
+        subtitle={ticket.order.table ? t("kds.tableNumber", { number: ticket.order.table.number }) : ticket.order.type}
         phone={customerPhone(ticket.order)}
-        waMessage={`Hi ${customerDisplayName(ticket.order) ?? ""}, this is regarding your order #${ticket.order.orderNumber}.`}
+        waMessage={t("kds.ticket.whatsapp", { name: customerDisplayName(ticket.order) ?? "", number: ticket.order.orderNumber })}
       />
       <button
         type="button"
         onClick={() => setDetailsOpen(true)}
         className="flex items-center justify-between rounded-md text-left transition hover:opacity-80"
-        title="View customer details"
+        title={t("kds.ticket.viewCustomer")}
       >
         <div>
           <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
             #{ticket.order.orderNumber}
             {ticket.isPriority && <Star className="h-3.5 w-3.5 fill-warning text-warning" />}
             {ticket.order.channel === "ONLINE" && (
-              <Globe className="h-3.5 w-3.5 text-muted-foreground" aria-label="Online order" />
+              <Globe className="h-3.5 w-3.5 text-muted-foreground" aria-label={t("kds.onlineOrder")} />
             )}
           </p>
           <p className="text-xs text-muted-foreground">
-            {ticket.order.table ? `Table ${ticket.order.table.number}` : ticket.order.type}
+            {ticket.order.table ? t("kds.tableNumber", { number: ticket.order.table.number }) : ticket.order.type}
             {ticket.station && ` · ${ticket.station.name}`}
             {customerDisplayName(ticket.order) && ` · ${customerDisplayName(ticket.order)}`}
           </p>
@@ -133,7 +140,7 @@ export function TicketCard({ ticket, branchId }: { ticket: KotTicket; branchId: 
           )}
         >
           <Timer className="h-3 w-3" />
-          {elapsed}m
+          {t("kds.minutes", { count: elapsed })}
         </div>
       </button>
 
@@ -176,13 +183,13 @@ export function TicketCard({ ticket, branchId }: { ticket: KotTicket; branchId: 
                     toast.error(
                       err instanceof ApiError
                         ? err.message
-                        : "Could not update the ticket. Check the connection and try again.",
+                        : t("kds.ticket.updateFailed"),
                     ),
                 },
               )
             }
           >
-            {updateStatus.isPending ? "Updating…" : STATUS_LABEL[ticket.status]}
+            {updateStatus.isPending ? t("kds.ticket.updating") : t(STATUS_LABEL[ticket.status])}
           </Button>
         )}
         <div className="flex items-center gap-2">
@@ -191,18 +198,18 @@ export function TicketCard({ ticket, branchId }: { ticket: KotTicket; branchId: 
             variant="destructive"
             className="h-12 min-w-0 flex-1 px-4"
             onClick={() => setRejectOpen(true)}
-            aria-label={`Reject ticket for order ${ticket.order.orderNumber}`}
+            aria-label={t("kds.reject.ariaLabel", { number: ticket.order.orderNumber })}
           >
             <X className="h-5 w-5" aria-hidden />
-            Reject
+            {t("kds.reject")}
           </Button>
         )}
         <Button
           variant="outline"
           size="icon"
           className="h-12 w-12 shrink-0"
-          title={ticket.isPriority ? "Unmark priority" : "Mark priority"}
-          aria-label={ticket.isPriority ? "Unmark priority" : "Mark priority"}
+          title={ticket.isPriority ? t("kds.priority.unmark") : t("kds.priority.mark")}
+          aria-label={ticket.isPriority ? t("kds.priority.unmark") : t("kds.priority.mark")}
           disabled={setPriority.isPending}
           onClick={() =>
             setPriority.mutate({ id: ticket.id, isPriority: !ticket.isPriority })
@@ -214,8 +221,8 @@ export function TicketCard({ ticket, branchId }: { ticket: KotTicket; branchId: 
           variant="outline"
           size="icon"
           className="h-12 w-12 shrink-0"
-          title={ticket.printedCount > 0 ? "Reprint ticket (marked REPRINT)" : "Print ticket"}
-          aria-label={ticket.printedCount > 0 ? "Reprint ticket" : "Print ticket"}
+          title={ticket.printedCount > 0 ? t("kds.print.reprintTitle") : t("kds.print.title")}
+          aria-label={ticket.printedCount > 0 ? t("kds.print.reprintLabel") : t("kds.print.title")}
           disabled={reprint.isPending}
           onClick={() =>
             reprint.mutate(
@@ -223,10 +230,10 @@ export function TicketCard({ ticket, branchId }: { ticket: KotTicket; branchId: 
               {
                 onSuccess: () =>
                   toast.success(
-                    ticket.printedCount > 0 ? "Reprint sent to the kitchen printer" : "Ticket sent to the kitchen printer",
+                    ticket.printedCount > 0 ? t("kds.print.reprintSent") : t("kds.print.sent"),
                   ),
                 onError: (err) =>
-                  toast.error(err instanceof ApiError ? err.message : "Could not print the ticket"),
+                  toast.error(err instanceof ApiError ? err.message : t("kds.print.failed")),
               },
             )
           }
