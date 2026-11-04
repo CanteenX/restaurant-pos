@@ -16,8 +16,10 @@ import {
 import { useBranch } from "@/hooks/use-branch";
 import { useWasteLogs } from "@/hooks/use-inventory";
 import { formatCurrency } from "@/lib/format";
+import { useI18n } from "@/lib/i18n/context";
 
 export default function WastePage() {
+  const { t } = useI18n();
   const { branchId } = useBranch();
   const { data: logs, isLoading } = useWasteLogs(branchId);
 
@@ -30,9 +32,9 @@ export default function WastePage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[32px] font-semibold tracking-tight text-foreground">Inventory</h1>
+          <h1 className="text-[32px] font-semibold tracking-tight text-foreground">{t("inv.title")}</h1>
           <p className="text-sm text-muted-foreground">
-            Ingredients, recipe costing, purchase orders, and waste
+            {t("inv.subtitle")}
           </p>
         </div>
         <LogWasteDialog branchId={branchId} />
@@ -43,7 +45,7 @@ export default function WastePage() {
       {typeof totalCost === "number" && logs && logs.length > 0 && (
         <Card className="flex items-center gap-3 p-5">
           <div>
-            <p className="text-xs text-muted-foreground">Total cost of waste on record</p>
+            <p className="text-xs text-muted-foreground">{t("inv.waste.totalCost")}</p>
             <p className="text-xl font-semibold tabular-nums text-destructive">
               {formatCurrency(totalCost)}
             </p>
@@ -62,12 +64,12 @@ export default function WastePage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Ingredient</TableHead>
-                <TableHead className="text-right">Quantity</TableHead>
-                <TableHead>Reason</TableHead>
-                <TableHead className="text-right">Cost</TableHead>
-                <TableHead>Logged by</TableHead>
-                <TableHead>Date</TableHead>
+                <TableHead>{t("inv.col.ingredient")}</TableHead>
+                <TableHead className="text-right">{t("inv.col.quantity")}</TableHead>
+                <TableHead>{t("inv.col.reason")}</TableHead>
+                <TableHead className="text-right">{t("inv.waste.cost")}</TableHead>
+                <TableHead>{t("inv.waste.loggedBy")}</TableHead>
+                <TableHead>{t("inv.waste.date")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -78,7 +80,7 @@ export default function WastePage() {
                     {log.quantity} {log.ingredient.unit}
                   </TableCell>
                   <TableCell>
-                    <Badge variant="outline">{log.reason.replace("_", " ")}</Badge>
+                    <Badge variant="outline">{t(`inv.waste.reason.${log.reason}`)}</Badge>
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-destructive">
                     {formatCurrency(Number(log.quantity) * Number(log.unitCostAtWaste))}
@@ -93,9 +95,9 @@ export default function WastePage() {
           </Table>
         ) : (
           <div className="flex flex-col items-center gap-2 py-16 text-center">
-            <p className="text-sm font-medium text-foreground">No waste logged</p>
+            <p className="text-sm font-medium text-foreground">{t("inv.waste.empty.title")}</p>
             <p className="text-sm text-muted-foreground">
-              Log spoiled, damaged, or expired stock to track cost of waste.
+              {t("inv.waste.empty.body")}
             </p>
           </div>
         )}

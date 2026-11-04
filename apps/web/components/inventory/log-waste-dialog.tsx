@@ -17,17 +17,12 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useIngredients, useLogWaste } from "@/hooks/use-inventory";
 import { ApiError } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 
-const REASONS: { value: WasteReason; label: string }[] = [
-  { value: "EXPIRED", label: "Expired" },
-  { value: "SPOILED", label: "Spoiled" },
-  { value: "DAMAGED", label: "Damaged" },
-  { value: "PREP_ERROR", label: "Prep error" },
-  { value: "OVER_PRODUCTION", label: "Over-production" },
-  { value: "OTHER", label: "Other" },
-];
+const REASONS: WasteReason[] = ["EXPIRED", "SPOILED", "DAMAGED", "PREP_ERROR", "OVER_PRODUCTION", "OTHER"];
 
 export function LogWasteDialog({ branchId }: { branchId: string | null }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [ingredientId, setIngredientId] = useState("");
   const [quantity, setQuantity] = useState("");
@@ -45,42 +40,42 @@ export function LogWasteDialog({ branchId }: { branchId: string | null }) {
       { ingredientId, quantity: Number(quantity), reason, notes: notes || undefined },
       {
         onSuccess: () => {
-          toast.success("Waste logged and stock updated");
+          toast.success(t("inv.waste.logged"));
           setOpen(false);
           setIngredientId("");
           setQuantity("");
           setNotes("");
         },
-        onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not log waste"),
+        onError: (err) => toast.error(err instanceof ApiError ? err.message : t("inv.waste.logFailed")),
       },
     );
   };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button size="sm">Log waste</Button>} />
+      <DialogTrigger render={<Button size="sm">{t("inv.waste.log")}</Button>} />
       <DialogContent className="sm:max-w-sm">
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>Log waste</DialogTitle>
+            <DialogTitle>{t("inv.waste.log")}</DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-2">
-            <Label>Ingredient</Label>
+            <Label>{t("inv.col.ingredient")}</Label>
             <Select value={ingredientId} onValueChange={(v) => setIngredientId(v ?? "")}>
               <SelectTrigger>
-                <SelectValue placeholder="Select an ingredient" />
+                <SelectValue placeholder={t("inv.waste.selectIngredient")} />
               </SelectTrigger>
               <SelectContent>
                 {ingredients?.map((i) => (
                   <SelectItem key={i.id} value={i.id}>
-                    {i.name} ({i.currentStock} {i.unit} in stock)
+                    {t("inv.waste.inStock", { name: i.name, stock: i.currentStock, unit: i.unit })}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="w-qty">Quantity{selected ? ` (${selected.unit})` : ""}</Label>
+            <Label htmlFor="w-qty">{selected ? t("inv.transfers.quantityUnit", { unit: selected.unit }) : t("inv.col.quantity")}</Label>
             <Input
               id="w-qty"
               type="number"
@@ -92,27 +87,27 @@ export function LogWasteDialog({ branchId }: { branchId: string | null }) {
             />
           </div>
           <div className="flex flex-col gap-2">
-            <Label>Reason</Label>
+            <Label>{t("inv.col.reason")}</Label>
             <Select value={reason} onValueChange={(v) => setReason(v as WasteReason)}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {REASONS.map((r) => (
-                  <SelectItem key={r.value} value={r.value}>
-                    {r.label}
+                  <SelectItem key={r} value={r}>
+                    {t(`inv.waste.reason.${r}`)}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="w-notes">Notes (optional)</Label>
+            <Label htmlFor="w-notes">{t("inv.waste.notesOptional")}</Label>
             <Input id="w-notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
           </div>
           <DialogFooter>
             <Button type="submit" disabled={logWaste.isPending}>
-              {logWaste.isPending ? "Logging…" : "Log waste"}
+              {logWaste.isPending ? t("inv.waste.logging") : t("inv.waste.log")}
             </Button>
           </DialogFooter>
         </form>

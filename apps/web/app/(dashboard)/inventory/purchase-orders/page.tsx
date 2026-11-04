@@ -17,6 +17,7 @@ import {
 import { useBranch } from "@/hooks/use-branch";
 import { usePurchaseOrders, type PurchaseOrder } from "@/hooks/use-inventory";
 import { formatCurrency } from "@/lib/format";
+import { useI18n } from "@/lib/i18n/context";
 
 const STATUS_VARIANT: Record<PurchaseOrder["status"], "default" | "secondary" | "outline" | "destructive"> = {
   DRAFT: "secondary",
@@ -27,6 +28,7 @@ const STATUS_VARIANT: Record<PurchaseOrder["status"], "default" | "secondary" | 
 };
 
 export default function PurchaseOrdersPage() {
+  const { t } = useI18n();
   const { branchId } = useBranch();
   const { data: orders, isLoading } = usePurchaseOrders(branchId);
 
@@ -34,9 +36,9 @@ export default function PurchaseOrdersPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[32px] font-semibold tracking-tight text-foreground">Inventory</h1>
+          <h1 className="text-[32px] font-semibold tracking-tight text-foreground">{t("inv.title")}</h1>
           <p className="text-sm text-muted-foreground">
-            Ingredients, recipe costing, purchase orders, and waste
+            {t("inv.subtitle")}
           </p>
         </div>
         <CreatePoDialog branchId={branchId} />
@@ -55,12 +57,12 @@ export default function PurchaseOrdersPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>PO #</TableHead>
-                <TableHead>Supplier</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Items</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-                <TableHead>Created</TableHead>
+                <TableHead>{t("inv.po.number")}</TableHead>
+                <TableHead>{t("inv.col.supplier")}</TableHead>
+                <TableHead>{t("inv.col.status")}</TableHead>
+                <TableHead className="text-right">{t("inv.col.items")}</TableHead>
+                <TableHead className="text-right">{t("inv.col.total")}</TableHead>
+                <TableHead>{t("inv.po.created")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -76,7 +78,7 @@ export default function PurchaseOrdersPage() {
                   </TableCell>
                   <TableCell className="text-muted-foreground">{po.supplier.name}</TableCell>
                   <TableCell>
-                    <Badge variant={STATUS_VARIANT[po.status]}>{po.status.replace("_", " ")}</Badge>
+                    <Badge variant={STATUS_VARIANT[po.status]}>{t(`inv.status.${po.status}`)}</Badge>
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{po.items.length}</TableCell>
                   <TableCell className="text-right tabular-nums">{formatCurrency(po.totalAmount)}</TableCell>
@@ -89,9 +91,9 @@ export default function PurchaseOrdersPage() {
           </Table>
         ) : (
           <div className="flex flex-col items-center gap-2 py-16 text-center">
-            <p className="text-sm font-medium text-foreground">No purchase orders yet</p>
+            <p className="text-sm font-medium text-foreground">{t("inv.po.empty.title")}</p>
             <p className="text-sm text-muted-foreground">
-              Create one to start tracking what you&apos;ve ordered from suppliers.
+              {t("inv.po.empty.body")}
             </p>
           </div>
         )}

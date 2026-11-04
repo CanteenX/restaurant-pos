@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAdjustStock, type Ingredient } from "@/hooks/use-inventory";
 import { ApiError } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 
 export function AdjustStockDialog({
   branchId,
@@ -23,6 +24,7 @@ export function AdjustStockDialog({
   branchId: string | null;
   ingredient: Ingredient;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [quantity, setQuantity] = useState("");
   const [note, setNote] = useState("");
@@ -36,36 +38,34 @@ export function AdjustStockDialog({
       { id: ingredient.id, dto: { quantity: qty, note } },
       {
         onSuccess: () => {
-          toast.success(`Stock adjusted by ${qty > 0 ? "+" : ""}${qty} ${ingredient.unit}`);
+          toast.success(t("inv.adjust.done", { change: `${qty > 0 ? "+" : ""}${qty}`, unit: ingredient.unit }));
           setOpen(false);
           setQuantity("");
           setNote("");
         },
-        onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not adjust stock"),
+        onError: (err) => toast.error(err instanceof ApiError ? err.message : t("inv.adjust.failed")),
       },
     );
   };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button variant="outline" size="sm">Adjust</Button>} />
+      <DialogTrigger render={<Button variant="outline" size="sm">{t("inv.adjust.trigger")}</Button>} />
       <DialogContent className="sm:max-w-sm">
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>Adjust stock — {ingredient.name}</DialogTitle>
+            <DialogTitle>{t("inv.adjust.title", { name: ingredient.name })}</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Current: {ingredient.currentStock} {ingredient.unit}. Use this only for stocktake
-            corrections — receiving stock should go through a purchase order + GRN, and losses
-            should go through the waste log.
+            {t("inv.adjust.help", { stock: ingredient.currentStock, unit: ingredient.unit })}
           </p>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="adj-qty">Quantity change</Label>
+            <Label htmlFor="adj-qty">{t("inv.adjust.quantityChange")}</Label>
             <Input
               id="adj-qty"
               type="number"
               step="0.001"
-              placeholder="e.g. -2 or 5"
+              placeholder={t("inv.adjust.quantityPlaceholder")}
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
               autoFocus
@@ -73,18 +73,18 @@ export function AdjustStockDialog({
             />
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="adj-note">Reason</Label>
+            <Label htmlFor="adj-note">{t("inv.col.reason")}</Label>
             <Input
               id="adj-note"
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="e.g. Physical count correction"
+              placeholder={t("inv.adjust.reasonPlaceholder")}
               required
             />
           </div>
           <DialogFooter>
             <Button type="submit" disabled={adjustStock.isPending}>
-              {adjustStock.isPending ? "Saving…" : "Save adjustment"}
+              {adjustStock.isPending ? t("inv.saving") : t("inv.adjust.save")}
             </Button>
           </DialogFooter>
         </form>

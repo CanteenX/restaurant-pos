@@ -2,18 +2,20 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useI18n, type TranslationKey } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 
-const TABS = [
-  { label: "Ingredients", href: "/inventory" },
-  { label: "Suppliers", href: "/inventory/suppliers" },
-  { label: "Purchase Orders", href: "/inventory/purchase-orders" },
-  { label: "Procurement", href: "/inventory/procurement" },
-  { label: "Transfers", href: "/inventory/transfers" },
-  { label: "Waste", href: "/inventory/waste" },
+const TABS: { key: TranslationKey; href: string }[] = [
+  { key: "inv.tabs.ingredients", href: "/inventory" },
+  { key: "inv.tabs.suppliers", href: "/inventory/suppliers" },
+  { key: "inv.tabs.purchaseOrders", href: "/inventory/purchase-orders" },
+  { key: "inv.tabs.procurement", href: "/inventory/procurement" },
+  { key: "inv.tabs.transfers", href: "/inventory/transfers" },
+  { key: "inv.tabs.waste", href: "/inventory/waste" },
 ];
 
 export function InventoryTabs() {
+  const { t } = useI18n();
   const pathname = usePathname();
 
   return (
@@ -32,7 +34,7 @@ export function InventoryTabs() {
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
           >
-            {tab.label}
+            {t(tab.key)}
           </Link>
         );
       })}
