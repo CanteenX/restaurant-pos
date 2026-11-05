@@ -24,25 +24,30 @@ type OrderMoney = Pick<
   | 'taxAmount'
   | 'discountAmount'
   | 'loyaltyDiscountAmount'
+  | 'tipAmount'
   | 'deliveryFee'
 >;
 
 /**
  * What an external caller is told an order costs (REST and GraphQL), from
  * the server-computed stored amounts. Prices are tax-inclusive, so tax is
- * informational and not added again.
+ * informational and not added again. `total` follows the same formula as
+ * the bill (settlement.ts `totalDue`): subtotal - discounts + tip + delivery,
+ * so it equals the stored `totalAmount` once the bill is settled.
  */
 export function orderTotals(order: OrderMoney) {
   const num = (v: Prisma.Decimal | null) => (v ? Number(v) : 0);
   const subtotal = num(order.subtotal);
   const discount = num(order.discountAmount) + num(order.loyaltyDiscountAmount);
   const deliveryFee = num(order.deliveryFee);
+  const tip = num(order.tipAmount);
   return {
     subtotal,
     tax: num(order.taxAmount),
     discount,
+    tip,
     deliveryFee,
-    total: Math.round((subtotal - discount + deliveryFee) * 100) / 100,
+    total: Math.round((subtotal - discount + tip + deliveryFee) * 100) / 100,
   };
 }
 

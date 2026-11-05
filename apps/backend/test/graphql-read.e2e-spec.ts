@@ -48,7 +48,11 @@ run('GraphQL read resolvers (e2e)', () => {
   const codes = (body: { errors?: { extensions?: { code?: string } }[] }) =>
     (body.errors ?? []).map((e) => e.extensions?.code);
 
-  const makeOrder = async (n: number, keyId: string | null) => {
+  const makeOrder = async (
+    n: number,
+    keyId: string | null,
+    withCustomer = true,
+  ) => {
     const o = await prisma.order.create({
       data: {
         branchId: 'demo-branch',
@@ -56,7 +60,7 @@ run('GraphQL read resolvers (e2e)', () => {
         type: 'TAKEAWAY',
         channel: keyId ? 'ONLINE' : 'STAFF',
         createdById: ownerId,
-        customerId,
+        customerId: withCustomer ? customerId : null,
         integrationKeyId: keyId,
         subtotal: 200,
         taxAmount: 9.52,
@@ -379,6 +383,27 @@ run('GraphQL read resolvers (e2e)', () => {
       expect(res.body.data.order).toEqual({
         id: staffOrderId,
         customer: { name: `Gql Guest ${tag}` },
+      });
+    });
+
+    it('reports a tipped, settled order at the bill total', async () => {
+      // No customer, so settling it earns no loyalty points on the shared guest.
+      const tipped = await makeOrder(6, null, false);
+      const pay = await owner
+        .post(`/api/v1/orders/${tipped}/checkout?branchId=demo-branch`)
+        .send({ tipAmount: 20, payments: [{ method: 'CASH', amount: 220 }] });
+      expect(pay.status).toBe(201);
+      const stored = await prisma.order.findUniqueOrThrow({
+        where: { id: tipped },
+      });
+      expect(stored.status).toBe('PAID');
+      expect(Number(stored.totalAmount)).toBe(220);
+      const res = await gql(
+        `{ order(id: "${tipped}") { status totals { subtotal tip total } } }`,
+      );
+      expect(res.body.data.order).toEqual({
+        status: 'PAID',
+        totals: { subtotal: 200, tip: 20, total: Number(stored.totalAmount) },
       });
     });
 

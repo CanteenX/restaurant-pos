@@ -231,7 +231,7 @@ The response is the order in the shape below (without customer details):
   "createdAt": "...", "scheduledFor": null, "notes": null,
   "items": [{ "name": "Margherita", "quantity": 2, "unitPrice": 200, "lineTotal": 400,
               "kitchenNote": null, "modifiers": [] }],
-  "totals": { "subtotal": 400, "tax": 19.05, "discount": 0, "deliveryFee": 40, "total": 440, "paid": 0 },
+  "totals": { "subtotal": 400, "tax": 19.05, "discount": 0, "tip": 0, "deliveryFee": 40, "total": 440, "paid": 0 },
   "fulfillment": { "deliveryStatus": "UNASSIGNED", "etaAt": "...", "deliveredAt": null }
 }
 ```

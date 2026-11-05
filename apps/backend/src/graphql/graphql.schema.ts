@@ -87,6 +87,7 @@ export const typeDefs = /* GraphQL */ `
     subtotal: Float!
     tax: Float!
     discount: Float!
+    tip: Float!
     deliveryFee: Float!
     total: Float!
   }

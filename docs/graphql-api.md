@@ -92,13 +92,17 @@ query RecentOrders($after: String) {
       id
       orderNumber
       createdAt
-      totals { subtotal tax discount deliveryFee total }
+      totals { subtotal tax discount tip deliveryFee total }
       items(first: 5) { name quantity lineTotal }
     }
     pageInfo { hasNextPage endCursor }
   }
 }
 ```
+
+`totals.total` is what the guest owes: subtotal - discount + tip + delivery fee
+(prices are tax-inclusive, so `tax` is informational). For a settled order it
+equals the bill and the payments.
 
 ## Limits
 
