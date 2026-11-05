@@ -168,3 +168,67 @@ export async function fetchTallyExport(branchId: string, from: string, to: strin
     filename: parseDownloadFilename(res.headers.get("Content-Disposition"), tallyFilename(from, to)),
   };
 }
+
+/* ------------------------------ Petty cash ------------------------------ */
+
+export interface PettyEntryRow {
+  id: string;
+  businessDate: string;
+  kind: "TOP_UP" | "PAYOUT" | "ADJUST";
+  amount: string;
+  balanceAfter: string;
+  reason: string;
+  receiptRef: string | null;
+  fromTill: boolean;
+  expense: { id: string; category: string } | null;
+}
+export interface PettyDaySummary {
+  businessDate: string;
+  openingBalance: number;
+  topUps: number;
+  payouts: number;
+  adjustments: number;
+  closingBalance: number;
+}
+export interface PettyReconcileResult {
+  expected: number;
+  counted: number;
+  variance: number;
+}
+
+export function usePettyBalance(branchId: string | null) {
+  return useQuery({
+    queryKey: ["acct", "petty", "balance", branchId],
+    queryFn: () => api.get<{ balance: number }>(`/accounting/petty-cash?${q(branchId)}`),
+    enabled: !!branchId,
+  });
+}
+export function usePettyEntries(branchId: string | null, from: string, to: string) {
+  return useQuery({
+    queryKey: ["acct", "petty", "entries", branchId, from, to],
+    queryFn: () => api.get<PettyEntryRow[]>(`/accounting/petty-cash/entries?${q(branchId)}&from=${from}&to=${to}`),
+    enabled: !!branchId,
+  });
+}
+export function usePettySummary(branchId: string | null, date: string) {
+  return useQuery({
+    queryKey: ["acct", "petty", "summary", branchId, date],
+    queryFn: () => api.get<PettyDaySummary>(`/accounting/petty-cash/summary?${q(branchId)}&date=${date}`),
+    enabled: !!branchId,
+  });
+}
+export function usePettyActions(branchId: string | null) {
+  const qc = useQueryClient();
+  const done = () => qc.invalidateQueries({ queryKey: ["acct", "petty"] });
+  return {
+    record: useMutation({
+      mutationFn: (dto: object) => api.post(`/accounting/petty-cash/entries?${q(branchId)}`, dto),
+      onSuccess: done,
+    }),
+    reconcile: useMutation({
+      mutationFn: (dto: { businessDate: string; countedCash: number; note?: string }) =>
+        api.post<PettyReconcileResult>(`/accounting/petty-cash/reconcile?${q(branchId)}`, dto),
+      onSuccess: done,
+    }),
+  };
+}
