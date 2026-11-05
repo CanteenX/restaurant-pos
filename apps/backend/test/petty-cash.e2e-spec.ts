@@ -3,6 +3,8 @@
 //   PETTY_CASH_E2E=1 DATABASE_URL=... JWT_SECRET=x pnpm test:e2e -- petty-cash
 // Uses the seeded demo branch and a random far-future business date, and
 // asserts balance deltas, so it can be re-run against the same database.
+// The approval-threshold block (#192) changes the restaurant setting, so run
+// it with --runInBand next to expense-approval.e2e-spec.ts.
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { ThrottlerStorage } from '@nestjs/throttler';
@@ -25,6 +27,7 @@ run('Petty cash ledger (e2e)', () => {
   let app: INestApplication<App>;
   let owner: ReturnType<typeof request.agent>;
   let cashier: ReturnType<typeof request.agent>;
+  let accountant: ReturnType<typeof request.agent>;
   let start = 0;
 
   const balance = async () =>
@@ -58,22 +61,28 @@ run('Petty cash ledger (e2e)', () => {
       id: string;
       name: string;
     }[];
-    const email = `pc-cashier-${tag}@demo.local`;
-    await owner
-      .post('/api/v1/users')
-      .send({
-        name: `PC Cashier ${tag}`,
-        email,
-        password: 'Password123!',
-        roleId: roles.find((r) => r.name === 'CASHIER')!.id,
-        branchIds: [BRANCH],
-      })
-      .expect(201);
-    cashier = request.agent(app.getHttpServer());
-    await cashier
-      .post('/api/v1/auth/login')
-      .send({ email, password: 'Password123!' })
-      .expect(201);
+    const staff = async (role: string) => {
+      const email = `pc-${role.toLowerCase()}-${tag}@demo.local`;
+      await owner
+        .post('/api/v1/users')
+        .send({
+          name: `PC ${role} ${tag}`,
+          email,
+          password: 'Password123!',
+          roleId: roles.find((r) => r.name === role)!.id,
+          branchIds: [BRANCH],
+        })
+        .expect(201);
+      const agent = request.agent(app.getHttpServer());
+      await agent
+        .post('/api/v1/auth/login')
+        .send({ email, password: 'Password123!' })
+        .expect(201);
+      return agent;
+    };
+    cashier = await staff('CASHIER');
+    // Holds petty_cash.manage but not expenses.approve.
+    accountant = await staff('ACCOUNTANT');
     start = await balance();
   });
 
@@ -302,5 +311,100 @@ run('Petty cash ledger (e2e)', () => {
     expect(ok).toBeGreaterThan(0);
     expect(res.every((r) => r.status === 201 || r.status === 409)).toBe(true);
     expect(await balance()).toBe(Math.round((before + ok * 1.1) * 100) / 100);
+  });
+
+  describe('expense approval threshold (#192)', () => {
+    const payout = (amount: number, category: string) => ({
+      kind: 'PAYOUT',
+      businessDate: D,
+      amount,
+      category,
+      reason: `threshold ${tag}`,
+    });
+    const expensesOn = async () =>
+      (
+        await owner
+          .get(`/api/v1/accounting/expenses${q}&from=${D}&to=${D}`)
+          .expect(200)
+      ).body as {
+        id: string;
+        category: string;
+        status: string;
+        decidedById: string | null;
+        decisionNote: string | null;
+      }[];
+
+    beforeAll(async () => {
+      await owner
+        .post(`${BASE}/entries${q}`)
+        .send({ kind: 'TOP_UP', businessDate: D, amount: 5000, reason: 'x' })
+        .expect(201);
+      await owner
+        .patch('/api/v1/settings/restaurant')
+        .send({ expenseApprovalThreshold: 1000 })
+        .expect(200);
+    });
+
+    afterAll(async () => {
+      await owner
+        .patch('/api/v1/settings/restaurant')
+        .send({ expenseApprovalThreshold: null })
+        .expect(200);
+    });
+
+    it('lets a non-approver pay out up to the threshold', async () => {
+      await accountant
+        .post(`${BASE}/entries${q}`)
+        .send(payout(1000, `Small ${tag}`))
+        .expect(201);
+      const e = (await expensesOn()).find((x) => x.category === `Small ${tag}`);
+      expect(e).toMatchObject({ status: 'APPROVED', decidedById: null });
+    });
+
+    it('refuses a larger payout without expenses.approve, moving nothing', async () => {
+      const before = await balance();
+      const res = await accountant
+        .post(`${BASE}/entries${q}`)
+        .send(payout(1500, `Denied ${tag}`))
+        .expect(403);
+      expect(res.body.message).toMatch(/approval threshold/);
+      expect(await balance()).toBe(before);
+      expect(
+        (await expensesOn()).some((x) => x.category === `Denied ${tag}`),
+      ).toBe(false);
+    });
+
+    it("books an approver's larger payout as pre-approved and audits it", async () => {
+      const before = await balance();
+      const entry = (
+        await owner
+          .post(`${BASE}/entries${q}`)
+          .send(payout(1500, `Big ${tag}`))
+          .expect(201)
+      ).body as { id: string; expenseId: string };
+      expect(await balance()).toBe(Math.round((before - 1500) * 100) / 100);
+
+      const e = (await expensesOn()).find((x) => x.category === `Big ${tag}`);
+      expect(e).toMatchObject({
+        id: entry.expenseId,
+        status: 'APPROVED',
+        decisionNote: 'Pre-approved petty-cash payout',
+      });
+      expect(e!.decidedById).toEqual(expect.any(String));
+
+      const logs = (
+        await owner
+          .get('/api/v1/audit-logs')
+          .query({ action: 'expense.preapproved', entity: 'Expense' })
+          .expect(200)
+      ).body as { data: { entityId: string; metadata: any }[] };
+      const row = logs.data.find((l) => l.entityId === entry.expenseId);
+      expect(row?.metadata).toMatchObject({
+        via: 'petty_cash.payout',
+        pettyCashEntryId: entry.id,
+        amount: 1500,
+        threshold: 1000,
+      });
+    });
   });
 });

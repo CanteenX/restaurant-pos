@@ -1,5 +1,9 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { expectedCash } from './accounting.calc';
 import {
   applyEntry,
@@ -63,10 +67,18 @@ describe('petty cash maths', () => {
   });
 });
 
+const clerk = { id: 'u1', canApprove: false };
+const approver = { id: 'u1', canApprove: true };
+
 describe('PettyCashService', () => {
-  function setup(balance = 0) {
+  function setup(balance = 0, threshold: number | null = null) {
     const state = { balance, entries: [] as any[], expenses: [] as any[] };
     const tx = {
+      restaurant: {
+        findFirst: jest.fn(() =>
+          Promise.resolve({ expenseApprovalThreshold: threshold }),
+        ),
+      },
       pettyCashFloat: {
         upsert: jest.fn(() => Promise.resolve({ balance: state.balance })),
         updateMany: jest.fn(({ where, data }: any) => {
@@ -91,21 +103,40 @@ describe('PettyCashService', () => {
         }),
       },
       cashClosing: { findUnique: jest.fn(() => Promise.resolve(null)) },
+      auditLog: { create: jest.fn(() => Promise.resolve({ id: 'al1' })) },
     };
+    // Mirrors a DB transaction: any rejection rolls every write back.
     const prisma = {
-      $transaction: jest.fn((fn: (t: typeof tx) => unknown) => fn(tx)),
+      $transaction: jest.fn(async (fn: (t: typeof tx) => unknown) => {
+        const snap = structuredClone(state);
+        try {
+          return await fn(tx);
+        } catch (e) {
+          Object.assign(state, snap);
+          throw e;
+        }
+      }),
       ...tx,
     };
     return {
       svc: new PettyCashService(prisma as never),
       state,
       tx,
+      audit: tx.auditLog.create,
     };
   }
 
+  const payout = (amount: number) => ({
+    kind: 'PAYOUT' as const,
+    businessDate: '2026-11-04',
+    amount,
+    category: 'Gas',
+    reason: 'Cylinder',
+  });
+
   it('records a payout as one expense that is NOT paid from the till', async () => {
     const { svc, state } = setup(1000);
-    await svc.record('b1', 'u1', {
+    await svc.record('b1', clerk, {
       kind: 'PAYOUT',
       businessDate: '2026-11-04',
       amount: 250,
@@ -131,7 +162,7 @@ describe('PettyCashService', () => {
 
   it('a top-up creates no expense', async () => {
     const { svc, state } = setup(0);
-    await svc.record('b1', 'u1', {
+    await svc.record('b1', clerk, {
       kind: 'TOP_UP',
       businessDate: '2026-11-04',
       amount: 2000,
@@ -147,7 +178,7 @@ describe('PettyCashService', () => {
     const { svc, tx, state } = setup(0);
     tx.cashClosing.findUnique.mockResolvedValueOnce({ id: 'c1' } as never);
     await expect(
-      svc.record('b1', 'u1', {
+      svc.record('b1', clerk, {
         kind: 'TOP_UP',
         businessDate: '2026-11-03',
         amount: 100,
@@ -161,7 +192,7 @@ describe('PettyCashService', () => {
   it('refuses a payout larger than the float', async () => {
     const { svc, state } = setup(100);
     await expect(
-      svc.record('b1', 'u1', {
+      svc.record('b1', clerk, {
         kind: 'PAYOUT',
         businessDate: '2026-11-04',
         amount: 150,
@@ -172,11 +203,26 @@ describe('PettyCashService', () => {
     expect(state.expenses).toHaveLength(0);
   });
 
+  it('guards on the exact 2-dp balance, not a float (balance 8227.30)', async () => {
+    const { svc, tx } = setup(8227.3);
+    await svc.record('b1', clerk, {
+      kind: 'TOP_UP',
+      businessDate: '2026-11-04',
+      amount: 1000,
+      reason: 'Float',
+      fromTill: false,
+    });
+    expect(tx.pettyCashFloat.updateMany).toHaveBeenCalledWith({
+      where: { branchId: 'b1', balance: '8227.30' },
+      data: { balance: '9227.30' },
+    });
+  });
+
   it('fails cleanly when the balance moved under it (lost-update guard)', async () => {
     const { svc, tx } = setup(500);
     tx.pettyCashFloat.updateMany.mockResolvedValueOnce({ count: 0 });
     await expect(
-      svc.record('b1', 'u1', {
+      svc.record('b1', clerk, {
         kind: 'TOP_UP',
         businessDate: '2026-11-04',
         amount: 10,
@@ -184,6 +230,86 @@ describe('PettyCashService', () => {
         fromTill: false,
       }),
     ).rejects.toThrow(ConflictException);
+  });
+
+  describe('approval threshold (#192)', () => {
+    it('books a payout at or under the threshold as a plain approved expense', async () => {
+      const { svc, state, audit } = setup(5000, 1000);
+      await svc.record('b1', clerk, payout(1000));
+      expect(state.balance).toBe(4000);
+      expect(state.expenses[0]).toMatchObject({ status: 'APPROVED' });
+      expect(state.expenses[0].decidedById).toBeUndefined();
+      expect(audit).not.toHaveBeenCalled();
+    });
+
+    it('refuses a payout above the threshold without expenses.approve', async () => {
+      const { svc, state, audit } = setup(5000, 1000);
+      await expect(svc.record('b1', clerk, payout(1000.01))).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(state.balance).toBe(5000);
+      expect(state.expenses).toHaveLength(0);
+      expect(state.entries).toHaveLength(0);
+      expect(audit).not.toHaveBeenCalled();
+    });
+
+    it('pre-approves it for an approver, with an explicit audit entry', async () => {
+      const { svc, state, audit } = setup(5000, 1000);
+      const entry = await svc.record('b1', approver, payout(2500));
+      expect(state.balance).toBe(2500);
+      expect(state.expenses[0]).toMatchObject({
+        status: 'APPROVED',
+        decidedById: 'u1',
+        decisionNote: 'Pre-approved petty-cash payout',
+      });
+      expect(state.expenses[0].decidedAt).toBeInstanceOf(Date);
+      expect(audit).toHaveBeenCalledTimes(1);
+      expect(audit).toHaveBeenCalledWith({
+        data: {
+          userId: 'u1',
+          action: 'expense.preapproved',
+          entity: 'Expense',
+          entityId: 'exp1',
+          metadata: {
+            via: 'petty_cash.payout',
+            branchId: 'b1',
+            pettyCashEntryId: entry.id,
+            amount: 2500,
+            threshold: 1000,
+          },
+        },
+      });
+    });
+
+    it('commits nothing when the pre-approval audit write fails', async () => {
+      const { svc, state, audit } = setup(5000, 1000);
+      audit.mockRejectedValueOnce(new Error('audit insert failed'));
+      await expect(svc.record('b1', approver, payout(2500))).rejects.toThrow(
+        'audit insert failed',
+      );
+      expect(state.balance).toBe(5000);
+      expect(state.expenses).toHaveLength(0);
+      expect(state.entries).toHaveLength(0);
+    });
+
+    it('needs no approval when the threshold is off', async () => {
+      const { svc, state, audit } = setup(50000, null);
+      await svc.record('b1', clerk, payout(40000));
+      expect(state.expenses[0]).toMatchObject({ status: 'APPROVED' });
+      expect(audit).not.toHaveBeenCalled();
+    });
+
+    it('never reads the threshold for a top-up', async () => {
+      const { svc, tx } = setup(0, 1);
+      await svc.record('b1', clerk, {
+        kind: 'TOP_UP',
+        businessDate: '2026-11-04',
+        amount: 2000,
+        reason: 'Float',
+        fromTill: false,
+      });
+      expect(tx.restaurant.findFirst).not.toHaveBeenCalled();
+    });
   });
 
   it('reconciles a count: books the variance as an adjustment', async () => {
