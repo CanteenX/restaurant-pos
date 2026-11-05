@@ -10,7 +10,10 @@ test.afterEach(async ({ page }) => {
 test("switching to Hindi changes the chrome, persists, and renders Devanagari", async ({ page }) => {
   await openDashboard(page);
   const nav = page.getByRole("navigation").first();
+  // Prefix match: the link's name gains " Needs attention" when an earlier
+  // spec leaves pending orders behind (nav dot).
   await expect(nav.getByRole("link", { name: /^Orders\b/ })).toBeVisible();
+  await page.screenshot({ path: "test-results/i18n-english-dashboard.png" });
 
   await page.getByRole("combobox", { name: "Language" }).click();
   await page.getByRole("option", { name: "हिन्दी" }).click();
@@ -25,6 +28,14 @@ test("switching to Hindi changes the chrome, persists, and renders Devanagari", 
   expect(box?.width ?? 0).toBeGreaterThan(20);
   const family = await orders.evaluate((el) => getComputedStyle(el).fontFamily);
   expect(family).toMatch(/devanagari/i);
+  // The self-hosted (#187) Devanagari face really downloaded from our origin.
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        [...document.fonts].some((f) => /devanagari/i.test(f.family) && f.status === "loaded"),
+      ),
+    )
+    .toBe(true);
 
   await page.reload();
   await expect(nav.getByRole("link", { name: /^ऑर्डर/ })).toBeVisible();
