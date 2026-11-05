@@ -16,9 +16,10 @@ for arch in $archs; do
   # (which match the data volumes) survive remove, purge and upgrades.
   sed "s/@VERSION@/$ver/g" "$here/$PKG.env" > "$pkg/usr/share/$PKG/$PKG.env.example"
   install -m 0644 "$here/$PKG.service" "$pkg/lib/systemd/system/$PKG.service"
+  install -m 0755 "$here/preflight.sh" "$pkg/usr/lib/$PKG/preflight.sh"
   if [ -d "$here/bin" ]; then mkdir -p "$pkg/usr/bin"; install -m 0755 "$here"/bin/* "$pkg/usr/bin/"; fi
   install -m 0644 "$root/LICENSE" "$pkg/usr/share/doc/$PKG/copyright"
-  printf '%s (%s) stable; urgency=medium\n\n  * %s %s. See %s\n\n -- Raktim Ranjit <ranjitraktim5@gmail.com>  %s\n' "$PKG" "$ver" "$TITLE" "$ver" "$DOCS" "$(date -R)" | gzip -9n > "$pkg/usr/share/doc/$PKG/changelog.Debian.gz"
+  printf '%s (%s) stable; urgency=medium\n\n  * %s %s. See %s\n\n -- %s  %s\n' "$PKG" "$ver" "$TITLE" "$ver" "$DOCS" "$MAINTAINER" "$(date -R)" | gzip -9n > "$pkg/usr/share/doc/$PKG/changelog.Debian.gz"
   for s in postinst prerm postrm; do install -m 0755 "$here/$s" "$pkg/DEBIAN/$s"; done
   find "$pkg" -type d -exec chmod 0755 {} +
   size=$(du -sk "$pkg" | cut -f1)
@@ -30,7 +31,7 @@ Priority: optional
 Architecture: $arch
 Installed-Size: $size
 Depends: docker.io | docker-ce, docker-compose-v2 | docker-compose-plugin, systemd, curl
-Maintainer: Raktim Ranjit <ranjitraktim5@gmail.com>
+Maintainer: $MAINTAINER
 Homepage: $HOMEPAGE
 Description: $SHORTDESC
 $LONGDESC
@@ -40,3 +41,5 @@ CTL
   ( cd "$out" && sha256sum "$(basename "$f")" > "$(basename "$f").sha256" )
   rm -rf "$stage"; echo "$f"
 done
+# Also build the rpm when rpmbuild is available (RPM=0 skips it).
+if [ "${RPM:-1}" != 0 ] && command -v rpmbuild >/dev/null 2>&1; then OUT_DIR="$out" bash "$here/build-rpm.sh" "$ver"; fi
