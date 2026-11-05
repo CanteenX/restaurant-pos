@@ -130,6 +130,24 @@ passwords and percent-encoding, are in [`docs/email.md`](email.md).
   `UPDATER_TOKEN`. Older installs had a public default here: re-running
   `./install.sh` replaces it with a random one. Without `install.sh`, add
   `UPDATER_TOKEN=$(openssl rand -hex 32)` to `.env` yourself.
+- After an in-app update, the new backend and web containers must pass
+  their health checks (`docker-compose.yml`) within 5 minutes
+  (`HEALTH_TIMEOUT_MS` on the updater). If either fails, both are put back
+  on the previous version automatically and must pass their health checks
+  again. Data volumes are never touched. Settings > Updates then shows
+  "rolled back" with the reason. The rollback does not undo database
+  migrations the new version already applied, so still take a backup first.
+- If the previous version cannot be put back, or is not healthy once it is
+  back (for example after such a migration), Settings > Updates says the
+  rollback failed. Then run `docker compose up -d` on the server, and if the
+  app still does not start, restore from a backup.
+- The healthchecks only take effect once the containers have been created
+  from the current compose file. On an install from before this change, run
+  `docker compose pull && docker compose up -d` once. Until then the updater
+  falls back to "stays up for 15 s without restarting".
+- Maintainers can rehearse this with `scripts/update-rollback-drill.sh`
+  (Docker only). It upgrades a throwaway install N → N+1, then tries a
+  broken N+2 and checks that it rolls back with no data lost.
 - Take a backup before every update.
 
 ## 9. Stop, uninstall and remove data

@@ -33,7 +33,8 @@ export interface PriceVarianceRow {
 }
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
-const round4 = (n: number) => Math.round((n + Number.EPSILON) * 1e4) / 1e4;
+// Costs are per base unit at 6dp (#69): ₹123.45/kg is 0.12345/g.
+const round6 = (n: number) => Math.round((n + Number.EPSILON) * 1e6) / 1e6;
 
 function pct(now: number, base: number | null): number | null {
   if (base == null || base === 0) return null;
@@ -71,13 +72,13 @@ export function computePriceVariance(
       supplierName: g[0].supplierName,
       unit: g[0].unit,
       receipts: g.length,
-      lastCost: round4(last),
-      avgCost: round4(costs.reduce((s, c) => s + c, 0) / costs.length),
-      minCost: round4(Math.min(...costs)),
-      maxCost: round4(Math.max(...costs)),
-      previousCost: prev == null ? null : round4(prev),
+      lastCost: round6(last),
+      avgCost: round6(costs.reduce((s, c) => s + c, 0) / costs.length),
+      minCost: round6(Math.min(...costs)),
+      maxCost: round6(Math.max(...costs)),
+      previousCost: prev == null ? null : round6(prev),
       varianceVsPrevPct: pct(last, prev),
-      quotedPrice: quote == null ? null : round4(quote),
+      quotedPrice: quote == null ? null : round6(quote),
       varianceVsQuotePct: pct(last, quote),
     });
   }

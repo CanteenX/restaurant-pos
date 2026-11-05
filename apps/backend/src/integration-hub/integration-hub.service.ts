@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type { IntegrationConnection, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { outletsForBranch } from './aggregator-menu';
 import { getProvider, listProviders } from './providers/registry';
 import type { IntegrationProvider, TestResult } from './providers/provider';
 import { IntegrationOutboxService } from './outbox/integration-outbox.service';
@@ -17,11 +18,14 @@ export interface ConnectInput {
   credentials: Record<string, string>;
   /** Platform outlet id -> our branch id. Replaces the stored map when given. */
   outlets?: Record<string, string>;
+  /** Our menu item id -> the platform's item id. Replaces the stored map when given. */
+  itemMap?: Record<string, string>;
 }
 
 type StoredConfig = {
   credentialKeys?: string[];
   outlets?: Record<string, string>;
+  itemMap?: Record<string, string>;
 } | null;
 
 const ctxKey = (restaurantId: string, provider: string) =>
@@ -162,6 +166,10 @@ export class IntegrationHubService {
       input.outlets !== undefined
         ? await this.checkOutlets(restaurantId, input.outlets)
         : ((existing?.config as StoredConfig)?.outlets ?? undefined);
+    const itemMap =
+      input.itemMap !== undefined
+        ? await this.checkItemMap(restaurantId, input.itemMap)
+        : ((existing?.config as StoredConfig)?.itemMap ?? undefined);
     if (provider.accountIdLabel && !provider.accountIdOptional && !accountId) {
       throw new BadRequestException(`Enter the ${provider.accountIdLabel}`);
     }
@@ -175,6 +183,7 @@ export class IntegrationHubService {
       config: {
         credentialKeys: Object.keys(merged),
         ...(outlets ? { outlets } : {}),
+        ...(itemMap ? { itemMap } : {}),
       } as Prisma.InputJsonValue,
       // Saving keys is not the same as a working connection: only a test
       // that the adapter itself observed succeeding can set CONNECTED.
@@ -216,6 +225,54 @@ export class IntegrationHubService {
       );
     }
     return outlets;
+  }
+
+  /** Every mapped dish must belong to one of this restaurant's branches. */
+  private async checkItemMap(
+    restaurantId: string,
+    itemMap: Record<string, string>,
+  ) {
+    const ids = Object.keys(itemMap);
+    const own = await this.prisma.menuItem.count({
+      where: { id: { in: ids }, branch: { restaurantId } },
+    });
+    if (own !== ids.length) {
+      throw new BadRequestException(
+        'An item is mapped that is not part of this restaurant',
+      );
+    }
+    const ext = Object.values(itemMap);
+    if (new Set(ext).size !== ext.length) {
+      throw new BadRequestException(
+        'Two dishes are mapped to the same platform item id',
+      );
+    }
+    return itemMap;
+  }
+
+  /** Publishes one branch's menu to the platform now (queued, retried). */
+  async syncMenu(restaurantId: string, providerKey: string, branchId: string) {
+    const c = await this.require(restaurantId, providerKey);
+    const provider = this.provider(providerKey);
+    if (!provider.capabilities.menuSync) {
+      throw new BadRequestException('This integration cannot publish a menu');
+    }
+    const branch = await this.prisma.branch.findFirst({
+      where: { id: branchId, restaurantId },
+      select: { id: true },
+    });
+    if (!branch) throw new NotFoundException('Unknown branch');
+    const outlets = (c.config as StoredConfig)?.outlets;
+    if (outletsForBranch(outlets ?? undefined, branch.id).length === 0) {
+      throw new BadRequestException(
+        'No platform outlet is mapped to this branch',
+      );
+    }
+    const queued = await this.prisma.$transaction((tx) =>
+      this.outbox.enqueueMenuPush(tx, branch.id, c.id),
+    );
+    await this.log(c.id, 'INFO', 'menu_sync', 'Menu publish queued');
+    return { queued };
   }
 
   /** Re-queues the platform calls that gave up, e.g. after fixing the API key. */

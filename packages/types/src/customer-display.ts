@@ -9,10 +9,18 @@ export const displayLineSchema = z.object({
   total: z.number().nonnegative(),
 });
 
+// Only an NPCI pay intent may be drawn as a QR on the guest's screen: no other
+// scheme (https://, javascript:, upi://mandate) and no whitespace, quotes or
+// angle brackets, so a publisher cannot smuggle in an arbitrary link.
+export const upiPayUriSchema = z
+  .string()
+  .max(1000)
+  .regex(/^upi:\/\/pay\?[^\s<>"'`\\]*$/i, "Must be a upi://pay link");
+
 export const displayStateSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("idle") }),
   z.object({ kind: z.literal("cart"), lines: z.array(displayLineSchema).max(200), subtotal: z.number().nonnegative() }),
-  z.object({ kind: z.literal("upi"), total: z.number().nonnegative(), uri: z.string().max(1000), payee: z.string().max(200) }),
+  z.object({ kind: z.literal("upi"), total: z.number().nonnegative(), uri: upiPayUriSchema, payee: z.string().max(200) }),
   z.object({ kind: z.literal("paid"), total: z.number().nonnegative(), method: z.string().max(50).optional() }),
 ]);
 

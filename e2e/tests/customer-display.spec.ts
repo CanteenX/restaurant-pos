@@ -20,6 +20,23 @@ test("paired display on another context mirrors the till cart", async ({ browser
   await tablet.close();
 });
 
+// A display opened after the till already has a cart shows it at once: the
+// server hands a late joiner the till's latest state (#146 review).
+test("display paired after the cart was built shows it without a cart change", async ({ browser, page }) => {
+  await page.goto("/pos");
+  await page.getByRole("button", { name: "Table 6" }).click();
+  await page.getByRole("button", { name: /Paneer\s*Tikka/ }).first().click();
+  await page.getByRole("button", { name: "Pair display" }).click();
+  const link = await page.getByText(/\/customer-display\?code=/).innerText();
+
+  const state = await page.context().storageState();
+  const tablet = await browser.newContext({ storageState: state });
+  const display = await tablet.newPage();
+  await display.goto(link);
+  await expect(display.getByText("Your order")).toBeVisible({ timeout: 10_000 });
+  await tablet.close();
+});
+
 // Keyboard/screen-reader access to the pairing popover (WCAG 2.1 AA).
 test("pair display popover opens by keyboard, closes on Esc, Unpair works", async ({ page }) => {
   await page.goto("/pos");
@@ -40,4 +57,10 @@ test("pair display popover opens by keyboard, closes on Esc, Unpair works", asyn
   await page.getByRole("button", { name: /Paired/ }).click();
   await page.getByRole("button", { name: "Unpair" }).click();
   await expect(page.getByRole("button", { name: "Pair display" })).toBeVisible();
+});
+
+test("a bad pairing link tells the user to scan again", async ({ page }) => {
+  await page.goto("/customer-display?code=BAD&branch=x");
+  await expect(page.locator("main").getByRole("alert")).toContainText("Invalid pairing link — scan the code on the till again");
+  await expect(page.getByText("Welcome")).toHaveCount(0);
 });

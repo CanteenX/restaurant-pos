@@ -3,11 +3,17 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { CashClosingDto, ExpenseDto } from '@nventra/types';
+import type { CashClosingDto, ExpenseDto, ExpenseStatus } from '@nventra/types';
 import { localDate, zonedRange } from '../../common/time';
 import { BranchTimeService } from '../../common/services/branch-time.service';
+import { NotificationsService } from '../../notifications/notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { expectedCash, gstSummary, round2 } from './accounting.calc';
+import {
+  assertDecision,
+  EXPENSE_APPROVE_PERMISSION,
+  statusForNewExpense,
+} from './expense-approval';
 import type { TallyOrderInput, TallyRefundInput } from './tally-xml';
 
 const dayStart = (d: string) => new Date(`${d}T00:00:00.000Z`);
@@ -18,20 +24,53 @@ export class AccountingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly time: BranchTimeService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // --- Expenses ------------------------------------------------------------
 
-  listExpenses(branchId: string, from: string, to: string) {
+  listExpenses(
+    branchId: string,
+    from: string,
+    to: string,
+    status?: ExpenseStatus,
+  ) {
     return this.prisma.expense.findMany({
-      where: { branchId, spentOn: { gte: dayStart(from), lte: dayStart(to) } },
+      where: {
+        branchId,
+        spentOn: { gte: dayStart(from), lte: dayStart(to) },
+        ...(status ? { status } : {}),
+      },
       orderBy: [{ spentOn: 'desc' }, { createdAt: 'desc' }],
       take: 500,
     });
   }
 
-  createExpense(branchId: string, userId: string, dto: ExpenseDto) {
-    return this.prisma.expense.create({
+  /** Pending expenses for the approver queue, oldest first. */
+  listPendingExpenses(branchId: string) {
+    return this.prisma.expense.findMany({
+      where: { branchId, status: 'PENDING' },
+      orderBy: { createdAt: 'asc' },
+      include: { createdBy: { select: { id: true, name: true } } },
+      take: 500,
+    });
+  }
+
+  private async approvalThreshold(branchId: string) {
+    const r = await this.prisma.restaurant.findFirst({
+      where: { branches: { some: { id: branchId } } },
+      select: { expenseApprovalThreshold: true },
+    });
+    const t = r?.expenseApprovalThreshold;
+    return t === null || t === undefined ? null : Number(t);
+  }
+
+  async createExpense(branchId: string, userId: string, dto: ExpenseDto) {
+    const status = statusForNewExpense(
+      dto.amount,
+      await this.approvalThreshold(branchId),
+    );
+    const expense = await this.prisma.expense.create({
       data: {
         branchId,
         createdById: userId,
@@ -40,8 +79,66 @@ export class AccountingService {
         amount: dto.amount,
         note: dto.note,
         paidFromCash: dto.paidFromCash,
+        status,
       },
     });
+    if (status === 'PENDING')
+      await this.notifications.notifyByPermission(
+        branchId,
+        EXPENSE_APPROVE_PERMISSION,
+        {
+          type: 'expense.pending',
+          title: 'Expense needs approval',
+          body: `${dto.category}: ${round2(dto.amount).toFixed(2)} on ${dto.spentOn}`,
+          entity: 'Expense',
+          entityId: expense.id,
+        },
+        userId,
+      );
+    return expense;
+  }
+
+  /** Approve or reject a PENDING expense. The recorder cannot decide it. */
+  async decideExpense(
+    branchId: string,
+    id: string,
+    userId: string,
+    decision: 'APPROVED' | 'REJECTED',
+    note?: string,
+  ) {
+    const expense = await this.prisma.expense.findFirst({
+      where: { id, branchId },
+    });
+    if (!expense) throw new NotFoundException('Expense not found');
+    assertDecision(expense, userId);
+    if (decision === 'APPROVED' && expense.paidFromCash) {
+      const closed = await this.prisma.cashClosing.findUnique({
+        where: {
+          branchId_businessDate: { branchId, businessDate: expense.spentOn },
+        },
+      });
+      if (closed)
+        throw new BadRequestException(
+          'That day is already closed — approving would change its cash count',
+        );
+    }
+    const updated = await this.prisma.expense.update({
+      where: { id, status: 'PENDING' },
+      data: {
+        status: decision,
+        decidedById: userId,
+        decidedAt: new Date(),
+        decisionNote: note,
+      },
+    });
+    await this.notifications.notifyUser(expense.createdById, branchId, {
+      type: decision === 'APPROVED' ? 'expense.approved' : 'expense.rejected',
+      title: decision === 'APPROVED' ? 'Expense approved' : 'Expense rejected',
+      body: `${expense.category}: ${round2(Number(expense.amount)).toFixed(2)}${note ? ` — ${note}` : ''}`,
+      entity: 'Expense',
+      entityId: id,
+    });
+    return updated;
   }
 
   async deleteExpense(branchId: string, id: string) {
@@ -54,7 +151,7 @@ export class AccountingService {
         branchId_businessDate: { branchId, businessDate: expense.spentOn },
       },
     });
-    if (closed && expense.paidFromCash)
+    if (closed && expense.paidFromCash && expense.status === 'APPROVED')
       throw new BadRequestException(
         'That day is already closed — the cash count includes this expense',
       );
@@ -86,7 +183,12 @@ export class AccountingService {
         _sum: { amount: true },
       }),
       this.prisma.expense.aggregate({
-        where: { branchId, spentOn: from, paidFromCash: true },
+        where: {
+          branchId,
+          spentOn: from,
+          paidFromCash: true,
+          status: 'APPROVED',
+        },
         _sum: { amount: true },
       }),
     ]);
@@ -165,7 +267,7 @@ export class AccountingService {
       }),
       this.prisma.expense.groupBy({
         by: ['category'],
-        where: { branchId, spentOn: { gte: f, lt: t } },
+        where: { branchId, spentOn: { gte: f, lt: t }, status: 'APPROVED' },
         _sum: { amount: true },
         orderBy: { category: 'asc' },
       }),

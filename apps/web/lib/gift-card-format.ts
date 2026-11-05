@@ -1,3 +1,4 @@
+import type { TranslationKey } from "@/lib/i18n/context";
 // Pure helpers for the gift cards page (display status, amount input parsing).
 
 export type GiftCardStatus = "Active" | "Used up" | "Disabled";
@@ -22,4 +23,21 @@ export function issueAmountHint(input: string): string | null {
   if (!input.trim() || parseIssueAmount(input) !== null) return null;
   const n = Number(input.trim());
   return Number.isFinite(n) ? "Amount must be greater than 0." : "Enter the amount as a number.";
+}
+
+export function giftCardBadgeVariant(status: GiftCardStatus): "default" | "secondary" | "destructive" {
+  if (status === "Active") return "default";
+  return status === "Used up" ? "secondary" : "destructive";
+}
+
+export const GIFT_CARD_STATUS_KEY: Record<GiftCardStatus, TranslationKey> = {
+  Active: "giftCards.status.active",
+  "Used up": "giftCards.status.usedUp",
+  Disabled: "giftCards.status.disabled",
+};
+
+/** Same rule as issueAmountHint, as a code the UI can translate. */
+export function issueAmountHintCode(input: string): "positive" | "number" | null {
+  if (!input.trim() || parseIssueAmount(input) !== null) return null;
+  return Number.isFinite(Number(input.trim())) ? "positive" : "number";
 }

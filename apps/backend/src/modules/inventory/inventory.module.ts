@@ -7,6 +7,9 @@ import { GoodsReceiptsService } from './goods-receipts.service';
 import { InventoryController } from './inventory.controller';
 import { InventoryService } from './inventory.service';
 import { PurchaseOrdersService } from './purchase-orders.service';
+import { PurchaseReturnsController } from './purchase-returns.controller';
+import { PurchaseReturnsService } from './purchase-returns.service';
+import { ReorderSuggestionsService } from './reorder-suggestions.service';
 import { PurchaseRequestsService } from './purchase-requests.service';
 import { StockAlertsService } from './stock-alerts.service';
 import { StockService } from './stock.service';
@@ -14,22 +17,30 @@ import { SupplierInvoicesService } from './supplier-invoices.service';
 import { SupplierQuotationsService } from './supplier-quotations.service';
 import { TransfersController } from './transfers.controller';
 import { TransfersService } from './transfers.service';
+import { UnitConversionService } from './unit-conversion.service';
 import { WasteService } from './waste.service';
 
 @Module({
   imports: [AuditModule, NotificationsModule],
-  controllers: [InventoryController, TransfersController],
+  controllers: [
+    InventoryController,
+    TransfersController,
+    PurchaseReturnsController,
+  ],
   providers: [
     InventoryService,
     PurchaseOrdersService,
     GoodsReceiptsService,
     WasteService,
     StockService,
+    UnitConversionService,
     StockAlertsService,
     TransfersService,
     PurchaseRequestsService,
+    ReorderSuggestionsService,
     SupplierQuotationsService,
     SupplierInvoicesService,
+    PurchaseReturnsService,
     BranchAccessService,
     BranchTimeService,
   ],

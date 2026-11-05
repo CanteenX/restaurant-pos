@@ -1,4 +1,7 @@
 import {
+  LEGACY_SESSION_COOKIE,
+  SESSION_COOKIE,
+  clearLegacySessionCookie,
   isPastMaxLifetime,
   needsRefresh,
   sessionIdleSeconds,
@@ -68,5 +71,32 @@ describe('sessionStartedAt / isPastMaxLifetime', () => {
   });
   it('is false when the token carries no start time (exp still bounds it)', () => {
     expect(isPastMaxLifetime({ sub: 'u' }, 1_000_000, max)).toBe(false);
+  });
+});
+
+describe('clearLegacySessionCookie (#147)', () => {
+  it('is the pre-rebrand name, distinct from the current cookie', () => {
+    expect(LEGACY_SESSION_COOKIE).toBe(['nodedr', 'session'].join('_'));
+    expect(LEGACY_SESSION_COOKIE).not.toBe(SESSION_COOKIE);
+  });
+
+  it('expires the legacy cookie when the request carries it', () => {
+    const res = { clearCookie: jest.fn() };
+    clearLegacySessionCookie(
+      { cookies: { [LEGACY_SESSION_COOKIE]: 'old', [SESSION_COOKIE]: 'cur' } },
+      res,
+    );
+    expect(res.clearCookie).toHaveBeenCalledTimes(1);
+    expect(res.clearCookie).toHaveBeenCalledWith(
+      LEGACY_SESSION_COOKIE,
+      expect.objectContaining({ httpOnly: true, sameSite: 'lax' }),
+    );
+  });
+
+  it('does nothing without the legacy cookie (no extra Set-Cookie)', () => {
+    const res = { clearCookie: jest.fn() };
+    clearLegacySessionCookie({ cookies: { [SESSION_COOKIE]: 'cur' } }, res);
+    clearLegacySessionCookie({}, res);
+    expect(res.clearCookie).not.toHaveBeenCalled();
   });
 });

@@ -6,7 +6,8 @@ import {
 import type { Prisma } from '@prisma/client';
 import type { GoodsReceiptDto } from '@nventra/types';
 import { PrismaService } from '../../prisma/prisma.service';
-import { round3, round4 } from '../../common/money';
+import { round3, round6 } from '../../common/money';
+import { converterFor, withConversions } from './unit-conversion.service';
 
 type PurchaseOrderWithItems = Prisma.PurchaseOrderGetPayload<{
   include: { items: true };
@@ -82,12 +83,30 @@ export class GoodsReceiptsService {
     const ingredientIds = dto.items.map((i) => i.ingredientId);
     const ingredients = await this.prisma.ingredient.findMany({
       where: { id: { in: ingredientIds }, branchId },
+      include: withConversions,
     });
     if (ingredients.length !== new Set(ingredientIds).size) {
       throw new BadRequestException(
         'One or more ingredients not found in this branch',
       );
     }
+
+    // Convert every line to the ingredient's base unit up front (before the
+    // transaction), so a bad unit rejects the whole GRN and nothing below
+    // ever sees a non-base quantity or cost.
+    const lines = dto.items.map((item) => {
+      const ingredient = ingredients.find((i) => i.id === item.ingredientId)!;
+      const convert = converterFor(ingredient);
+      const entered = !!item.unit && item.unit !== ingredient.unit;
+      return {
+        ...item,
+        quantity: convert.quantity(item.quantity, item.unit),
+        unitCost: convert.unitCost(item.unitCost, item.unit),
+        enteredUnit: entered ? item.unit : undefined,
+        enteredQuantity: entered ? item.quantity : undefined,
+        enteredUnitCost: entered ? item.unitCost : undefined,
+      };
+    });
 
     // purchaseOrderItemId, if provided, must belong to this PO and this ingredient.
     if (purchaseOrder) {
@@ -124,7 +143,7 @@ export class GoodsReceiptsService {
       // no-float-drift discipline as the Ingredient cost/stock update below).
       const receivedByPoItem = new Map<string, number>();
 
-      for (const [index, item] of dto.items.entries()) {
+      for (const [index, item] of lines.entries()) {
         const ingredient = ingredients.find((i) => i.id === item.ingredientId)!;
         const batchNumber = item.batchNumber || `${grnNumber}-${index + 1}`;
 
@@ -135,6 +154,9 @@ export class GoodsReceiptsService {
             purchaseOrderItemId: item.purchaseOrderItemId,
             quantity: item.quantity,
             unitCost: item.unitCost,
+            enteredUnit: item.enteredUnit,
+            enteredQuantity: item.enteredQuantity,
+            enteredUnitCost: item.enteredUnitCost,
             batchNumber,
             expiryDate: item.expiryDate,
           },
@@ -175,7 +197,7 @@ export class GoodsReceiptsService {
         const newStock = round3(oldStock + item.quantity);
         const newCost =
           newStock > 0
-            ? round4(
+            ? round6(
                 (oldStock * oldCost + item.quantity * item.unitCost) / newStock,
               )
             : oldCost;

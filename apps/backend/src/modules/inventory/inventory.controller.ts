@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UsePipes,
 } from '@nestjs/common';
@@ -13,9 +14,15 @@ import { ApiTags } from '@nestjs/swagger';
 import {
   goodsReceiptSchema,
   ingredientSchema,
+  ingredientUpdateSchema,
   purchaseOrderSchema,
   purchaseRequestSchema,
   setRecipeSchema,
+  type SetRecipeDto,
+  inventoryBranchQuerySchema,
+  type InventoryBranchQueryDto,
+  setUnitConversionsSchema,
+  type SetUnitConversionsDto,
   menuItemTrackingSchema,
   type MenuItemTrackingDto,
   stockAdjustmentSchema,
@@ -27,6 +34,8 @@ import {
   type PurchaseOrderStatus,
   type PurchaseRequestStatus,
   type QuotationStatus,
+  reorderSuggestionsQuerySchema,
+  type ReorderSuggestionsQuery,
   type SessionUser,
 } from '@nventra/types';
 import { Auth } from '../../common/decorators/auth.decorator';
@@ -36,12 +45,14 @@ import { BranchAccessService } from '../../common/services/branch-access.service
 import { GoodsReceiptsService } from './goods-receipts.service';
 import { InventoryService } from './inventory.service';
 import { PurchaseOrdersService } from './purchase-orders.service';
+import { ReorderSuggestionsService } from './reorder-suggestions.service';
 import { PurchaseRequestsService } from './purchase-requests.service';
 import { StockService } from './stock.service';
 import { parseInvoiceText, MAX_INVOICE_TEXT } from './invoice-text';
 import { z } from 'zod';
 import { SupplierInvoicesService } from './supplier-invoices.service';
 import { SupplierQuotationsService } from './supplier-quotations.service';
+import { UnitConversionService } from './unit-conversion.service';
 import { WasteService } from './waste.service';
 
 const parseInvoiceTextSchema = z.object({
@@ -58,9 +69,11 @@ export class InventoryController {
     private readonly wasteService: WasteService,
     private readonly stockService: StockService,
     private readonly purchaseRequestsService: PurchaseRequestsService,
+    private readonly reorderSuggestionsService: ReorderSuggestionsService,
     private readonly supplierQuotationsService: SupplierQuotationsService,
     private readonly supplierInvoicesService: SupplierInvoicesService,
     private readonly branchAccess: BranchAccessService,
+    private readonly unitConversions: UnitConversionService,
   ) {}
 
   // --- Ingredients ------------------------------------------------------------
@@ -114,6 +127,7 @@ export class InventoryController {
 
   @Auth('inventory.manage')
   @Patch('ingredients/:id')
+  @UsePipes(new ZodValidationPipe(ingredientUpdateSchema))
   async updateIngredient(
     @CurrentUser() user: SessionUser,
     @Query('branchId') branchId: string,
@@ -175,6 +189,35 @@ export class InventoryController {
     return this.stockService.listBatches(branchId, id);
   }
 
+  // Pack sizes: "1 PACK = 25 KG". Global units (KG/G, L/ML, DOZEN/PIECE)
+  // always convert and are not listed here.
+  @Auth('inventory.manage')
+  @Get('ingredients/:id/conversions')
+  async listConversions(
+    @CurrentUser() user: SessionUser,
+    @Query(new ZodValidationPipe(inventoryBranchQuerySchema, 'query'))
+    { branchId }: InventoryBranchQueryDto,
+    @Param('id') id: string,
+  ) {
+    await this.branchAccess.assertAccess(user.restaurantId, branchId);
+    return this.unitConversions.list(branchId, id);
+  }
+
+  @Auth('inventory.manage')
+  @Put('ingredients/:id/conversions')
+  @UsePipes(new ZodValidationPipe(setUnitConversionsSchema))
+  async setConversions(
+    @CurrentUser() user: SessionUser,
+    @Query(new ZodValidationPipe(inventoryBranchQuerySchema, 'query'))
+    { branchId }: InventoryBranchQueryDto,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    await this.branchAccess.assertAccess(user.restaurantId, branchId);
+    const { conversions } = body as SetUnitConversionsDto;
+    return this.unitConversions.replace(branchId, id, conversions, user.id);
+  }
+
   // --- Recipe costing -----------------------------------------------------------
 
   @Auth('inventory.manage')
@@ -198,9 +241,7 @@ export class InventoryController {
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
-    const { lines } = body as {
-      lines: { ingredientId: string; quantity: number }[];
-    };
+    const { lines } = body as SetRecipeDto;
     return this.inventoryService.setRecipe(branchId, id, lines);
   }
 
@@ -418,6 +459,20 @@ export class InventoryController {
   }
 
   // --- Purchase requests ----------------------------------------------------------
+
+  @Auth('inventory.manage')
+  @Get('reorder-suggestions')
+  async reorderSuggestions(
+    @CurrentUser() user: SessionUser,
+    @Query(new ZodValidationPipe(reorderSuggestionsQuerySchema, 'query'))
+    query: ReorderSuggestionsQuery & { branchId: string },
+  ) {
+    await this.branchAccess.assertAccess(user.restaurantId, query.branchId);
+    return this.reorderSuggestionsService.getSuggestions(
+      query.branchId,
+      query.days,
+    );
+  }
 
   @Auth('inventory.manage')
   @Get('purchase-requests')

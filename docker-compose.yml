@@ -32,6 +32,15 @@ services:
     # the published image of a newer version under it.
     image: ghcr.io/canteenx/nventra-pos-backend:${APP_VERSION:-dev}
     container_name: nventra-pos-backend
+    # Lets the updater (updater/server.js) tell a good update from a broken
+    # one: a new version that never reports healthy is rolled back. The long
+    # start_period covers `prisma migrate deploy` on a slow box.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
     restart: unless-stopped
     environment:
       DATABASE_URL: "postgresql://nventra:${POSTGRES_PASSWORD:-nventra_dev_pw}@postgres:5432/nventra_pos"
@@ -141,6 +150,13 @@ services:
         BACKEND_URL: "http://backend:4000"
     image: ghcr.io/canteenx/nventra-pos-web:${APP_VERSION:-dev}
     container_name: nventra-pos-web
+    # Next binds to $HOSTNAME (the container's own address), not 127.0.0.1.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://'+(process.env.HOSTNAME||'127.0.0.1')+':3000/login',{redirect:'manual'}).then(r=>process.exit(r.status<500?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
     ports:
       - "${HOST_PORT:-1995}:3000"

@@ -12,6 +12,12 @@ export class BranchAccessService {
   constructor(private readonly prisma: PrismaService) {}
 
   async assertAccess(restaurantId: string, branchId: string): Promise<void> {
+    // Prisma drops `undefined` filters: without this, a request that omits
+    // ?branchId matches any branch here and then any tenant's row in a
+    // branch-scoped lookup (`where: { id, branchId: undefined }`).
+    if (typeof branchId !== 'string' || branchId.trim() === '') {
+      throw new ForbiddenException('Branch not found or not accessible');
+    }
     const branch = await this.prisma.branch.findFirst({
       where: { id: branchId, restaurantId },
       select: { id: true },

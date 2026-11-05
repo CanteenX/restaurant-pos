@@ -244,8 +244,11 @@ containers, not just "it compiles."
       (Phase 7 territory, same as expiry alerts).
 - [x] Procurement: vendor quotations, purchase requests, vendor invoices,
       payment tracking, supplier performance — landed 2026-08-14, see
-      Session log. Purchase returns and automatic reorder suggestions
-      remain out of scope for this pass.
+      Session log.
+- [x] Purchase returns / debit notes API (#63): `POST|GET
+      /inventory/purchase-returns`, `GET /inventory/suppliers/:id/balance`.
+      Capped at received and still-in-stock batch quantity; deducts stock at
+      the batch's cost and reduces the supplier payable. UI is #64.
 
 ### Phase 5 — Delivery + Online/QR ordering
 
@@ -350,12 +353,11 @@ dataset gets a documented import path, not a fabricated snapshot, when we
 reach it (tax code masters, delivery-platform rate cards, etc.).
 
 **Phase 4 scope cuts (2026-08-04):**
-- **Unit conversion.** Each `Ingredient` has one base unit used everywhere
-  (recipe, PO, GRN, stock). A real conversion engine — buy a 25kg bag,
-  stock and recipe in kg — is real, non-trivial modeling work (conversion
-  factors can be ingredient-specific and sometimes non-linear, e.g. a dozen
-  of a piece-counted item vs. a weight-based one) that would have doubled
-  the schema surface for this pass. Revisit when a real recipe needs it.
+- **Unit conversion.** ~~Deferred~~ — shipped in #69 (API only). Stock stays
+  in each `Ingredient`'s base unit; recipes, GRNs, waste and adjustments may
+  be entered in KG/G, L/ML, DOZEN/PIECE or a per-ingredient pack size
+  (`PUT /inventory/ingredients/:id/conversions`) and are converted at the
+  boundary (`modules/inventory/unit-conversion.ts`). UI pickers are follow-up.
 - **Stock transfers.** Deferred to Phase 6 alongside multi-branch, since a
   transfer needs two real branches to mean anything.
 - **Expiry/low-stock alerting (push/email/report).** The *data* is

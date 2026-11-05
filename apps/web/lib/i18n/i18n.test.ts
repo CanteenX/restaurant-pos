@@ -118,6 +118,14 @@ test("audit does not mistake the arrow of an arrow function for JSX text", () =>
   assert.deepEqual(findHardcodedStrings(src), []);
 });
 
+test("audit ignores code fragments between tags", () => {
+  const src = `<A />
+    ) : !ready ? (
+    <B />
+    <C>{api.get}</C> <D>api.get</D>`;
+  assert.deepEqual(findHardcodedStrings(src), []);
+});
+
 test("audit groups files into areas", () => {
   assert.equal(areaOf("app/(dashboard)/inventory/waste/page.tsx"), "inventory");
   assert.equal(areaOf("components/inventory/create-po-dialog.tsx"), "inventory");

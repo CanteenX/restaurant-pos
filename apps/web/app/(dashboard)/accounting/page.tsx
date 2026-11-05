@@ -20,6 +20,7 @@ import { ApiError } from "@/lib/api";
 import { useI18n, type TranslationKey } from "@/lib/i18n/context";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ApprovalThreshold, ExpenseStatusBadge, PendingExpenses } from "@/components/accounting/expense-approvals";
 import { TallyTab } from "@/components/accounting/tally-tab";
 import { BalanceSheetTab, BankTab, BudgetsTab } from "@/components/accounting/finance-tabs";
 
@@ -109,6 +110,8 @@ function Expenses({ branchId }: { branchId: string | null }) {
           <Button onClick={submit} disabled={addExpense.isPending}>{t("acct.exp.add")}</Button>
         </div>
       </Card>
+      <PendingExpenses branchId={branchId} />
+      <ApprovalThreshold branchId={branchId} />
       <RangePicker range={range} onChange={setRange} />
       <Card className="flex flex-col divide-y divide-border p-2">
         {isLoading ? (
@@ -123,6 +126,7 @@ function Expenses({ branchId }: { branchId: string | null }) {
                 </span>
                 <span className="flex items-center gap-3">
                   {formatCurrency(e.amount)}
+                  <ExpenseStatusBadge status={e.status} />
                   <Button size="sm" variant="outline" onClick={() => deleteExpense.mutate(e.id, { onError: (err) => toast.error(errMsg(err)) })}>
                     {t("acct.exp.delete")}
                   </Button>

@@ -11,6 +11,15 @@ export const expenseSchema = z.object({
 });
 export type ExpenseDto = z.infer<typeof expenseSchema>;
 
+export const EXPENSE_STATUSES = ["PENDING", "APPROVED", "REJECTED"] as const;
+export type ExpenseStatus = (typeof EXPENSE_STATUSES)[number];
+
+// Approve / reject a PENDING expense (#74). The note is optional either way.
+export const expenseDecisionSchema = z.object({
+  note: z.string().trim().max(300).optional(),
+});
+export type ExpenseDecisionDto = z.infer<typeof expenseDecisionSchema>;
+
 export const cashClosingSchema = z.object({
   businessDate: isoDate,
   openingFloat: z.coerce.number().min(0).default(0),

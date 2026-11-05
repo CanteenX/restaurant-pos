@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  normalizePairCode,
+  parsePairingParams,
   subscribeDisplay,
   subscribeDisplayRemote,
   type DisplayState,
@@ -22,19 +22,21 @@ export default function CustomerDisplayPage() {
   // display can be a different device. Without a code: same-browser window.
   const [pairing, setPairing] = useState<{ code: string; branchId: string } | null>(null);
   const [connected, setConnected] = useState(true);
+  const [invalidLink, setInvalidLink] = useState(false);
   useEffect(() => {
-    const q = new URLSearchParams(window.location.search);
-    const code = normalizePairCode(q.get("code") ?? "");
-    const branchId = q.get("branch");
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of the URL on mount
-    if (code && branchId) setPairing({ code, branchId });
+    const p = parsePairingParams(window.location.search);
+    /* eslint-disable react-hooks/set-state-in-effect -- one-time read of the URL on mount */
+    if (p.kind === "ok") setPairing({ code: p.code, branchId: p.branchId });
+    else if (p.kind === "invalid") setInvalidLink(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
   useEffect(() => {
+    if (invalidLink) return;
     if (pairing) {
       return subscribeDisplayRemote(pairing.branchId, pairing.code, setState, setConnected);
     }
     return subscribeDisplay(setState);
-  }, [pairing]);
+  }, [pairing, invalidLink]);
 
   // Chime when the payment lands. Browsers only allow audio after a click on
   // the page, so the first tap on the display arms sound for the session.
@@ -65,7 +67,14 @@ export default function CustomerDisplayPage() {
           Tap anywhere to enable payment sound
         </p>
       )}
-      {state.kind === "idle" && (
+      {invalidLink && (
+        <div role="alert" className="m-auto text-center">
+          <p className="text-4xl font-semibold tracking-tight">
+            Invalid pairing link — scan the code on the till again
+          </p>
+        </div>
+      )}
+      {!invalidLink && state.kind === "idle" && (
         <div className="m-auto text-center">
           <p className="text-5xl font-semibold tracking-tight">Welcome</p>
           <p className="mt-3 text-xl text-muted-foreground">Your order will appear here</p>

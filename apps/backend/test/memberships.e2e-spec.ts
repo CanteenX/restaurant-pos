@@ -110,7 +110,7 @@ describe('Memberships (e2e)', () => {
         })
         .expect(201)
     ).body.id;
-  });
+  }, 60_000);
 
   afterAll(async () => {
     await prisma.customer.deleteMany({ where: { id: customerId } });

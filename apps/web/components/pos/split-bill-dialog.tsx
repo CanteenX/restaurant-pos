@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { StatusNote, useStatusNote } from "@/components/ui/status-note";
 import { copyText } from "@/lib/copy-text";
 import { useI18n } from "@/lib/i18n/context";
-import { guestShares, unassignedLines, type Assignments } from "@/lib/split-bill";
+import { clampGuests, guestShares, unassignedLines, type Assignments } from "@/lib/split-bill";
 
 export interface SplitBillLine {
   id: string;
@@ -45,7 +45,7 @@ export function SplitBillDialog({
   const [guestText, setGuestText] = useState("2");
   const [assignments, setAssignments] = useState<Assignments>({});
   const copyNote = useStatusNote();
-  const guests = Math.min(12, Math.max(2, Math.floor(Number(guestText) || 2)));
+  const guests = clampGuests(guestText);
 
   const shares = useMemo(
     () => guestShares({ guests, lines: lines.map((l) => ({ id: l.id, total: l.total })), assignments, bill }),
@@ -85,6 +85,7 @@ export function SplitBillDialog({
             max="12"
             value={guestText}
             onChange={(e) => setGuestText(e.target.value)}
+            onBlur={() => setGuestText(String(guests))}
             className="h-8 w-16 text-center"
           />
         </div>

@@ -6,12 +6,17 @@ import {
   type ResolvedTarget,
   type WebhookNetOptions,
 } from '../../modules/webhooks/net-guard';
+import type {
+  CanonicalMenu,
+  PlatformAvailabilityItem,
+} from '../aggregator-menu';
 import { signAggregatorBody } from '../aggregator-signing';
 import {
   NO_CAPABILITIES,
   OutboundError,
   type CredentialField,
   type IntegrationProvider,
+  type PlatformCallOptions,
   type PlatformOrderStatus,
   type ProviderCapabilities,
   type ProviderContext,
@@ -27,6 +32,11 @@ const DEFAULT_TIMEOUT_MS = 8000;
  * Inbound orders use the same signed webhook as the plain providers; this
  * adapter adds the outbound calls that tell the platform what happened.
  */
+const outletField = (o: PlatformCallOptions) => ({
+  ...(o.branchId ? { branchId: o.branchId } : {}),
+  ...(o.outletId ? { outletId: o.outletId } : {}),
+});
+
 export class PartnerApiProvider implements IntegrationProvider {
   readonly key = 'partner-api';
   readonly name = 'Channel manager (partner API)';
@@ -43,6 +53,8 @@ export class PartnerApiProvider implements IntegrationProvider {
     updateOrderStatus: true,
     cancelOrders: true,
     webhooks: true,
+    itemAvailability: true,
+    menuSync: true,
   };
   readonly credentialFields: CredentialField[] = [
     {
@@ -107,6 +119,34 @@ export class PartnerApiProvider implements IntegrationProvider {
       'POST',
       `/v1/orders/${encodeURIComponent(externalOrderId)}/status`,
       body,
+      o.idempotencyKey,
+    );
+  }
+
+  async setItemAvailability(
+    ctx: ProviderContext,
+    items: PlatformAvailabilityItem[],
+    o: PlatformCallOptions,
+  ): Promise<void> {
+    await this.call(
+      ctx,
+      'POST',
+      '/v1/items/availability',
+      JSON.stringify({ ...outletField(o), items }),
+      o.idempotencyKey,
+    );
+  }
+
+  async pushMenu(
+    ctx: ProviderContext,
+    menu: CanonicalMenu,
+    o: PlatformCallOptions,
+  ): Promise<void> {
+    await this.call(
+      ctx,
+      'PUT',
+      '/v1/menu',
+      JSON.stringify({ ...menu, ...outletField(o) }),
       o.idempotencyKey,
     );
   }

@@ -8,12 +8,23 @@ import {
   UsePipes,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { applyReferralCodeSchema, type SessionUser } from '@nventra/types';
+import {
+  applyReferralCodeSchema,
+  membershipBranchQuerySchema,
+  type MembershipBranchQueryDto,
+  type SessionUser,
+} from '@nventra/types';
 import { Auth } from '../../common/decorators/auth.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { BranchAccessService } from '../../common/services/branch-access.service';
 import { ReferralsService } from './referrals.service';
+
+// branchId is validated at the boundary (#147): a raw @Query('branchId')
+// arrives as undefined when omitted, and Prisma drops an undefined `id`
+// filter, so assertAccess would pass for any branch of the restaurant.
+const branchQuery = () =>
+  new ZodValidationPipe(membershipBranchQuerySchema, 'query');
 
 @ApiTags('referrals')
 @Controller('v1/referrals')
@@ -27,7 +38,7 @@ export class ReferralsController {
   @Get('stats')
   async stats(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query(branchQuery()) { branchId }: MembershipBranchQueryDto,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
     return this.referrals.stats(user.restaurantId);
@@ -37,7 +48,7 @@ export class ReferralsController {
   @Get('customer/:customerId')
   async forCustomer(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query(branchQuery()) { branchId }: MembershipBranchQueryDto,
     @Param('customerId') customerId: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -49,7 +60,7 @@ export class ReferralsController {
   @UsePipes(new ZodValidationPipe(applyReferralCodeSchema))
   async apply(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query(branchQuery()) { branchId }: MembershipBranchQueryDto,
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
