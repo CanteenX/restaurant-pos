@@ -183,6 +183,11 @@ export interface Conflict {
   tbl: string;
   pk: string;
   error: string;
+  /**
+   * HQ's own copy of an HQ-owned row a branch tried to change (or a
+   * tombstone if HQ has none), so the branch can put the row back (#83).
+   */
+  restore?: SyncChange;
 }
 
 export interface Rejected {

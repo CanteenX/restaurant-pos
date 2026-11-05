@@ -3,8 +3,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   columnsToWrite,
   derivedTargets,
+  inPullScope,
   isContended,
   orderProblems,
+  ownerWinsOver,
   ownership,
   schemaSkew,
   yieldDelayMs,
@@ -16,6 +18,7 @@ import {
   compact,
   Conflict,
   localizePermission,
+  nextHlc,
   SyncChange,
 } from './outbox';
 import { syncTable } from './tables';
@@ -36,6 +39,11 @@ export interface ApplyContext {
   receiver: 'hq' | 'branch';
   /** HQ: branches the pushing peer owns. Branch: branches this install owns. */
   branches: string[];
+  /**
+   * Branch: this install's device id. Its own versions of rows it doesn't
+   * own lose to the owner's changes (ownerWinsOver).
+   */
+  localPeer?: string;
 }
 
 interface TableMeta {
@@ -46,6 +54,7 @@ interface TableMeta {
 type Tx = Prisma.TransactionClient;
 type Opts = ApplyContext & {
   schema: string;
+  deviceId: string;
   permissionId: (key: string) => string | undefined;
 };
 
@@ -97,8 +106,12 @@ export class SyncApplier {
         )
       ).map((p) => [p.key, p.id]),
     );
+    const [{ deviceId }] = await this.prisma.$queryRawUnsafe<
+      { deviceId: string }[]
+    >(`SELECT "deviceId" FROM sync_state WHERE id = 1`);
     const opts: Opts = {
       ...ctx,
+      deviceId,
       schema: await this.schemaVersion(),
       permissionId: (k) => perms.get(k),
     };
@@ -199,7 +212,11 @@ export class SyncApplier {
             if (isContended(msg)) throw new Contended(msg);
             await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT sp');
             if (RETRYABLE.test(msg) && pass < MAX_PASSES - 1) r.retry.push(c);
-            else r.conflicts.push(conflictOf(c, e));
+            else
+              r.conflicts.push({
+                ...conflictOf(c, e),
+                ...(await this.restoreFor(tx, c, msg, meta, opts)),
+              });
           }
         }
         // These lock parent rows too (#209 audit): a till holding one must
@@ -369,7 +386,8 @@ export class SyncApplier {
        VALUES ($1, $2, $3::bigint, $4, true, $5, $6::timestamptz)
        ON CONFLICT (tbl, "pkKey") DO UPDATE SET hlc = EXCLUDED.hlc, peer = EXCLUDED.peer,
          deleted = true, "branchId" = coalesce(EXCLUDED."branchId", v."branchId"), ts = EXCLUDED.ts
-       WHERE NOT (v.hlc > EXCLUDED.hlc OR (v.hlc = EXCLUDED.hlc AND (v.peer = EXCLUDED.peer OR NOT $7::boolean)))
+       WHERE ($8::text IS NOT NULL AND v.peer = $8)
+          OR NOT (v.hlc > EXCLUDED.hlc OR (v.hlc = EXCLUDED.hlc AND (v.peer = EXCLUDED.peer OR NOT $7::boolean)))
        RETURNING 1`,
       c.tbl,
       c.pkKey,
@@ -378,6 +396,7 @@ export class SyncApplier {
       branch,
       c.ts,
       opts.tieWins,
+      this.ignoredPeer(c, opts),
     );
     if (!won.length) return false;
     if (await this.lockRow(tx, c, t)) await this.writeRow(tx, c, t, true, opts);
@@ -414,14 +433,93 @@ export class SyncApplier {
     const r = await tx.$queryRawUnsafe<{ ok: boolean }[]>(
       `SELECT NOT EXISTS (
          SELECT 1 FROM sync_versions WHERE tbl = $1 AND "pkKey" = $2
+            AND ($6::text IS NULL OR peer <> $6)
             AND (hlc > $3::bigint OR (hlc = $3::bigint AND (peer = $4 OR NOT $5::boolean)))) AS ok`,
       c.tbl,
       c.pkKey,
       c.hlc,
       c.peer,
       opts.tieWins,
+      this.ignoredPeer(c, opts),
     );
     return r[0].ok;
+  }
+
+  private ignoredPeer(c: SyncChange, opts: Opts) {
+    return ownerWinsOver(opts.receiver, syncTable(c.tbl), opts.localPeer);
+  }
+
+  /**
+   * HQ rejecting a branch's change to an HQ-owned row answers with its own
+   * copy of the row (or a tombstone when HQ deleted it), so the branch puts
+   * the row back instead of keeping a value HQ will never take (#83).
+   * A row HQ never had was created at the branch: no restore, the branch
+   * keeps it and the rejection flags it for the owner. Deleting it there
+   * would cascade (a floor's tables, unlinked orders) or fail for a dish
+   * already sold (#83 review; docs/MULTI-BRANCH-SYNC.md §8).
+   */
+  private async restoreFor(
+    tx: Tx,
+    wire: SyncChange,
+    msg: string,
+    meta: Map<string, TableMeta>,
+    opts: Opts,
+  ): Promise<{ restore?: SyncChange }> {
+    const t = meta.get(wire.tbl);
+    if (
+      opts.receiver !== 'hq' ||
+      !msg.startsWith('not-owner') ||
+      syncTable(wire.tbl)?.owner !== 'hq' ||
+      !t
+    )
+      return {};
+    let local: SyncChange;
+    try {
+      local = localizePermission(wire, opts.permissionId);
+    } catch {
+      return {};
+    }
+    const tbl = q(wire.tbl);
+    const pkCols = t.pk.map(q).join(', ');
+    const [r] = await tx.$queryRawUnsafe<
+      {
+        row: Record<string, unknown> | null;
+        branch: string | null;
+        hlc: string | null;
+        peer: string | null;
+        vbranch: string | null;
+      }[]
+    >(
+      `SELECT h.row, h.branch, v.hlc::text AS hlc, v.peer, v."branchId" AS vbranch
+         FROM (SELECT 1) one
+         LEFT JOIN LATERAL (
+           SELECT sync_capture_row($1, to_jsonb(x)) AS row, sync_branch_of($1, to_jsonb(x)) AS branch
+             FROM ${tbl} x
+            WHERE (${pkCols}) = (SELECT ${pkCols} FROM jsonb_populate_record(NULL::${tbl}, $2::jsonb))
+         ) h ON true
+         LEFT JOIN sync_versions v ON v.tbl = $1 AND v."pkKey" = $3`,
+      wire.tbl,
+      JSON.stringify(local.pk),
+      wire.pkKey,
+    );
+    if (!r.row && !r.hlc) return {};
+    // Only what this peer could pull anyway (#211 review): HQ's copy of
+    // another branch's row (a kiosk or QR token, payroll) never leaks.
+    const branch = r.row ? r.branch : r.vbranch;
+    if (!inPullScope(branch, opts.branches)) return {};
+    return {
+      restore: {
+        tbl: wire.tbl,
+        pk: wire.pk,
+        pkKey: wire.pkKey,
+        op: r.row ? 'U' : 'D',
+        row: r.row,
+        ts: new Date().toISOString(),
+        hlc: r.hlc ?? nextHlc(Date.now()).toString(),
+        peer: r.peer ?? opts.deviceId,
+        schemaVersion: opts.schema,
+      },
+    };
   }
 
   /**

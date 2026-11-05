@@ -5,7 +5,7 @@
  * tested in apply.spec.ts; apply.ts feeds them what it reads from the DB.
  */
 import { DERIVED } from './derived';
-import { SyncChange } from './outbox';
+import { Rejected, SyncChange } from './outbox';
 import { SYNC_TABLES, SyncTable } from './tables';
 
 export type Verdict =
@@ -239,6 +239,18 @@ export function pullScope(tables = SYNC_TABLES) {
 }
 
 /**
+ * Whether a row of `branch` (null = restaurant-wide) is one the server's
+ * pull filter sends to a peer owning `branches`. HQ answers a rejected push
+ * with its own copy of a row only when this holds (#211 review).
+ */
+export function inPullScope(
+  branch: string | null | undefined,
+  branches: readonly string[],
+): boolean {
+  return branch == null || branches.includes(branch);
+}
+
+/**
  * A lock wait the applier should yield on instead of reporting: a deadlock
  * (40P01), its own lock_timeout (55P03) or a serialization failure (40001).
  */
@@ -252,4 +264,57 @@ export function isContended(message: string): boolean {
 export function yieldDelayMs(attempt: number, rand = Math.random): number {
   const base = 100 * 2 ** Math.min(attempt, 4);
   return Math.round(base * (0.75 + rand() / 2));
+}
+
+/**
+ * Rows this install does not own are the owner's to decide (#83). A branch
+ * that edited an HQ-owned row anyway has its own version on top; HQ's next
+ * value (or the restore HQ sends back when it rejects that edit) must still
+ * apply, so the receiver's own versions of such rows are ignored by LWW.
+ * Returns the peer id whose versions to ignore, or null for plain LWW.
+ */
+export function ownerWinsOver(
+  receiver: 'hq' | 'branch',
+  table: SyncTable | undefined,
+  localPeer: string | undefined,
+): string | null {
+  if (receiver !== 'branch' || !table || !localPeer) return null;
+  return table.owner === 'hq' ? localPeer : null;
+}
+
+const EMPTY_PUSH = '{"changes":[]}'.length;
+
+/**
+ * How many changes (in order) fit one push body of at most `maxBytes` as
+ * JSON. HQ's body limit (BODY_LIMIT, 100 kB by default) would otherwise
+ * refuse a page of large rows with HTTP 413 on every cycle (#83). 0 means
+ * the first change alone is over the budget: see tooLargeToPush.
+ */
+export function fitPushPage(changes: SyncChange[], maxBytes: number): number {
+  let size = EMPTY_PUSH;
+  for (let i = 0; i < changes.length; i++) {
+    size += Buffer.byteLength(JSON.stringify(changes[i])) + (i ? 1 : 0);
+    if (size > maxBytes) return i;
+  }
+  return changes.length;
+}
+
+/**
+ * A change that can never fit one push on its own (#83 review), e.g. a
+ * large document_files upload. Returned as a rejection to dead-letter, so
+ * the push cursor moves past it instead of retrying it forever; null when
+ * it fits.
+ */
+export function tooLargeToPush(
+  change: SyncChange,
+  maxBytes: number,
+): Rejected | null {
+  const bytes = EMPTY_PUSH + Buffer.byteLength(JSON.stringify(change));
+  if (bytes <= maxBytes) return null;
+  return {
+    tbl: change.tbl,
+    pkKey: change.pkKey,
+    change,
+    error: `too-large: change is ${bytes} bytes, one push carries at most ${maxBytes}; it stays on this install only`,
+  };
 }

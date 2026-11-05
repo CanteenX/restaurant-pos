@@ -281,10 +281,51 @@ describe('Sync apply at HQ (e2e)', () => {
       expect(r.body.conflicts.map((c: { error: string }) => c.error)).toEqual([
         'not-owner: menu_items is HQ-owned',
       ]);
+      // HQ answers with its own copy so the branch can put the row back (#83).
+      const restore = r.body.conflicts[0].restore;
+      expect(restore).toMatchObject({ tbl: 'menu_items', op: 'U' });
+      expect(String(restore.row.price)).toBe(
+        String(Number(before.price.toString())),
+      );
       const after = await prisma.menuItem.findUniqueOrThrow({
         where: { id: menuItemId },
       });
       expect(after.price.toString()).toBe(before.price.toString());
+    });
+
+    it("never restores another branch's HQ-owned rows to a peer (#211 review)", async () => {
+      const floor = await prisma.floor.create({
+        data: { branchId: b2, name: `F2-${tag}` },
+      });
+      const table = await prisma.table.create({
+        data: { floorId: floor.id, number: `T2-${tag}` },
+      });
+      // A b2 dish HQ deleted: its tombstone carries branch b2.
+      const gone = await prisma.menuItem.create({
+        data: {
+          branchId: b2,
+          categoryId: (
+            await prisma.menuCategory.create({
+              data: { branchId: b2, name: `Cat2-${tag}` },
+            })
+          ).id,
+          name: `Gone-${tag}`,
+          price: 5,
+        },
+      });
+      await prisma.menuItem.delete({ where: { id: gone.id } });
+      const r = await push(p1, [
+        ch('branches', { id: b2, name: 'x' }, p1),
+        ch('tables', { id: table.id, floorId: floor.id, number: 'x' }, p1),
+        ch('menu_items', { id: gone.id, branchId: b1, name: 'x' }, p1),
+      ]).expect(200);
+      const out = r.body.conflicts as { error: string; restore?: unknown }[];
+      expect(out).toHaveLength(3);
+      for (const c of out) {
+        expect(c.error).toMatch(/^not-owner/);
+        expect(c.restore).toBeUndefined();
+      }
+      expect(JSON.stringify(r.body)).not.toMatch(/kioskToken|qrToken/);
     });
 
     it("rejects another branch's rows, including through a parent row", async () => {
