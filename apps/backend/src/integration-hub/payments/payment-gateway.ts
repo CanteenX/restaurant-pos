@@ -179,6 +179,31 @@ export function fromMinorUnits(minor: number): Prisma.Decimal {
 
 const OPEN: AttemptStatus[] = ['CREATED', 'PENDING'];
 
+/** How long a guest has to scan a gateway QR before the gateway closes it. */
+export const GATEWAY_QR_LIFETIME_MS = 15 * 60_000;
+/**
+ * Slack on top of the lifetime: the gateway's close time is taken a moment
+ * after the attempt row is created (network round trip, clock skew).
+ */
+export const GATEWAY_QR_CLOSE_GRACE_MS = 2 * 60_000;
+const QR_BOUND_MS = GATEWAY_QR_LIFETIME_MS + GATEWAY_QR_CLOSE_GRACE_MS;
+
+/**
+ * Whether a QR created at `createdAt` is closed at the gateway by `now`, so it
+ * can no longer collect money. Used when the gateway cannot be asked (it was
+ * switched off, or its keys stopped working): a closed single-use QR must not
+ * hold the bill forever. The row itself is left as it is, so a late success
+ * report is still taken and flagged if the bill was closed another way.
+ */
+export function gatewayQrPastClose(createdAt: Date, now = new Date()): boolean {
+  return now.getTime() - createdAt.getTime() > QR_BOUND_MS;
+}
+
+/** The earliest `createdAt` of a QR that may still be payable at `now`. */
+export function gatewayQrOpenSince(now = new Date()): Date {
+  return new Date(now.getTime() - QR_BOUND_MS);
+}
+
 /**
  * The status an attempt moves to when the gateway reports `incoming`, or null
  * when the report changes nothing. SUCCEEDED is final. A success reported

@@ -30,6 +30,8 @@ export DATABASE_URL="postgresql://qa:qa@localhost:5432/qa"
 export JWT_SECRET="qa-only-not-a-secret-qa-only-not-a-secret"
 export PORT=4001 CORS_ORIGIN="http://localhost:1995" FRONTEND_ORIGIN="http://localhost:1995" COOKIE_SECURE=false
 export BACKEND_URL="http://localhost:4001" NEXT_TELEMETRY_DISABLED=1
+# Local Razorpay mock (never the real API) for e2e/tests/upi-qr.spec.ts.
+export RAZORPAY_API_BASE="http://127.0.0.1:4010" RAZORPAY_MOCK_URL="http://127.0.0.1:4010"
 
 echo "== install + build (types, prisma, backend, web)"
 corepack enable >/dev/null 2>&1 || true
@@ -39,6 +41,8 @@ pnpm --filter ./packages/types build >"$LOG/types.log" 2>&1
 pnpm --filter ./apps/backend build >"$LOG/backend-build.log" 2>&1
 pnpm --filter ./apps/web build >"$LOG/web-build.log" 2>&1
 
+echo "== start razorpay mock :4010"
+( cd apps/backend && RAZORPAY_MOCK_PORT=4010 pnpm exec ts-node test/razorpay-mock-server.ts >"$LOG/razorpay-mock.log" 2>&1 ) & PIDS+=($!)
 echo "== start backend :4001 and web :1995"
 ( cd apps/backend && node dist/src/main.js >"$LOG/backend.log" 2>&1 ) & PIDS+=($!)
 ( cd apps/web && pnpm exec next start -p 1995 >"$LOG/web.log" 2>&1 ) & PIDS+=($!)

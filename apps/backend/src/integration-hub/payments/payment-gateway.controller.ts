@@ -34,6 +34,13 @@ export class PaymentGatewayController {
     private readonly branchAccess: BranchAccessService,
   ) {}
 
+  /** Connected gateways the till can offer (e.g. "Pay by UPI QR"). */
+  @Auth('bills.print')
+  @Get('available')
+  available(@CurrentUser() user: SessionUser) {
+    return this.svc.available(user.restaurantId);
+  }
+
   @Auth('bills.print')
   @Post('orders/:orderId/attempts')
   async create(
@@ -45,6 +52,18 @@ export class PaymentGatewayController {
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
     return this.svc.createAttempt(user, branchId, orderId, body);
+  }
+
+  /** The bill's still-payable gateway QR, so a reloaded till can resume it. */
+  @Auth('bills.print')
+  @Get('orders/:orderId/attempts/open')
+  async open(
+    @CurrentUser() user: SessionUser,
+    @Query('branchId') branchId: string,
+    @Param('orderId') orderId: string,
+  ) {
+    await this.branchAccess.assertAccess(user.restaurantId, branchId);
+    return this.svc.openAttempt(user.restaurantId, branchId, orderId);
   }
 
   @Auth('bills.print')

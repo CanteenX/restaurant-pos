@@ -27,6 +27,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { MarketingService } from '../marketing/marketing.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { IntegrationOutboxService } from '../../integration-hub/outbox/integration-outbox.service';
+import { gatewayQrOpenSince } from '../../integration-hub/payments/payment-gateway';
 import { resolveProfile } from './escpos/encoder';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeGateway } from '../../realtime/realtime.gateway';
@@ -1521,6 +1522,8 @@ export class OrdersService {
     userId: string,
     dto: CheckoutDto,
     mayExceedDiscountCap = false,
+    /** Set only by PaymentGatewayService when settling money that already moved. */
+    fromGatewaySettlement = false,
   ) {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, branchId },
@@ -1545,6 +1548,9 @@ export class OrdersService {
         'This order has not been accepted yet - accept it before taking payment',
       );
     }
+    const qrOverride = fromGatewaySettlement
+      ? null
+      : await this.assertNoLiveGatewayQr(orderId, dto);
 
     const branch = await this.prisma.branch.findUniqueOrThrow({
       where: { id: branchId },
@@ -1718,6 +1724,19 @@ export class OrdersService {
               totalAmount: bill.totalDue,
             };
 
+        // Only a checkout that goes through is recorded as an override.
+        if (qrOverride) {
+          await tx.auditLog.create({
+            data: {
+              userId,
+              action: 'payment.gateway_qr_overridden',
+              entity: 'Order',
+              entityId: orderId,
+              metadata: qrOverride,
+            },
+          });
+        }
+
         if (!settlement.fullyPaid) {
           await tx.order.update({
             where: { id: orderId, status: 'OPEN' },
@@ -1888,6 +1907,37 @@ export class OrdersService {
   }
 
   // Current settlement state of an order, for answering a replayed request.
+  /**
+   * A gateway QR that can still be paid means the guest may be paying right
+   * now; recording another payment would collect the bill twice. The server
+   * holds the line whatever the till shows, unless the cashier overrides.
+   * A QR past its close time cannot collect any more, so it no longer holds
+   * the bill, even when the gateway cannot be asked (switched off, bad keys).
+   * Returns what to audit when the cashier overrode a live QR.
+   */
+  private async assertNoLiveGatewayQr(orderId: string, dto: CheckoutDto) {
+    const live = await this.prisma.gatewayPayment.findMany({
+      where: {
+        orderId,
+        status: { in: ['CREATED', 'PENDING'] },
+        externalId: { not: null },
+        settlementError: null,
+        createdAt: { gt: gatewayQrOpenSince() },
+      },
+      select: { id: true, provider: true, amount: true },
+    });
+    if (live.length === 0) return null;
+    if (!dto.overrideOpenGatewayQr) {
+      throw new ConflictException(
+        `A payment QR for ${live[0].amount.toFixed(2)} is still open on this bill - wait for it to be paid or to expire, or confirm the guest is paying another way`,
+      );
+    }
+    return {
+      attemptIds: live.map((a) => a.id),
+      amounts: live.map((a) => a.amount.toFixed(2)),
+    };
+  }
+
   private async checkoutResult(branchId: string, orderId: string) {
     const updated = await this.prisma.order.findFirstOrThrow({
       where: { id: orderId, branchId },

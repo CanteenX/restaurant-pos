@@ -12,6 +12,9 @@ import { QueryError } from "@/components/ui/query-error";
 import { PaymentMethodButtons } from "@/components/pos/payment-method-buttons";
 import { CustomerPicker } from "@/components/pos/customer-picker";
 import { SplitBillDialog } from "@/components/pos/split-bill-dialog";
+import { GatewayUpiQr } from "@/components/pos/gateway-upi-qr";
+import { useAvailableGateways, useOpenGatewayAttempt } from "@/hooks/use-payment-gateway";
+import { gatewayHold, type GatewayQrPhase } from "@/lib/gateway-qr";
 import type { Customer } from "@/hooks/use-customers";
 import { lookupGiftCard } from "@/hooks/use-gift-cards";
 import { CancelOrderDialog, useCanCancelOrders } from "@/components/orders/cancel-order-dialog";
@@ -213,8 +216,29 @@ export function CheckoutPanel({
   const upiAmount = plan.valid ? plan.applied : remainingDue;
   const upiVpa = settings?.restaurant.upiVpa;
   const upiName = settings?.restaurant.upiPayeeName || settings?.restaurant.name;
+  // A connected gateway (Razorpay) replaces the static QR with a dynamic one.
+  const { data: gateways } = useAvailableGateways();
+  const gateway = gateways?.[0] ?? null;
+  // The server is the source of truth for an open QR (survives reloads and
+  // method switches, and a gateway switched off with a QR open); the mounted
+  // QR's own phase covers the moment before.
+  const { data: openQr } = useOpenGatewayAttempt(branchId, order.id, remainingDue > 0);
+  const openAttempt = openQr?.attempt ?? null;
+  const [gatewayPhase, setGatewayPhase] = useState<GatewayQrPhase | null>(null);
+  // While a gateway QR can still be paid, any manual payment could collect the
+  // bill twice; the server refuses it too unless the cashier overrides.
+  const [overrideFor, setOverrideFor] = useState<string | null>(null);
+  const hold = gatewayHold({
+    gateway,
+    localPhase: gatewayPhase,
+    serverOpen: openAttempt,
+    overridden: overrideFor === order.id,
+    method,
+  });
+  const overrideQr = hold.live && !hold.held;
+  const manualUpiHeld = hold.held;
   const upiUri =
-    method !== "UPI" || !upiVpa || !(upiAmount > 0)
+    method !== "UPI" || gateway || !upiVpa || !(upiAmount > 0)
       ? null
       : buildUpiUri({
           vpa: upiVpa,
@@ -245,7 +269,7 @@ export function CheckoutPanel({
   };
 
   const handleCheckout = () => {
-    if (!bill || repricing) return;
+    if (!bill || repricing || manualUpiHeld) return;
     const payments =
       plan.applied > 0
         ? [
@@ -265,6 +289,7 @@ export function CheckoutPanel({
       giftCardCode: giftCardBalance !== null ? giftCardCode : undefined,
       payments,
       allowPartial: plan.partial || undefined,
+      ...(overrideQr ? { overrideOpenGatewayQr: true } : {}),
     };
     checkout.mutate(
       { orderId: order.id, dto: { ...dto, requestId: requestIdFor(dto) } },
@@ -689,9 +714,20 @@ export function CheckoutPanel({
             </div>
           )}
 
-          {method === "UPI" && remainingDue > 0 && (
+          {method === "UPI" && remainingDue > 0 && !(manualUpiHeld && !gateway) && (
             <div className="flex flex-col items-center gap-2 rounded-xl border border-border bg-white p-4">
-              {upiUri ? (
+              {gateway && (
+                <GatewayUpiQr
+                  gateway={gateway}
+                  branchId={branchId}
+                  orderId={order.id}
+                  amount={upiAmount}
+                  isPartial={upiAmount < remainingDue}
+                  resume={openAttempt}
+                  onPhaseChange={setGatewayPhase}
+                />
+              )}
+              {!gateway && upiUri && (
                 <>
                   <QRCodeSVG value={upiUri} size={176} level="M" marginSize={1} />
                   <p className="text-xs font-medium text-[#17251d]">
@@ -699,7 +735,8 @@ export function CheckoutPanel({
                   </p>
                   <p className="text-[11px] text-neutral-500">{t("pos.checkout.upiOnDisplay")}</p>
                 </>
-              ) : (
+              )}
+              {!gateway && !upiUri && (
                 <p className="text-center text-xs text-neutral-600">
                   {t("pos.checkout.noUpiBefore")} <Link href="/settings" className="font-medium underline">{t("pos.checkout.noUpiLink")}</Link> {t("pos.checkout.noUpiAfter")}
                 </p>
@@ -783,10 +820,23 @@ export function CheckoutPanel({
 
       {/* Pinned to the bottom of the scrolling panel on phones, so billing is always one tap away. */}
       <div className="sticky bottom-0 z-10 -mx-1 bg-card px-1 pb-1 pt-2 max-lg:border-t max-lg:border-border max-lg:shadow-[0_-8px_12px_-10px_rgba(0,0,0,0.25)]">
+        {hold.live && (
+          <div className="mb-2 flex flex-col items-center gap-1 text-center" data-testid="gateway-qr-hold">
+            <p id="manual-upi-held" className="text-xs text-muted-foreground" role="status">
+              {overrideQr ? t("pos.gatewayQr.overrideOn") : t("pos.gatewayQr.manualHeld", { gateway: hold.gatewayName ?? "" })}
+            </p>
+            {hold.showOverride && (
+              <Button variant="outline" size="sm" onClick={() => setOverrideFor(order.id)}>
+                {t("pos.gatewayQr.override")}
+              </Button>
+            )}
+          </div>
+        )}
         <Button
           className="h-12 w-full text-base"
-          disabled={checkout.isPending || !bill || repricing || !plan.valid}
+          disabled={checkout.isPending || !bill || repricing || !plan.valid || manualUpiHeld}
           onClick={handleCheckout}
+          aria-describedby={manualUpiHeld ? "manual-upi-held" : undefined}
         >
           {checkout.isPending
             ? t("pos.checkout.processing")
