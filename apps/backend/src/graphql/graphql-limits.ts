@@ -216,8 +216,9 @@ function viaFragment(
 
 /**
  * At most `max` root fields in a mutation (aliases and fragments included).
- * One write per request keeps every write behind the per-key rate limit and
- * gives each its own HTTP response, so a retry never replays a batch.
+ * One write per request means each write is charged once to the per-key
+ * write limit (GraphqlService.chargeWrite, shared with REST) and gets its
+ * own HTTP response, so a retry never replays a batch.
  */
 export function mutationLimitRule(max: number): ValidationRule {
   return operationRule((sel, fragments, _context, operation) => {

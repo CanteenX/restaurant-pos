@@ -88,6 +88,7 @@ run('GraphQL mutations (e2e)', () => {
       ['reader', ['orders:read', 'menu:read']],
       ['locked', ['orders:write', 'menu:availability'], BRANCH],
       ['avail', ['menu:availability']],
+      ['limited', ['orders:write']],
     ];
     for (const [name, scopes, branchId] of specs) {
       const res = await owner
@@ -262,6 +263,38 @@ run('GraphQL mutations (e2e)', () => {
         { i: input() },
       );
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe('write rate limit', () => {
+    afterEach(() => delete process.env.INTEGRATION_WRITE_LIMIT_PER_MIN);
+
+    it('shares the REST per-key write budget and answers 429 + Retry-After', async () => {
+      // read per request, so lowering it here affects only this test
+      process.env.INTEGRATION_WRITE_LIMIT_PER_MIN = '2';
+      const rest = () =>
+        request(app.getHttpServer())
+          .post(`/api/v1/integrations/locations/${BRANCH}/orders`)
+          .set('Authorization', `Bearer ${keys.limited}`)
+          .send({ type: 'TAKEAWAY', ...input() });
+      const viaGql = () =>
+        gql(CREATE, keys.limited, { branchId: BRANCH, input: input() });
+
+      expect((await rest()).status).toBe(201); // write 1 (REST)
+      const second = await viaGql(); // write 2 (GraphQL)
+      expect(second.status).toBe(200);
+      expect(second.body.errors).toBeUndefined();
+
+      const third = await viaGql(); // over the shared budget
+      expect(third.status).toBe(429);
+      expect(Number(third.headers['retry-after'])).toBeGreaterThan(0);
+      expect(codes(third.body)).toEqual(['RATE_LIMITED']);
+      expect((await rest()).status).toBe(429); // REST sees the same budget
+      expect(await ordersBy('limited')).toBe(2);
+
+      // reads are not writes: a query from the same key still runs
+      const read = await gql('{ __typename }', keys.limited);
+      expect(read.status).toBe(200);
     });
   });
 

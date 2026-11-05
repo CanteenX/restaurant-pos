@@ -2,13 +2,18 @@ import { HttpException, Injectable, Logger } from '@nestjs/common';
 import type { GraphqlRequest } from '@nventra/types';
 import {
   execute,
+  getOperationAST,
   GraphQLError,
+  OperationTypeNode,
   parse,
   validate,
   type DocumentNode,
   type ExecutionResult,
 } from 'graphql';
-import { envLimit } from '../common/guards/key-rate-limiter';
+import {
+  envLimit,
+  hitIntegrationWrite,
+} from '../common/guards/key-rate-limiter';
 import type { GraphqlContext } from './graphql-context';
 import {
   costLimitRule,
@@ -23,7 +28,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { createRootValue } from './graphql-resolvers';
 import { schema } from './graphql.schema';
 
-export type GraphqlResponse = { status: number; body: ExecutionResult };
+export type GraphqlResponse = {
+  status: number;
+  body: ExecutionResult;
+  headers?: Record<string, string>;
+};
 
 @Injectable()
 export class GraphqlService {
@@ -66,6 +75,9 @@ export class GraphqlService {
     ]);
     if (limitErrors.length) return requestError(limitErrors);
 
+    const limited = this.chargeWrite(document, req.operationName, ctx);
+    if (limited) return limited;
+
     const result = await execute({
       schema,
       document,
@@ -87,6 +99,35 @@ export class GraphqlService {
       body: result.errors
         ? { ...result, errors: result.errors.map((e) => this.mask(e)) }
         : result,
+    };
+  }
+
+  // An integration key's mutation is a write: it spends the SAME per-key
+  // budget as a REST write (INTEGRATION_WRITE_LIMIT_PER_MIN), on top of the
+  // general GraphQL request limit, so switching transports never raises a
+  // key's write rate. Staff sessions are not integration keys and are not
+  // charged, as on REST.
+  private chargeWrite(
+    document: DocumentNode,
+    operationName: string | null | undefined,
+    ctx: GraphqlContext,
+  ): GraphqlResponse | null {
+    if (ctx.principal.kind !== 'integration') return null;
+    const op = getOperationAST(document, operationName ?? undefined);
+    if (op?.operation !== OperationTypeNode.MUTATION) return null;
+    const retryAfter = hitIntegrationWrite(ctx.principal.id);
+    if (retryAfter === 0) return null;
+    return {
+      status: 429,
+      headers: { 'Retry-After': String(retryAfter) },
+      body: {
+        errors: [
+          new GraphQLError(
+            'Too many writes for this API key — slow down and retry later',
+            { extensions: { code: 'RATE_LIMITED', retryAfter } },
+          ),
+        ],
+      },
     };
   }
 

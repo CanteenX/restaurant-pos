@@ -8,7 +8,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { createHash } from 'node:crypto';
 import { IntegrationApiKeyGuard } from './integration-api-key.guard';
-import { KeyRateLimiter } from './key-rate-limiter';
+import { hitIntegrationWrite, KeyRateLimiter } from './key-rate-limiter';
 
 const RAW = 'ordr_ext_test-token';
 const hash = createHash('sha256').update(RAW).digest('hex');
@@ -123,6 +123,18 @@ describe('IntegrationApiKeyGuard', () => {
       const r = setup(activeKey, [], 'GET');
       r.request.headers.authorization = `Bearer ${RAW}`;
       await expect(guard.canActivate(r.ctx)).resolves.toBe(true);
+    } finally {
+      delete process.env.INTEGRATION_WRITE_LIMIT_PER_MIN;
+    }
+  });
+  it('spends the write budget GraphQL mutations share (hitIntegrationWrite)', async () => {
+    process.env.INTEGRATION_WRITE_LIMIT_PER_MIN = '1';
+    try {
+      const s = setup({ ...activeKey, id: 'k-shared' }, [], 'POST');
+      s.request.headers.authorization = `Bearer ${RAW}`;
+      expect(hitIntegrationWrite('k-shared')).toBe(0); // e.g. a GraphQL write
+      const err = await s.guard.canActivate(s.ctx).catch((e: unknown) => e);
+      expect((err as HttpException).getStatus()).toBe(429);
     } finally {
       delete process.env.INTEGRATION_WRITE_LIMIT_PER_MIN;
     }

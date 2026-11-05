@@ -168,11 +168,17 @@ mutation SoldOut($id: ID!) {
 | `FORBIDDEN` | the key lacks the scope, or the location is not the key's | add the scope or use the right key |
 | `NOT_FOUND` | the id does not exist or is not yours | check the id |
 | `BAD_USER_INPUT` | validation or a business rule (unknown dish, below the minimum order, idempotency key reused with other input); `extensions.field` names the input | fix the input; do not retry unchanged |
+| `RATE_LIMITED` | the key spent its write budget (HTTP `429`) | wait `Retry-After` seconds, then retry with the same idempotency key |
 | `INTERNAL_SERVER_ERROR` | server fault (details are logged, never returned) | retry later with the same idempotency key |
 
 HTTP-level failures: `400` (invalid document, over a limit, or more than one
 mutation field in a request), `401` (missing, revoked or expired key), `415`
 (not JSON), `429` (rate limit; honour `Retry-After`).
+
+Rate limits: 120 requests/min per key, and for writes the key's REST write
+budget, `INTEGRATION_WRITE_LIMIT_PER_MIN` (default **30**/min). REST orders
+and GraphQL mutations from one key share that budget. Over it you get `429`
+with `Retry-After` and `extensions.code: "RATE_LIMITED"`; nothing runs.
 
 Send **one mutation per request**. Two mutation fields in one document are
 refused with `400` and nothing runs.

@@ -114,7 +114,14 @@ equals the bill and the payments.
 
 - **One mutation field per request.** A document with two (aliases and
   fragments count) is refused with `400` before anything runs, so every
-  write sits behind the per-key rate limit and gets its own response.
+  write gets its own response and is charged once to the write limit.
+- **Write limit.** A mutation sent with an integration key spends the
+  **same** per-key write budget as a REST write
+  (`INTEGRATION_WRITE_LIMIT_PER_MIN`, default 30/min), on top of the
+  request limit. REST and GraphQL writes from one key are counted together.
+  Over it the request gets `429`, `Retry-After`, and an error with
+  `extensions.code: "RATE_LIMITED"`; nothing runs. Staff sessions are not
+  charged, as on REST.
 - **Validation.** After GraphQL's type checks, arguments are parsed with the
   shared Zod schemas (`graphqlCreateOrderArgsSchema`,
   `graphqlSetMenuItemAvailabilityArgsSchema` in `packages/types`). The order
@@ -128,12 +135,16 @@ equals the bill and the payments.
 - **Error codes** from the services: `FORBIDDEN` (scope, permission, another
   location), `NOT_FOUND` (an id that is not yours), `BAD_USER_INPUT`
   (validation and business rules, for example a dish that is unavailable).
+  **Changed in #79:** a `400` from a service now maps to `BAD_USER_INPUT`
+  on every field, reads included; before #79 read fields returned
+  `BAD_REQUEST` for it. Other 4xx codes still map to `BAD_REQUEST`.
 
 ## Limits
 
 | Limit | Default | Env var |
 |---|---|---|
 | Requests per minute, per key / staff member | 120 | `GRAPHQL_LIMIT_PER_MIN` |
+| Writes (mutations) per minute, per integration key, shared with REST writes | 30 | `INTEGRATION_WRITE_LIMIT_PER_MIN` |
 | Selection depth | 8 | `GRAPHQL_MAX_DEPTH` |
 | Query cost | 1000 | `GRAPHQL_MAX_COST` |
 | Parser tokens | 5000 | `GRAPHQL_MAX_TOKENS` |
@@ -160,8 +171,8 @@ argument default so the cost rule charges what the resolver loads. The cost
 rule is one cap, not the only one.
 
 A request over a limit, or with invalid syntax or fields, gets `400` with
-`{"errors": [...]}` and nothing runs. Over the rate limit you get `429` with
-`Retry-After`. Errors raised while fields run are returned with
+`{"errors": [...]}` and nothing runs. Over a rate limit (requests or writes) you get
+`429` with `Retry-After`. Errors raised while fields run are returned with
 `extensions.code` (`FORBIDDEN`, `NOT_FOUND`, …); unexpected server errors are
 logged and returned as `Internal server error`.
 

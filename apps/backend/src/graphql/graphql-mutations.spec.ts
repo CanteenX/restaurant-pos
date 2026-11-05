@@ -3,6 +3,7 @@ import {
   graphqlSetMenuItemAvailabilityArgsSchema,
 } from '@nventra/types';
 import { Prisma } from '@prisma/client';
+import { hitIntegrationWrite } from '../common/guards/key-rate-limiter';
 import type { BranchAccessService } from '../common/services/branch-access.service';
 import type { IntegrationsService } from '../integrations/integrations.service';
 import type { MenuService } from '../modules/menu/menu.service';
@@ -366,5 +367,62 @@ describe('GraphQL setMenuItemAvailability', () => {
     );
     expect(codes(res.body)).toEqual(['NOT_FOUND']);
     expect(menu.updateItem).not.toHaveBeenCalled();
+  });
+});
+
+describe('GraphQL mutations share the REST per-key write limit', () => {
+  afterEach(() => delete process.env.INTEGRATION_WRITE_LIMIT_PER_MIN);
+
+  const keyAs = (id: string, scopes: string[]) =>
+    ({
+      restaurantId: 'r1',
+      branchId: null,
+      principal: { kind: 'integration', id, scopes },
+    }) as GraphqlContext;
+
+  it('refuses an integration key over the write limit with 429 and Retry-After', async () => {
+    process.env.INTEGRATION_WRITE_LIMIT_PER_MIN = '2';
+    const { service, integrations } = setup();
+    const ctx = keyAs('limited-1', ['orders:write']);
+    const req = { query: CREATE, variables: { input: ORDER_INPUT } };
+    expect((await service.run(req, ctx)).status).toBe(200);
+    expect((await service.run(req, ctx)).status).toBe(200);
+    const res = await service.run(req, ctx);
+    expect(res.status).toBe(429);
+    expect(res.headers?.['Retry-After']).toMatch(/^\d+$/);
+    expect(codes(res.body)).toEqual(['RATE_LIMITED']);
+    expect(integrations.createOrder).toHaveBeenCalledTimes(2);
+  });
+
+  it('charges the same bucket as REST writes (hitIntegrationWrite)', async () => {
+    process.env.INTEGRATION_WRITE_LIMIT_PER_MIN = '1';
+    expect(hitIntegrationWrite('limited-2')).toBe(0); // a REST write
+    const { service, integrations } = setup();
+    const res = await service.run(
+      { query: CREATE, variables: { input: ORDER_INPUT } },
+      keyAs('limited-2', ['orders:write']),
+    );
+    expect(res.status).toBe(429);
+    expect(integrations.createOrder).not.toHaveBeenCalled();
+  });
+
+  it('does not charge reads, invalid documents or staff sessions', async () => {
+    process.env.INTEGRATION_WRITE_LIMIT_PER_MIN = '1';
+    const { service } = setup();
+    const ctx = keyAs('limited-3', ['orders:write', 'menu:read']);
+    await service.run({ query: '{ __typename }' }, ctx);
+    await service.run({ query: 'mutation { nope }' }, ctx);
+    for (let i = 0; i < 3; i++) {
+      const r = await service.run(
+        { query: TOGGLE, variables: { available: false } },
+        staff(['menu.manage']),
+      );
+      expect(r.status).toBe(200);
+    }
+    const res = await service.run(
+      { query: CREATE, variables: { input: ORDER_INPUT } },
+      ctx,
+    );
+    expect(res.status).toBe(200);
   });
 });

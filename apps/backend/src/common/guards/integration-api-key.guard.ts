@@ -12,7 +12,11 @@ import { createHash } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { PrismaService } from '../../prisma/prisma.service';
 import { INTEGRATION_SCOPES_KEY } from '../decorators/require-scope.decorator';
-import { envLimit, KeyRateLimiter } from './key-rate-limiter';
+import {
+  envLimit,
+  hitIntegrationWrite,
+  KeyRateLimiter,
+} from './key-rate-limiter';
 
 // Authenticates every route on IntegrationsController — the public REST API
 // external websites use as a backend (see docs/integrations-api.md). A
@@ -23,8 +27,8 @@ import { envLimit, KeyRateLimiter } from './key-rate-limiter';
 @Injectable()
 export class IntegrationApiKeyGuard implements CanActivate {
   // Per key, separately for writes (placing orders/bookings) and reads.
+  // Writes use the process-wide budget GraphQL mutations also spend.
   private readonly limiter = new KeyRateLimiter();
-  private readonly writeLimit = envLimit('INTEGRATION_WRITE_LIMIT_PER_MIN', 30);
   private readonly readLimit = envLimit('INTEGRATION_READ_LIMIT_PER_MIN', 300);
 
   constructor(
@@ -61,10 +65,9 @@ export class IntegrationApiKeyGuard implements CanActivate {
     }
 
     const isWrite = request.method !== 'GET';
-    const retryAfter = this.limiter.hit(
-      `${key.id}:${isWrite ? 'w' : 'r'}`,
-      isWrite ? this.writeLimit : this.readLimit,
-    );
+    const retryAfter = isWrite
+      ? hitIntegrationWrite(key.id)
+      : this.limiter.hit(`${key.id}:r`, this.readLimit);
     if (retryAfter > 0) {
       context
         .switchToHttp()
