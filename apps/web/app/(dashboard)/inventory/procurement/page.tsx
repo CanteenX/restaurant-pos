@@ -5,6 +5,7 @@ import { CreateInvoiceDialog } from "@/components/inventory/create-invoice-dialo
 import { CreatePurchaseRequestDialog } from "@/components/inventory/create-purchase-request-dialog";
 import { CreateQuotationDialog } from "@/components/inventory/create-quotation-dialog";
 import { InventoryTabs } from "@/components/inventory/inventory-tabs";
+import { ReorderSuggestionsSection } from "@/components/inventory/reorder-suggestions";
 import { RecordPaymentDialog } from "@/components/inventory/record-payment-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -309,6 +310,7 @@ export default function ProcurementPage() {
       <InventoryTabs />
 
       <div className="flex flex-col gap-6">
+        <ReorderSuggestionsSection branchId={branchId} />
         <PurchaseRequestsSection branchId={branchId} />
         <QuotationsSection branchId={branchId} />
         <SupplierInvoicesSection branchId={branchId} />

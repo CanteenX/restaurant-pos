@@ -1977,5 +1977,14 @@
   "reports.variance.threshold": "Variance threshold percent",
   "reports.variance.onlyHigh": "Only high variance",
   "reports.variance.csv": "CSV",
-  "reports.variance.none": "No rows match the filter."
+  "reports.variance.none": "No rows match the filter.",
+  "inv.reorder.title": "Reorder suggestions",
+  "inv.reorder.subtitle": "Items at or below target stock, grouped by supplier. Edit quantities, then create a request.",
+  "inv.reorder.noSupplier": "No preferred supplier",
+  "inv.reorder.create": "Create request",
+  "inv.reorder.ingredient": "Ingredient",
+  "inv.reorder.stock": "In stock",
+  "inv.reorder.quantity": "Order quantity",
+  "inv.reorder.quantityFor": "Order quantity for {name}",
+  "inv.reorder.empty": "Nothing needs reordering right now."
 }
