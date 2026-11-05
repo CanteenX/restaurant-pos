@@ -5,7 +5,7 @@
  * tested in apply.spec.ts; apply.ts feeds them what it reads from the DB.
  */
 import { DERIVED } from './derived';
-import { SyncChange } from './outbox';
+import { Rejected, SyncChange } from './outbox';
 import { SYNC_TABLES, SyncTable } from './tables';
 
 export type Verdict =
@@ -270,16 +270,39 @@ export function ownerWinsOver(
   return table.owner === 'hq' ? localPeer : null;
 }
 
+const EMPTY_PUSH = '{"changes":[]}'.length;
+
 /**
  * How many changes (in order) fit one push body of at most `maxBytes` as
- * JSON, at least one. HQ's body limit (BODY_LIMIT, 100 kB by default) would
- * otherwise refuse a page of large rows with HTTP 413 on every cycle (#83).
+ * JSON. HQ's body limit (BODY_LIMIT, 100 kB by default) would otherwise
+ * refuse a page of large rows with HTTP 413 on every cycle (#83). 0 means
+ * the first change alone is over the budget: see tooLargeToPush.
  */
 export function fitPushPage(changes: SyncChange[], maxBytes: number): number {
-  let size = '{"changes":[]}'.length;
+  let size = EMPTY_PUSH;
   for (let i = 0; i < changes.length; i++) {
-    size += JSON.stringify(changes[i]).length + (i ? 1 : 0);
-    if (size > maxBytes) return Math.max(i, 1);
+    size += Buffer.byteLength(JSON.stringify(changes[i])) + (i ? 1 : 0);
+    if (size > maxBytes) return i;
   }
   return changes.length;
+}
+
+/**
+ * A change that can never fit one push on its own (#83 review), e.g. a
+ * large document_files upload. Returned as a rejection to dead-letter, so
+ * the push cursor moves past it instead of retrying it forever; null when
+ * it fits.
+ */
+export function tooLargeToPush(
+  change: SyncChange,
+  maxBytes: number,
+): Rejected | null {
+  const bytes = EMPTY_PUSH + Buffer.byteLength(JSON.stringify(change));
+  if (bytes <= maxBytes) return null;
+  return {
+    tbl: change.tbl,
+    pkKey: change.pkKey,
+    change,
+    error: `too-large: change is ${bytes} bytes, one push carries at most ${maxBytes}; it stays on this install only`,
+  };
 }

@@ -7,7 +7,13 @@ import {
 import { hostname } from 'os';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApplyContext, ApplyResult, SyncApplier } from './apply';
-import { backoffMs, fitPushPage, keyForServer, pullScope } from './apply-rules';
+import {
+  backoffMs,
+  fitPushPage,
+  keyForServer,
+  pullScope,
+  tooLargeToPush,
+} from './apply-rules';
 import { captureSql } from './capture-sql';
 import {
   clockSkewError,
@@ -343,6 +349,21 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       side,
       JSON.stringify(rejected),
     );
+  }
+
+  /** Keeps a push page's rejections, then advances the cursor past it. */
+  private ackPush(rejected: Rejected[], pushedTo: bigint) {
+    return this.prisma.$transaction([
+      this.keepRejected('push', rejected),
+      this.prisma.$executeRawUnsafe(
+        `UPDATE sync_state SET "lastPushSeq" = $1 WHERE id = 1`,
+        pushedTo,
+      ),
+      this.prisma.$executeRawUnsafe(
+        `DELETE FROM sync_changes WHERE seq <= $1`,
+        pushedTo,
+      ),
+    ]);
   }
 
   /**
@@ -686,6 +707,20 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       // As many rows as fit HQ's body limit; the rest go in the next page.
       const wire = rows.map(toWire);
       const fit = fitPushPage(wire, PUSH_MAX_BYTES);
+      if (!fit) {
+        // Too big for any push (#83 review): dead-letter it and move on, or
+        // every later change would wait behind it forever.
+        const tooBig = tooLargeToPush(wire[0], PUSH_MAX_BYTES)!;
+        conflictList.push({
+          seq: wire[0].seq,
+          tbl: tooBig.tbl,
+          pk: tooBig.pkKey,
+          error: tooBig.error,
+        });
+        pushedTo = BigInt(rows[0].seq);
+        await this.ackPush([tooBig], pushedTo);
+        continue;
+      }
       const changes = compact(wire.slice(0, fit));
       const r = await this.call<ApplyResult>(link, 'push', {
         method: 'POST',
@@ -701,17 +736,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       // Acknowledged by the server: keep what it rejected, then advance the
       // cursor and drop the page together, so a crash replays at most this
       // page (idempotent).
-      await this.prisma.$transaction([
-        this.keepRejected('push', rejectedChanges(changes, r.conflicts)),
-        this.prisma.$executeRawUnsafe(
-          `UPDATE sync_state SET "lastPushSeq" = $1 WHERE id = 1`,
-          pushedTo,
-        ),
-        this.prisma.$executeRawUnsafe(
-          `DELETE FROM sync_changes WHERE seq <= $1`,
-          pushedTo,
-        ),
-      ]);
+      await this.ackPush(rejectedChanges(changes, r.conflicts), pushedTo);
       if (rows.length < PUSH_PAGE && fit === rows.length) break;
     }
     // Re-tried rejections are already kept: not counted as new conflicts.
@@ -722,6 +747,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       keptBefore,
       branches: conn.branchIds ?? [],
       localPeer: conn.deviceId,
+      maxPushBytes: PUSH_MAX_BYTES,
       push: (changes) =>
         this.call<ApplyResult>(link, 'push', {
           method: 'POST',

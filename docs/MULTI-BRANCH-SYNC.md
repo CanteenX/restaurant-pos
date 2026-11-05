@@ -515,6 +515,11 @@ Known limits, to address in #82:
   - store credit booked at the branch = the same `walletBalance` at HQ;
   - a network drop on the second push page of 450 new rows: nothing lost or
     duplicated, nothing pending, no error after the next cycle.
+  - a single change over the push budget (a 90 kB customer note): kept in
+    `sync_rejected`, the rows after it still reach HQ;
+  - HQ-owned rows created at the branch (a floor with a table, a dish
+    already sold on an order there): kept at the branch, flagged, never
+    deleted.
 - `scripts/sync-convergence.sh` runs it twice: with
   `SYNC_CONVERGENCE_DISABLE=1` (no sync) the suite must fail, then with sync
   on it must pass. It uses `$DATABASE_URL` or starts its own
@@ -523,7 +528,7 @@ Known limits, to address in #82:
   - **HQ-owned rows edited at a branch diverged**: HQ rejected the push
     (`not-owner`) but the branch kept its value, and HQ's next change lost to
     the branch's newer local version. Now HQ answers such a rejection with its
-    own copy of the row (`Conflict.restore`, a tombstone if HQ has none), the
+    own copy of the row (`Conflict.restore`, a tombstone if HQ deleted it), the
     branch applies it, and a branch's own versions of rows it doesn't own
     never beat the owner's changes in LWW (`ownerWinsOver`). The rejected
     edit stays in `sync_rejected` for review.
@@ -531,4 +536,34 @@ Known limits, to address in #82:
     100 kB `BODY_LIMIT`, so HQ answered HTTP 413 on every cycle and the
     branch never got past that page. Push pages are now cut to at most
     64 kB (`fitPushPage`), and the cursor and pruning follow what was sent.
+  - **One change bigger than any push** (#83 review), e.g. a large
+    `document_files` upload or a long data-URL `imageUrl`: sending it alone
+    still got HTTP 413 on every cycle, so the branch stopped syncing for
+    good. Such a change (`tooLargeToPush`, over `PUSH_MAX_BYTES` = 64 kB as
+    a push body) now goes straight to `sync_rejected` (`side: 'push'`,
+    error `too-large: …`), the cursor moves past it, and the rest of the
+    outbox keeps flowing. Re-tries of kept rejections are cut to the same
+    budget and skip too-large ones. The row stays correct on the branch; it
+    is just not copied to HQ. To sync such rows, the owner would need a
+    larger HQ `BODY_LIMIT` plus a matching push budget (not configurable
+    yet), or a separate file channel.
+- **HQ-owned rows created at a branch (decision for the owner).** A branch
+  can only create such a row if a local user has the permission to (menu,
+  floors, documents...). HQ refuses the push (`not-owner`). HQ used to answer
+  with a tombstone that made the branch delete the row, which cascaded: a
+  floor took its tables with it and unlinked their orders (`tableId` set
+  to NULL), a dish took its recipe and modifier links, and a dish already
+  sold failed to delete on `order_items` and became a permanent conflict.
+  Now a restore is only sent for a row HQ has, or had and deleted
+  (`sync_versions` tombstone). A row HQ never had is **kept at the branch,
+  unsynced**, and the rejection in `sync_rejected` flags it for review.
+  Consequences the owner should know:
+  - the row exists only at that branch; HQ reports never see it;
+  - branch rows that point to it (an order on that table, an order line for
+    that dish) fail at HQ on the foreign key and are parked: they are kept
+    in `sync_rejected` and re-tried every cycle, so those orders are missing
+    from HQ until the parent exists there;
+  - the fix is operational: create menu and floors at HQ (or remove the
+    permission at branches). Copying a branch-created row to HQ (adopting
+    it) would be a later, explicit owner action; it is not automatic.
 

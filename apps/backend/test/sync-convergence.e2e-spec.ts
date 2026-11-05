@@ -285,6 +285,105 @@ run('Two-install convergence (e2e)', () => {
     expect(r.br).toEqual(r.hq);
   });
 
+  /** Rejections the branch kept for one table and its rows' ids. */
+  const keptAt = (tbl: string, ids: string[]) =>
+    br.$queryRawUnsafe<{ error: string }[]>(
+      `SELECT error FROM sync_rejected WHERE side = 'push' AND tbl = $1 AND "pkKey" = ANY ($2::text[])`,
+      tbl,
+      ids.map((id) => JSON.stringify({ id }).replace(':', ': ')),
+    );
+
+  it('a change too big for any push is kept for review and does not stall the rest', async () => {
+    // One row over the push budget (64 kB), e.g. a long pasted note.
+    const big = await br.customer.create({
+      data: { branchId: BRANCH, name: `Big ${tag}`, notes: 'n'.repeat(90_000) },
+    });
+    const after = await br.customer.create({
+      data: { branchId: BRANCH, name: `After big ${tag}` },
+    });
+    await reconnect();
+    const r = await both((db) =>
+      db.customer.findMany({
+        where: { id: { in: [big.id, after.id] } },
+        select: { id: true },
+      }),
+    );
+    expect(r.hq).toEqual([{ id: after.id }]);
+    expect(r.br).toHaveLength(2);
+    const kept = await keptAt('customers', [big.id]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0].error).toMatch(/^too-large: /);
+    const status = await brSync.publicStatus();
+    expect([status.pendingChanges, status.lastError]).toEqual([0, null]);
+  });
+
+  it('HQ-owned rows created at the branch are kept there and flagged, never deleted', async () => {
+    const category = await br.menuCategory.findFirstOrThrow({
+      where: { branchId: BRANCH },
+    });
+    const staff = await br.user.findFirstOrThrow();
+    const floor = await br.floor.create({
+      data: { branchId: BRANCH, name: `Branch floor ${tag}` },
+    });
+    const table = await br.table.create({
+      data: { floorId: floor.id, number: `B${tag}` },
+    });
+    const dish = await br.menuItem.create({
+      data: {
+        branchId: BRANCH,
+        categoryId: category.id,
+        name: `Branch dish ${tag}`,
+        price: 90,
+      },
+    });
+    // Already sold: deleting the dish would fail on order_items, and
+    // deleting the floor would cascade to the table and unlink the order.
+    const order = await br.order.create({
+      data: {
+        branchId: BRANCH,
+        orderNumber: `CONV-${tag}`,
+        tableId: table.id,
+        createdById: staff.id,
+        items: {
+          create: {
+            menuItemId: dish.id,
+            nameSnapshot: dish.name,
+            unitPriceSnapshot: 90,
+            taxRateSnapshot: 5,
+            lineTotal: 90,
+          },
+        },
+      },
+      select: { id: true, tableId: true, items: { select: { id: true } } },
+    });
+    await reconnect();
+    await reconnect();
+    const atBranch = await Promise.all([
+      br.floor.count({ where: { id: floor.id } }),
+      br.table.count({ where: { id: table.id } }),
+      br.menuItem.count({ where: { id: dish.id } }),
+      br.order.findUnique({
+        where: { id: order.id },
+        select: { id: true, tableId: true, items: { select: { id: true } } },
+      }),
+    ]);
+    expect(atBranch).toEqual([1, 1, 1, order]);
+    const atHq = await Promise.all([
+      hq.floor.count({ where: { id: floor.id } }),
+      hq.menuItem.count({ where: { id: dish.id } }),
+    ]);
+    expect(atHq).toEqual([0, 0]);
+    expect(
+      [
+        ...(await keptAt('floors', [floor.id])),
+        ...(await keptAt('menu_items', [dish.id])),
+      ].map((k) => k.error),
+    ).toEqual([
+      'not-owner: floors is HQ-owned',
+      'not-owner: menu_items is HQ-owned',
+    ]);
+  });
+
   it('a network drop mid-batch loses and duplicates nothing', async () => {
     const created = await br.customer.createManyAndReturn({
       data: Array.from({ length: 450 }, (_, i) => ({

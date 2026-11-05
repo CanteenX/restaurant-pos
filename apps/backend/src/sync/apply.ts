@@ -450,8 +450,12 @@ export class SyncApplier {
 
   /**
    * HQ rejecting a branch's change to an HQ-owned row answers with its own
-   * copy of the row (or a tombstone when it has none), so the branch puts
+   * copy of the row (or a tombstone when HQ deleted it), so the branch puts
    * the row back instead of keeping a value HQ will never take (#83).
+   * A row HQ never had was created at the branch: no restore, the branch
+   * keeps it and the rejection flags it for the owner. Deleting it there
+   * would cascade (a floor's tables, unlinked orders) or fail for a dish
+   * already sold (#83 review; docs/MULTI-BRANCH-SYNC.md §8).
    */
   private async restoreFor(
     tx: Tx,
@@ -492,6 +496,7 @@ export class SyncApplier {
       JSON.stringify(local.pk),
       wire.pkKey,
     );
+    if (!r.row && !r.hlc) return {};
     return {
       restore: {
         tbl: wire.tbl,

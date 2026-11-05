@@ -7,7 +7,8 @@
 # offline, reconnects and asserts identical rows on both:
 #   1. with sync disabled: the suite MUST fail (proves it detects divergence);
 #   2. with sync enabled: it must pass (create/create, update/update,
-#      delete/update, store-credit balances, network drop mid-batch).
+#      delete/update, store-credit balances, an oversized change,
+#      HQ-owned rows created at the branch, network drop mid-batch).
 #
 # Uses $DATABASE_URL (any database on a Postgres 16 server the user may
 # create databases on); without it, starts a throwaway postgres:16-alpine

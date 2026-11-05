@@ -1,5 +1,6 @@
 import { PrismaService } from '../prisma/prisma.service';
 import { ApplyResult, SyncApplier } from './apply';
+import { fitPushPage, tooLargeToPush } from './apply-rules';
 import { SyncChange } from './outbox';
 
 /** Rejections a later cycle may get past: the parent row arrives afterwards. */
@@ -49,6 +50,7 @@ export class RejectedReplay {
     o: BranchSide & {
       all: boolean;
       keptBefore: bigint;
+      maxPushBytes: number;
       push: (changes: SyncChange[]) => Promise<ApplyResult>;
     },
   ) {
@@ -61,9 +63,10 @@ export class RejectedReplay {
     );
     const out = { pulled: 0, pushed: 0 };
     for (const side of ['pull', 'push'] as const) {
-      const batch = rows.filter(
+      let batch = rows.filter(
         (r) => r.side === side && (o.all || PARKED.test(r.error)),
       );
+      if (side === 'push') batch = this.fitPush(batch, o.maxPushBytes);
       if (!batch.length) continue;
       const changes = batch.map((r) => r.change);
       const res =
@@ -84,6 +87,21 @@ export class RejectedReplay {
       await this.settle(batch, res);
     }
     return out;
+  }
+
+  /**
+   * A re-push must fit HQ's body limit too: changes too big for any push
+   * stay kept as they are, and the rest wait for a later cycle (#83 review).
+   */
+  private fitPush<T extends { change: SyncChange }>(batch: T[], max: number) {
+    const sendable = batch.filter((r) => !tooLargeToPush(r.change, max));
+    return sendable.slice(
+      0,
+      fitPushPage(
+        sendable.map((r) => r.change),
+        max,
+      ),
+    );
   }
 
   private async settle(

@@ -2,6 +2,7 @@ import {
   backoffMs,
   columnsToWrite,
   fitPushPage,
+  tooLargeToPush,
   ownerWinsOver,
   derivedTargets,
   isContended,
@@ -447,8 +448,25 @@ describe('push page size (#83: HQ refused 200 rows with HTTP 413)', () => {
       JSON.stringify({ changes: rows.slice(0, n + 1) }).length,
     ).toBeGreaterThan(20_000);
     expect(fitPushPage(rows.slice(0, 3), 100_000)).toBe(3);
-    expect(fitPushPage([change(1)], 10)).toBe(1);
     expect(fitPushPage([], 10)).toBe(0);
+  });
+
+  it('fits none when the first change alone is over the budget (#83 review)', () => {
+    // Sending it anyway would get HTTP 413 on every cycle, forever.
+    expect(fitPushPage([change(1)], 10)).toBe(0);
+    expect(fitPushPage([change(1), change(2)], 10)).toBe(0);
+  });
+
+  it('rejects a single oversized change with a clear error', () => {
+    const big = change(1);
+    const r = tooLargeToPush(big, 10);
+    expect(r).toEqual({
+      tbl: 'customers',
+      pkKey: big.pkKey,
+      change: big,
+      error: expect.stringMatching(/^too-large: change is \d+ bytes, .* at most 10;/),
+    });
+    expect(tooLargeToPush(big, 100_000)).toBeNull();
   });
 });
 
