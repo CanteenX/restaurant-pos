@@ -12,6 +12,7 @@ import { expectedCash, gstSummary, round2 } from './accounting.calc';
 import {
   assertDecision,
   EXPENSE_APPROVE_PERMISSION,
+  readApprovalThreshold,
   statusForNewExpense,
 } from './expense-approval';
 import type { TallyOrderInput, TallyRefundInput } from './tally-xml';
@@ -56,19 +57,10 @@ export class AccountingService {
     });
   }
 
-  private async approvalThreshold(branchId: string) {
-    const r = await this.prisma.restaurant.findFirst({
-      where: { branches: { some: { id: branchId } } },
-      select: { expenseApprovalThreshold: true },
-    });
-    const t = r?.expenseApprovalThreshold;
-    return t === null || t === undefined ? null : Number(t);
-  }
-
   async createExpense(branchId: string, userId: string, dto: ExpenseDto) {
     const status = statusForNewExpense(
       dto.amount,
-      await this.approvalThreshold(branchId),
+      await readApprovalThreshold(this.prisma, branchId),
     );
     const expense = await this.prisma.expense.create({
       data: {

@@ -1,7 +1,11 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
-import { assertDecision, statusForNewExpense } from './expense-approval';
+import {
+  assertDecision,
+  assertPayoutAllowed,
+  statusForNewExpense,
+} from './expense-approval';
 
 describe('statusForNewExpense', () => {
   it('approves everything when no threshold is set', () => {
@@ -16,6 +20,24 @@ describe('statusForNewExpense', () => {
 
   it('treats a zero threshold as "every expense needs approval"', () => {
     expect(statusForNewExpense(1, 0)).toBe('PENDING');
+  });
+});
+
+describe('assertPayoutAllowed (petty-cash payouts, #192)', () => {
+  it('lets anyone pay out at or under the threshold, or with approvals off', () => {
+    expect(assertPayoutAllowed(5000, 5000, false)).toBe(false);
+    expect(assertPayoutAllowed(1_000_000, null, false)).toBe(false);
+  });
+
+  it('refuses a larger payout to someone who cannot approve', () => {
+    expect(() => assertPayoutAllowed(5000.01, 5000, false)).toThrow(
+      ForbiddenException,
+    );
+    expect(() => assertPayoutAllowed(1, 0, false)).toThrow(ForbiddenException);
+  });
+
+  it('marks a larger payout by an approver as pre-approved', () => {
+    expect(assertPayoutAllowed(5000.01, 5000, true)).toBe(true);
   });
 });
 

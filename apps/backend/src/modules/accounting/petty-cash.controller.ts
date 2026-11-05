@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import {
+  permissionSatisfied,
   pettyCashEntrySchema,
   pettyCashReconcileSchema,
   type PettyCashEntryDto,
@@ -19,6 +20,7 @@ import { Auth } from '../../common/decorators/auth.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { BranchAccessService } from '../../common/services/branch-access.service';
+import { EXPENSE_APPROVE_PERMISSION } from './expense-approval';
 import { PettyCashService } from './petty-cash.service';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -84,7 +86,17 @@ export class PettyCashController {
     @Body(new ZodValidationPipe(pettyCashEntrySchema)) body: PettyCashEntryDto,
   ) {
     await this.access(u, branchId);
-    return this.petty.record(branchId, u.id, body);
+    return this.petty.record(
+      branchId,
+      {
+        id: u.id,
+        canApprove: permissionSatisfied(
+          u.permissions,
+          EXPENSE_APPROVE_PERMISSION,
+        ),
+      },
+      body,
+    );
   }
 
   @Auth('petty_cash.manage')
