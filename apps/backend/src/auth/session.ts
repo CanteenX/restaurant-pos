@@ -1,5 +1,6 @@
 import type { ConfigService } from '@nestjs/config';
 import type { CookieOptions } from 'express';
+import type { ClientSession } from '@nventra/types';
 
 export const SESSION_COOKIE = 'nventra_session';
 
@@ -60,6 +61,24 @@ export function sessionIdleSeconds(config: Pick<ConfigService, 'get'>) {
     DEFAULT_IDLE_MINUTES,
   );
   return Math.round(minutes * 60);
+}
+
+/**
+ * What the web app needs to run its own idle sign-out (#18), sent with
+ * `/auth/me`. The browser signs out after the same SESSION_IDLE_MINUTES the
+ * server uses; SESSION_IDLE_SIGNOUT=false turns the browser-side sign-out
+ * off (sessions then still end after SESSION_MAX_HOURS).
+ */
+export function clientSessionConfig(
+  config: Pick<ConfigService, 'get'>,
+): ClientSession {
+  const raw = String(config.get<string>('SESSION_IDLE_SIGNOUT') ?? '')
+    .trim()
+    .toLowerCase();
+  return {
+    idleMinutes: sessionIdleSeconds(config) / 60,
+    idleSignOut: !['false', 'off', '0', 'no'].includes(raw),
+  };
 }
 
 /**

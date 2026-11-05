@@ -1751,5 +1751,17 @@
   "menu.stock.incomplete": "Choose the stock to deduct, otherwise selling this item deducts nothing.",
   "menu.stock.save": "Save stock tracking",
   "menu.stock.saved": "Stock tracking saved",
-  "menu.stock.saveFailed": "Could not save stock tracking"
+  "menu.stock.saveFailed": "Could not save stock tracking",
+  "session.idle.title": "Still there?",
+  "session.idle.body": "You will be signed out in {seconds} seconds because this screen has been idle.",
+  "session.idle.signOutNow": "Sign out now",
+  "session.idle.stay": "Stay signed in",
+  "session.revokeAll": "Log out of all devices",
+  "session.revokeAllConfirm": "Sign out on every device, including this one? Each device will need to sign in again.",
+  "session.revokeAllFailed": "Could not sign out other devices",
+  "settings.staff.signOutEverywhere": "Sign out everywhere",
+  "settings.staff.signOutEverywhereHint": "Sign this person out on every device (lost or shared device)",
+  "settings.staff.signOutEverywhereConfirm": "Sign {name} out on every device? They will need to sign in again.",
+  "settings.staff.signOutEverywhereDone": "{name} was signed out on every device",
+  "settings.staff.signOutEverywhereFailed": "Could not sign out"
 }

@@ -18,6 +18,7 @@ import { DeleteAccountDialog } from "@/components/layout/delete-account-dialog";
 import { useLogout, useRevokeMySessions } from "@/hooks/use-auth";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
+import { useI18n } from "@/lib/i18n/context";
 import { forgetBranchChoice } from "@/hooks/use-branch";
 import { changeServer, isNativeApp } from "@/lib/native";
 
@@ -35,6 +36,7 @@ export function UserMenu({ user }: { user?: SessionUser }) {
   const { theme, setTheme } = useTheme();
   const logout = useLogout();
   const revokeAll = useRevokeMySessions();
+  const { t } = useI18n();
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
 
@@ -88,15 +90,15 @@ export function UserMenu({ user }: { user?: SessionUser }) {
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => {
-              if (!confirm("Sign out on every device, including this one? Each device will need to sign in again.")) return;
+              if (!confirm(t("session.revokeAllConfirm"))) return;
               revokeAll.mutateAsync().then(
                 () => router.push("/login"),
-                (e) => toast.error(e instanceof ApiError ? e.message : "Could not sign out other devices"),
+                (e) => toast.error(e instanceof ApiError ? e.message : t("session.revokeAllFailed")),
               );
             }}
           >
             <MonitorX className="h-4 w-4" />
-            Log out of all devices
+            {t("session.revokeAll")}
           </DropdownMenuItem>
           {isNativeApp() && (
             <DropdownMenuItem

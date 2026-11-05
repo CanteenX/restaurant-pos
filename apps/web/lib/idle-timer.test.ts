@@ -3,7 +3,9 @@ import { test } from "node:test";
 import {
   DEFAULT_IDLE_MINUTES,
   idleConfig,
+  idleSettings,
   idleState,
+  isUnattendedRoute,
   latestActivity,
   shouldRecordActivity,
 } from "./idle-timer.ts";
@@ -14,16 +16,42 @@ const cfg = { idleMs: 60 * MIN, warnMs: MIN };
 test("config defaults to the server's 60 minute idle window with a 1 minute warning", () => {
   assert.equal(DEFAULT_IDLE_MINUTES, 60);
   assert.deepEqual(idleConfig(undefined), cfg);
-  assert.deepEqual(idleConfig(""), cfg);
-  assert.deepEqual(idleConfig("abc"), cfg);
-  assert.deepEqual(idleConfig("-5"), cfg);
-  assert.deepEqual(idleConfig("0"), cfg);
+  assert.deepEqual(idleConfig(Number.NaN), cfg);
+  assert.deepEqual(idleConfig(-5), cfg);
+  assert.deepEqual(idleConfig(0), cfg);
 });
 
 test("config honours a custom window and keeps the warning inside it", () => {
-  assert.deepEqual(idleConfig("15"), { idleMs: 15 * MIN, warnMs: MIN });
+  assert.deepEqual(idleConfig(15), { idleMs: 15 * MIN, warnMs: MIN });
   // A 2-minute window warns for the last 30 s, not the whole time.
-  assert.deepEqual(idleConfig("2"), { idleMs: 2 * MIN, warnMs: 30_000 });
+  assert.deepEqual(idleConfig(2), { idleMs: 2 * MIN, warnMs: 30_000 });
+});
+
+test("the idle window follows the server's SESSION_IDLE_MINUTES from /auth/me", () => {
+  assert.deepEqual(idleSettings({ idleMinutes: 240, idleSignOut: true }, "/pos"), {
+    idleMs: 240 * MIN,
+    warnMs: MIN,
+  });
+  assert.deepEqual(idleSettings({ idleMinutes: 15, idleSignOut: true }, "/orders"), {
+    idleMs: 15 * MIN,
+    warnMs: MIN,
+  });
+  // An older server without the field: the backend default.
+  assert.deepEqual(idleSettings(undefined, "/pos"), cfg);
+});
+
+test("the operator can turn the browser idle sign-out off", () => {
+  assert.equal(idleSettings({ idleMinutes: 60, idleSignOut: false }, "/pos"), null);
+});
+
+test("unattended screens (kitchen display) are never signed out for idling", () => {
+  assert.equal(isUnattendedRoute("/kds"), true);
+  assert.equal(isUnattendedRoute("/kds/"), true);
+  assert.equal(isUnattendedRoute("/kds/station-1"), true);
+  assert.equal(isUnattendedRoute("/kdsx"), false);
+  assert.equal(isUnattendedRoute("/pos"), false);
+  assert.equal(isUnattendedRoute(null), false);
+  assert.equal(idleSettings({ idleMinutes: 60, idleSignOut: true }, "/kds"), null);
 });
 
 test("active until the warning window, then counts down, then expires", () => {

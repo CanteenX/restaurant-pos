@@ -95,4 +95,20 @@ test.describe("idle sign-out", () => {
     await page.clock.fastForward("01:00");
     await expect(page).toHaveURL(/\/login/);
   });
+
+  test("an untouched kitchen display past the idle window stays signed in", async ({ page }) => {
+    await page.clock.install();
+    await page.goto("/kds");
+    await expect(page).toHaveURL(/\/kds/);
+    // The server's window reaches the browser through /auth/me.
+    const me = await (await page.request.get("/api/v1/auth/me")).json();
+    expect(me.session).toEqual({ idleMinutes: 60, idleSignOut: true });
+
+    await page.clock.fastForward("59:10");
+    await expect(page.getByRole("dialog").filter({ hasText: "Still there?" })).toHaveCount(0);
+    await page.clock.fastForward("02:00");
+    await page.clock.runFor(2_000);
+    await expect(page).toHaveURL(/\/kds/);
+    expect(await isSignedIn(page)).toBe(true);
+  });
 });

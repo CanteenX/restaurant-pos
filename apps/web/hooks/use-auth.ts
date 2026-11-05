@@ -3,6 +3,7 @@
 import { clearOfflineCache } from "@/lib/offline-cache";
 import {
   permissionSatisfied,
+  type ClientSession,
   type LoginDto,
   type PinLoginDto,
   type RegisterDto,
@@ -17,7 +18,8 @@ import { rememberDeviceUser } from "@/lib/pin-keypad";
 export function useCurrentUser() {
   return useQuery({
     queryKey: ["auth", "me"],
-    queryFn: () => api.get<{ user: SessionUser }>("/auth/me"),
+    // `session` is absent on servers that predate #18.
+    queryFn: () => api.get<{ user: SessionUser; session?: ClientSession }>("/auth/me"),
     retry: false,
   });
 }

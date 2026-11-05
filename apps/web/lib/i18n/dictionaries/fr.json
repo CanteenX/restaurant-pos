@@ -1751,5 +1751,17 @@
   "menu.stock.incomplete": "Choisissez le stock à déduire, sinon la vente de cet article ne déduit rien.",
   "menu.stock.save": "Enregistrer le suivi des stocks",
   "menu.stock.saved": "Suivi des stocks enregistré",
-  "menu.stock.saveFailed": "Impossible d'enregistrer le suivi des stocks"
+  "menu.stock.saveFailed": "Impossible d'enregistrer le suivi des stocks",
+  "session.idle.title": "Toujours là ?",
+  "session.idle.body": "Vous serez déconnecté dans {seconds} secondes car cet écran est inactif.",
+  "session.idle.signOutNow": "Se déconnecter maintenant",
+  "session.idle.stay": "Rester connecté",
+  "session.revokeAll": "Se déconnecter de tous les appareils",
+  "session.revokeAllConfirm": "Se déconnecter sur tous les appareils, y compris celui-ci ? Chaque appareil devra se reconnecter.",
+  "session.revokeAllFailed": "Impossible de déconnecter les autres appareils",
+  "settings.staff.signOutEverywhere": "Déconnecter partout",
+  "settings.staff.signOutEverywhereHint": "Déconnecter cette personne sur tous ses appareils (appareil perdu ou partagé)",
+  "settings.staff.signOutEverywhereConfirm": "Déconnecter {name} sur tous ses appareils ? Il faudra se reconnecter.",
+  "settings.staff.signOutEverywhereDone": "{name} a été déconnecté de tous ses appareils",
+  "settings.staff.signOutEverywhereFailed": "Impossible de déconnecter"
 }

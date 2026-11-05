@@ -20,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useCurrentUser, useRevokeStaffSessions } from "@/hooks/use-auth";
+import { hasPermission, useCurrentUser, useRevokeStaffSessions } from "@/hooks/use-auth";
 import { useDeleteStaff, useDepartments, useStaff, useUpdateStaff, type StaffMember } from "@/hooks/use-staff";
 import { api, ApiError } from "@/lib/api";
 import { useState } from "react";
@@ -32,6 +32,8 @@ export default function StaffPage() {
   const updateStaff = useUpdateStaff();
   const deleteStaff = useDeleteStaff();
   const revokeSessions = useRevokeStaffSessions();
+  // The revoke endpoint needs users.manage, not just settings access.
+  const canRevokeSessions = hasPermission(currentUser?.user, "users.manage");
   const { data: departments } = useDepartments();
   const [dept, setDept] = useState<string>("all");
   const visible = staff?.filter((m) => dept === "all" || (dept === "none" ? !m.departmentId : m.departmentId === dept));
@@ -46,10 +48,11 @@ export default function StaffPage() {
   };
 
   const onSignOutEverywhere = (member: StaffMember) => {
-    if (!confirm(`Sign ${member.name} out on every device? They will need to sign in again.`)) return;
+    if (!confirm(t("settings.staff.signOutEverywhereConfirm", { name: member.name }))) return;
     revokeSessions.mutate(member.id, {
-      onSuccess: () => toast.success(`${member.name} was signed out on every device`),
-      onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not sign out"),
+      onSuccess: () => toast.success(t("settings.staff.signOutEverywhereDone", { name: member.name })),
+      onError: (err) =>
+        toast.error(err instanceof ApiError ? err.message : t("settings.staff.signOutEverywhereFailed")),
     });
   };
 
@@ -162,15 +165,17 @@ export default function StaffPage() {
                         >
                           {t("settings.staff.reset2fa")}
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 px-2 text-xs text-muted-foreground"
-                          title="Sign this person out on every device (lost or shared device)"
-                          onClick={() => onSignOutEverywhere(member)}
-                        >
-                          Sign out everywhere
-                        </Button>
+                        {canRevokeSessions && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2 text-xs text-muted-foreground"
+                            title={t("settings.staff.signOutEverywhereHint")}
+                            onClick={() => onSignOutEverywhere(member)}
+                          >
+                            {t("settings.staff.signOutEverywhere")}
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="icon"

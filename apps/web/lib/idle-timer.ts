@@ -2,7 +2,11 @@
 // (SESSION_IDLE_MINUTES, #17) never fires while a dashboard tab is open
 // because background polling keeps renewing the cookie, so the web app
 // tracks real staff input itself and signs out after the same window,
-// warning shortly before. Pure logic here; the hook is use-idle-logout.ts.
+// warning shortly before. The window comes from the server (/auth/me
+// `session`), and unattended screens such as the kitchen display are
+// exempt. Pure logic here; the hook is use-idle-logout.ts.
+
+import type { ClientSession } from "@nventra/types";
 
 /** Matches the backend default SESSION_IDLE_MINUTES. */
 export const DEFAULT_IDLE_MINUTES = 60;
@@ -25,12 +29,36 @@ export type IdleState =
   | { phase: "warning"; remainingMs: number }
   | { phase: "expired" };
 
-/** Build the config from a minutes value (NEXT_PUBLIC_SESSION_IDLE_MINUTES). */
-export function idleConfig(minutesRaw: string | undefined): IdleConfig {
+/**
+ * Screens meant to run untouched (a kitchen tablet left on Kitchen Display,
+ * docs/KIOSK-AND-KDS.md). Signing them out would silently stop new tickets.
+ */
+const UNATTENDED_ROUTES = ["/kds"];
+
+export function isUnattendedRoute(pathname: string | null | undefined): boolean {
+  if (!pathname) return false;
+  return UNATTENDED_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`));
+}
+
+/** Build the config from the server's idle window in minutes. */
+export function idleConfig(minutesRaw: number | undefined): IdleConfig {
   const n = Number(minutesRaw);
-  const minutes = minutesRaw && Number.isFinite(n) && n > 0 ? n : DEFAULT_IDLE_MINUTES;
+  const minutes = Number.isFinite(n) && n > 0 ? n : DEFAULT_IDLE_MINUTES;
   const idleMs = Math.round(minutes * MINUTE);
   return { idleMs, warnMs: Math.min(MAX_WARN_MS, Math.round(idleMs / 4)) };
+}
+
+/**
+ * The idle sign-out to run on this screen, or null for none: the operator
+ * turned it off (SESSION_IDLE_SIGNOUT=false) or the screen is unattended.
+ * `session` is undefined on a server that predates the field.
+ */
+export function idleSettings(
+  session: ClientSession | undefined,
+  pathname: string | null | undefined,
+): IdleConfig | null {
+  if (session?.idleSignOut === false || isUnattendedRoute(pathname)) return null;
+  return idleConfig(session?.idleMinutes);
 }
 
 export function idleState(lastActivity: number, now: number, cfg: IdleConfig): IdleState {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -11,15 +11,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useLogout } from "@/hooks/use-auth";
+import { useCurrentUser, useLogout } from "@/hooks/use-auth";
 import { useIdleLogout } from "@/hooks/use-idle-logout";
+import { useI18n } from "@/lib/i18n/context";
+import { idleSettings } from "@/lib/idle-timer";
 
 /**
  * Warns staff shortly before an idle sign-out and signs out when the time
- * runs out (issue #18). Mounted once in the dashboard layout.
+ * runs out (issue #18). Mounted once in the dashboard layout. The window
+ * is the server's SESSION_IDLE_MINUTES; the kitchen display is exempt.
  */
 export function IdleLogoutDialog() {
   const router = useRouter();
+  const pathname = usePathname();
+  const { t } = useI18n();
+  const { data: me } = useCurrentUser();
   const logout = useLogout();
   // mutateAsync, not mutate callbacks: clearing the cache on sign-out can
   // unmount this component first, which drops per-call callbacks. Even if
@@ -30,7 +36,7 @@ export function IdleLogoutDialog() {
       .catch(() => undefined)
       .finally(() => router.replace("/login"));
   };
-  const { state, stay } = useIdleLogout(signOut);
+  const { state, stay } = useIdleLogout(signOut, idleSettings(me?.session, pathname));
   // Focus the safe choice: a stray Enter must not sign the user out.
   const stayRef = useRef<HTMLButtonElement>(null);
   const seconds = state.phase === "warning" ? Math.ceil(state.remainingMs / 1000) : 0;
@@ -39,18 +45,17 @@ export function IdleLogoutDialog() {
     <Dialog open={state.phase === "warning"} onOpenChange={(open) => !open && stay()}>
       <DialogContent className="max-w-sm" showCloseButton={false} initialFocus={stayRef}>
         <DialogHeader>
-          <DialogTitle>Still there?</DialogTitle>
-          <DialogDescription>
-            You will be signed out in <span className="font-semibold tabular-nums">{seconds}</span> seconds
-            because this screen has been idle.
+          <DialogTitle>{t("session.idle.title")}</DialogTitle>
+          <DialogDescription className="tabular-nums">
+            {t("session.idle.body", { seconds })}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={signOut} disabled={logout.isPending}>
-            Sign out now
+            {t("session.idle.signOutNow")}
           </Button>
           <Button ref={stayRef} onClick={stay}>
-            Stay signed in
+            {t("session.idle.stay")}
           </Button>
         </DialogFooter>
       </DialogContent>
