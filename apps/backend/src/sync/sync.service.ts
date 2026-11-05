@@ -4,23 +4,22 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { hostname } from 'os';
 import { PrismaService } from '../prisma/prisma.service';
+import { ApplyContext, ApplyResult, SyncApplier } from './apply';
+import { backoffMs, pullScope } from './apply-rules';
 import { captureSql } from './capture-sql';
 import {
-  assertRowMatchesPk,
-  assertWellFormed,
   clockSkewError,
   compact,
-  Conflict,
-  localizePermission,
   Rejected,
   rejectedChanges,
   SyncChange,
 } from './outbox';
-import { syncTable } from './tables';
+import { SyncPeersService } from './peers.service';
 
 export type { SyncChange } from './outbox';
+export type { ApplyResult } from './apply';
 
 /** Columns every outbox read returns, in wire shape. */
 const CHANGE_COLS = `seq::text, tbl, pk, "pkKey", op, row, ts, origin, hlc::text, peer, "branchId", "schemaVersion"`;
@@ -35,50 +34,55 @@ const toWire = (r: ChangeRow): SyncChange => {
   return { ...rest, ts: r.ts.toISOString() };
 };
 
-export interface ApplyResult {
-  applied: number;
-  skipped: number;
-  conflicts: Conflict[];
+/** A registered branch install as the server sees it (from its key). */
+export interface PeerIdentity {
+  id: string;
+  branchIds: string[];
 }
 
-interface TableMeta {
-  pk: string[];
-  cols: string[];
+/** The cycle stopped before moving data; it resumes on its own once fixed. */
+class SyncPaused extends Error {
+  constructor(
+    readonly reason: 'schema' | 'clock',
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
-type Tx = Prisma.TransactionClient;
-type ApplyOpts = {
-  origin: string;
-  tieWins: boolean;
-  permissionId: (key: string) => string | undefined;
-};
-
+/** Rejections a later cycle may get past: the parent row arrives afterwards. */
+const PARKED = /violates foreign key|23503|waiting for parent row/;
+const RETRY_PAGE = 200;
 const PULL_PAGE = 500;
 const PUSH_PAGE = 200;
-const MAX_FK_PASSES = 6;
-const INTERVAL_MS = 30_000;
+const TICK_MS = 30_000;
 const MAX_CONFLICTS_KEPT = 50;
+const SCOPE = pullScope();
 
 /**
- * Two-way sync between a local (embedded) install and a central server.
- *
- * Changes are captured by DB triggers into the sync_changes outbox (see the
- * 20261026000000_server_sync and 20261104130000_sync_outbox migrations) for
- * the tables classified in tables.ts. Resolution is last-writer-wins per row
- * by hybrid logical clock against sync_versions; on an exact tie the
- * server's version wins and a replayed change is skipped. Rows arrive in
- * arbitrary table order, so a change whose parent row hasn't arrived yet
- * (FK violation) is retried in later passes. Outbox entries are deleted only
- * once the server has acknowledged them.
+ * Two-way sync between branch installs (clients) and HQ (the server),
+ * docs/MULTI-BRANCH-SYNC.md. Changes are captured by DB triggers into the
+ * sync_changes outbox for the tables classified in tables.ts (#81) and
+ * applied on the other side by SyncApplier (apply.ts, #82): ownership first,
+ * then last-writer-wins per row by hybrid logical clock. A branch registers
+ * at HQ once with the bootstrap key and then syncs with its own key; HQ
+ * relays to each branch only what that branch may see. Outbox entries are
+ * deleted only once the server has acknowledged them.
  */
 @Injectable()
 export class SyncService implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger(SyncService.name);
-  private meta: Map<string, TableMeta> | null = null;
+  private readonly applier: SyncApplier;
   private timer: NodeJS.Timeout | null = null;
   private running: Promise<unknown> | null = null;
+  private retryAllNext = false;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly peers: SyncPeersService,
+  ) {
+    this.applier = new SyncApplier(prisma, () => this.schemaVersion());
+  }
 
   async onModuleInit() {
     await this.installCapture();
@@ -93,10 +97,11 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         await this.prisma.$executeRawUnsafe('SELECT sync_seed()');
       this.log.log('Sync server mode enabled (SYNC_API_KEY set)');
     }
+    await this.queueWalletOpenings();
     if (process.env.NODE_ENV !== 'test') {
       this.timer = setInterval(
-        () => void this.runOnce().catch(() => undefined),
-        INTERVAL_MS,
+        () => void this.runScheduled().catch(() => undefined),
+        TICK_MS,
       );
       this.timer.unref();
     }
@@ -124,7 +129,24 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         schema,
       );
     });
-    this.meta = null;
+    this.applier.resetMeta();
+  }
+
+  /**
+   * The wallet ledger's opening entries were written by a migration, before
+   * any trigger existed on the table. On a syncing branch they are queued
+   * once (touched without change) so HQ gets the branch's own opening
+   * balance, which supersedes the copy HQ opened from its older data.
+   */
+  private async queueWalletOpenings() {
+    const s = await this.state();
+    if (!s.enabled || s.role !== 'client') return;
+    await this.prisma.$executeRawUnsafe(
+      `UPDATE customer_wallet_entries w SET reason = w.reason
+        WHERE w.reason = 'OPENING' AND NOT EXISTS (
+          SELECT 1 FROM sync_versions v WHERE v.tbl = 'customer_wallet_entries'
+             AND v."pkKey" = jsonb_build_object('id', w.id)::text)`,
+    );
   }
 
   async state() {
@@ -135,12 +157,17 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         deviceId: string;
         serverUrl: string | null;
         apiKey: string | null;
+        peerKey: string | null;
+        branchIds: string[] | null;
         seeded: boolean;
         lastPullSeq: bigint;
         lastPushSeq: bigint;
         lastSyncAt: Date | null;
         lastError: string | null;
         conflicts: unknown[];
+        failures: number;
+        nextAttemptAt: Date | null;
+        pausedReason: string | null;
       }[]
     >(`SELECT * FROM sync_state WHERE id = 1`);
     return rows[0];
@@ -148,24 +175,49 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
 
   async publicStatus() {
     const s = await this.state();
-    const pending = await this.prisma.$queryRawUnsafe<{ n: bigint }[]>(
-      `SELECT count(*) AS n FROM sync_changes WHERE seq > $1`,
-      s.lastPushSeq,
-    );
-    const rejected = await this.prisma.$queryRawUnsafe<{ n: bigint }[]>(
-      `SELECT count(*) AS n FROM sync_rejected`,
-    );
+    const count = async (sql: string, ...args: unknown[]) =>
+      Number(
+        (await this.prisma.$queryRawUnsafe<{ n: bigint }[]>(sql, ...args))[0].n,
+      );
+    const server = s.role === 'server';
     return {
       enabled: s.enabled,
       role: s.role,
       serverUrl: s.serverUrl,
-      hasKey: !!s.apiKey,
+      hasKey: !!(s.apiKey || s.peerKey),
+      registered: !!s.peerKey,
+      branchIds: s.branchIds ?? [],
       lastSyncAt: s.lastSyncAt,
       lastError: s.lastError,
-      pendingChanges: s.role === 'client' ? Number(pending[0].n) : 0,
-      rejectedChanges: Number(rejected[0].n),
+      // 'schema' / 'clock': transfer waits (changes keep queuing) until fixed.
+      pausedReason: s.pausedReason,
+      failures: s.failures,
+      nextAttemptAt: s.nextAttemptAt,
+      pendingChanges: server
+        ? 0
+        : await count(
+            `SELECT count(*) AS n FROM sync_changes WHERE seq > $1`,
+            s.lastPushSeq,
+          ),
+      rejectedChanges: await count(`SELECT count(*) AS n FROM sync_rejected`),
+      flaggedOrders: server
+        ? await count(`SELECT count(*) AS n FROM sync_order_flags`)
+        : 0,
+      peers: server
+        ? await count(
+            `SELECT count(*) AS n FROM sync_peers WHERE "revokedAt" IS NULL`,
+          )
+        : 0,
       conflicts: s.conflicts,
     };
+  }
+
+  /** HQ: settled branch orders that did not reconcile, newest first. */
+  orderFlags() {
+    return this.prisma.syncOrderFlag.findMany({
+      orderBy: { flaggedAt: 'desc' },
+      take: 100,
+    });
   }
 
   async schemaVersion(): Promise<string> {
@@ -175,284 +227,15 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     return r[0].m;
   }
 
-  private async tableMeta(): Promise<Map<string, TableMeta>> {
-    if (this.meta) return this.meta;
-    const cols = await this.prisma.$queryRawUnsafe<{ t: string; c: string }[]>(
-      `SELECT c.relname AS t, a.attname AS c FROM pg_class c
-         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = ''
-        WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r' AND sync_is_synced_table(c.relname)
-        ORDER BY c.relname, a.attnum`,
-    );
-    const pks = await this.prisma.$queryRawUnsafe<{ t: string; c: string }[]>(
-      `SELECT c.relname AS t, a.attname AS c FROM pg_constraint k
-         JOIN pg_class c ON c.oid = k.conrelid
-         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY (k.conkey)
-        WHERE k.contype = 'p' AND c.relnamespace = 'public'::regnamespace`,
-    );
-    const m = new Map<string, TableMeta>();
-    for (const { t, c } of cols) {
-      if (!m.has(t)) m.set(t, { pk: [], cols: [] });
-      m.get(t)!.cols.push(c);
-    }
-    for (const { t, c } of pks) m.get(t)?.pk.push(c);
-    this.meta = m;
-    return m;
-  }
-
-  private q(id: string) {
-    return `"${id.replace(/"/g, '""')}"`;
-  }
-
-  /**
-   * Applies changes with last-writer-wins. `origin` is recorded in the log
-   * (so the server can relay to other devices without echoing back to the
-   * sender); '__skip' applies without logging (client applying a pull).
-   */
-  async applyChanges(
-    changes: SyncChange[],
-    opts: { origin: string; tieWins: boolean },
-  ): Promise<ApplyResult> {
-    const meta = await this.tableMeta();
-    const result: ApplyResult = { applied: 0, skipped: 0, conflicts: [] };
-    const perms = new Map(
-      (
-        await this.prisma.$queryRawUnsafe<{ key: string; id: string }[]>(
-          `SELECT key, id FROM permissions`,
-        )
-      ).map((p) => [p.key, p.id]),
-    );
-    const applyOpts: ApplyOpts = { ...opts, permissionId: (k) => perms.get(k) };
-    let pending: SyncChange[] = [];
-    for (const c of changes) {
-      try {
-        assertWellFormed(c);
-        pending.push(c);
-      } catch (e) {
-        result.conflicts.push({
-          seq: typeof c?.seq === 'string' ? c.seq : undefined,
-          tbl: String(c?.tbl),
-          pk: String(c?.pkKey),
-          error: e instanceof Error ? e.message : String(e),
-        });
-      }
-    }
-    pending = compact(pending);
-
-    for (let pass = 0; pass < MAX_FK_PASSES && pending.length; pass++) {
-      const retry: SyncChange[] = [];
-      const lastError = new Map<SyncChange, string>();
-      // Deletes after upserts on the first passes keeps cascades from
-      // removing rows a later upsert in the same batch re-creates.
-      const ordered = [...pending].sort(
-        (a, b) => Number(a.op === 'D') - Number(b.op === 'D'),
-      );
-      for (let i = 0; i < ordered.length; i += PUSH_PAGE) {
-        const slice = ordered.slice(i, i + PUSH_PAGE);
-        await this.prisma.$transaction(
-          async (tx) => {
-            for (const c of slice) {
-              await tx.$executeRawUnsafe('SAVEPOINT sp');
-              try {
-                const did = await this.applyOne(tx, c, meta, applyOpts);
-                if (did) result.applied++;
-                else result.skipped++;
-                await tx.$executeRawUnsafe('RELEASE SAVEPOINT sp');
-              } catch (e) {
-                await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT sp');
-                const msg = e instanceof Error ? e.message : String(e);
-                lastError.set(c, msg);
-                // A missing parent may arrive later in the batch; a deadlock
-                // with a concurrent push on the same rows succeeds on retry.
-                if (
-                  /violates foreign key|23503|deadlock detected|40P01/.test(
-                    msg,
-                  ) &&
-                  pass < MAX_FK_PASSES - 1
-                )
-                  retry.push(c);
-                else
-                  result.conflicts.push({
-                    seq: c.seq,
-                    tbl: c.tbl,
-                    pk: c.pkKey,
-                    error: msg.split('\n').pop() ?? msg,
-                  });
-              }
-            }
-          },
-          { timeout: 120_000, maxWait: 30_000 },
-        );
-      }
-      pending = retry;
-    }
-    return result;
-  }
-
-  private async applyOne(
-    tx: Tx,
-    wire: SyncChange,
-    meta: Map<string, TableMeta>,
-    opts: ApplyOpts,
-  ): Promise<boolean> {
-    const t = meta.get(wire.tbl);
-    if (!t || !t.pk.length) throw new Error(`unknown table ${wire.tbl}`);
-    assertRowMatchesPk(wire, t.pk);
-    await this.lockApplyKey(tx, wire, t);
-    const c = localizePermission(wire, opts.permissionId);
-    // A local writer of this row commits before the LWW check reads its
-    // version (#81 audit): the row lock is taken first, as the writer's own
-    // UPDATE does before its trigger, so the two can't deadlock. A row a
-    // local writer inserts meanwhile is seen when our insert hits it.
-    for (let attempt = 0; ; attempt++) {
-      const exists = await this.lockRow(tx, c, t);
-      if (!(await this.isNewer(tx, c, opts))) return false;
-      await tx.$queryRawUnsafe(
-        `SELECT set_config('app.sync_origin', $1, true), set_config('app.sync_ts', $2, true),
-                set_config('app.sync_hlc', $3, true), set_config('app.sync_peer', $4, true)`,
-        opts.origin,
-        c.ts,
-        c.hlc,
-        c.peer,
-      );
-      if (c.op === 'D' && !exists) return this.deleteAbsent(tx, c, t, opts);
-      if (await this.writeRow(tx, c, t, exists)) break;
-      if (attempt) throw new Error('row changed twice during apply');
-    }
-    // The trigger records the version when a row changed; a delete of a row
-    // this install never had still needs its tombstone. Never lowers it.
-    await tx.$executeRawUnsafe(
-      `INSERT INTO sync_versions (tbl, "pkKey", hlc, peer, deleted, "branchId", ts)
-       VALUES ($1, $2, $3::bigint, $4, $5, $6, $7::timestamptz)
-       ON CONFLICT (tbl, "pkKey") DO UPDATE SET hlc = EXCLUDED.hlc, peer = EXCLUDED.peer,
-         deleted = EXCLUDED.deleted, "branchId" = coalesce(EXCLUDED."branchId", sync_versions."branchId"), ts = EXCLUDED.ts
-       WHERE EXCLUDED.hlc >= sync_versions.hlc`,
-      c.tbl,
-      c.pkKey,
-      c.hlc,
-      c.peer,
-      c.op === 'D',
-      c.branchId ?? null,
-      c.ts,
-    );
-    return true;
-  }
-
-  /**
-   * A delete of a row that was absent when locked. A local transaction may
-   * be creating it right now: its uncommitted row is invisible to DELETE, but
-   * its version row is not, so the tombstone upsert waits for it and then
-   * re-runs the LWW check against that version (#81 review 4). If the delete
-   * still wins, the row that writer committed meanwhile is locked and deleted.
-   */
-  private async deleteAbsent(
-    tx: Tx,
-    c: SyncChange,
-    t: TableMeta,
-    opts: ApplyOpts,
-  ): Promise<boolean> {
-    const won = await tx.$queryRawUnsafe<unknown[]>(
-      `INSERT INTO sync_versions AS v (tbl, "pkKey", hlc, peer, deleted, "branchId", ts)
-       VALUES ($1, $2, $3::bigint, $4, true, $5, $6::timestamptz)
-       ON CONFLICT (tbl, "pkKey") DO UPDATE SET hlc = EXCLUDED.hlc, peer = EXCLUDED.peer,
-         deleted = true, "branchId" = coalesce(EXCLUDED."branchId", v."branchId"), ts = EXCLUDED.ts
-       WHERE NOT (v.hlc > EXCLUDED.hlc OR (v.hlc = EXCLUDED.hlc AND (v.peer = EXCLUDED.peer OR NOT $7::boolean)))
-       RETURNING 1`,
-      c.tbl,
-      c.pkKey,
-      c.hlc,
-      c.peer,
-      c.branchId ?? null,
-      c.ts,
-      opts.tieWins,
-    );
-    if (!won.length) return false;
-    if (await this.lockRow(tx, c, t)) await this.writeRow(tx, c, t, true);
-    return true;
-  }
-
-  /**
-   * Recomputes the row key exactly as the sender's trigger did (sync_pk on
-   * the wire pk) and serialises every apply of this row until commit, so two
-   * concurrent pushes can't both pass the LWW check (#81 audit). Two-int
-   * advisory locks (objsubid 2) are ignored by sync_safe_seq().
-   */
-  private async lockApplyKey(tx: Tx, wire: SyncChange, t: TableMeta) {
-    const [{ k }] = await tx.$queryRawUnsafe<{ k: string }[]>(
-      `SELECT x.k FROM (SELECT sync_pk($1::text[], $2::jsonb)::text AS k) x,
-         LATERAL (SELECT pg_advisory_xact_lock(hashtext('sync_row'), hashtext($3 || chr(1) || x.k))) l`,
-      t.pk,
-      JSON.stringify(wire.pk),
-      wire.tbl,
-    );
-    if (k !== wire.pkKey) throw new Error('pkKey does not match pk');
-  }
-
-  /** Locks the target row (waiting out any open writer); false if absent. */
-  private async lockRow(tx: Tx, c: SyncChange, t: TableMeta) {
-    const tbl = this.q(c.tbl);
-    const pkCols = t.pk.map((p) => this.q(p)).join(', ');
-    const r = await tx.$queryRawUnsafe<unknown[]>(
-      `SELECT 1 FROM ${tbl} WHERE (${pkCols}) = (SELECT ${pkCols} FROM jsonb_populate_record(NULL::${tbl}, $1::jsonb)) FOR UPDATE`,
-      JSON.stringify(c.pk),
-    );
-    return r.length > 0;
-  }
-
-  private async isNewer(tx: Tx, c: SyncChange, opts: ApplyOpts) {
-    const r = await tx.$queryRawUnsafe<{ ok: boolean }[]>(
-      `SELECT NOT EXISTS (
-         SELECT 1 FROM sync_versions WHERE tbl = $1 AND "pkKey" = $2
-            AND (hlc > $3::bigint OR (hlc = $3::bigint AND (peer = $4 OR NOT $5::boolean)))) AS ok`,
-      c.tbl,
-      c.pkKey,
-      c.hlc,
-      c.peer,
-      opts.tieWins,
-    );
-    return r[0].ok;
-  }
-
-  /**
-   * Writes the change. An upsert of a row that was absent when locked only
-   * inserts; false means a concurrent writer created it first, so the caller
-   * locks it and re-checks LWW against that writer's version.
-   */
-  private async writeRow(
-    tx: Tx,
-    c: SyncChange,
-    t: TableMeta,
-    exists: boolean,
-  ): Promise<boolean> {
-    const tbl = this.q(c.tbl);
-    const pkCols = t.pk.map((p) => this.q(p)).join(', ');
-    if (c.op === 'D') {
-      await tx.$executeRawUnsafe(
-        `DELETE FROM ${tbl} WHERE (${pkCols}) = (SELECT ${pkCols} FROM jsonb_populate_record(NULL::${tbl}, $1::jsonb))`,
-        JSON.stringify(c.pk),
-      );
-      return true;
-    }
-    // Stripped columns never arrive; keep this install's value.
-    const keep = new Set(syncTable(c.tbl)?.strip ?? []);
-    const sets = t.cols
-      .filter((x) => !t.pk.includes(x) && !keep.has(x))
-      .map((x) => `${this.q(x)} = EXCLUDED.${this.q(x)}`);
-    const onConflict =
-      exists && sets.length
-        ? `ON CONFLICT (${pkCols}) DO UPDATE SET ${sets.join(', ')}`
-        : `ON CONFLICT (${pkCols}) DO NOTHING`;
-    const n = await tx.$executeRawUnsafe(
-      `INSERT INTO ${tbl} SELECT * FROM jsonb_populate_record(NULL::${tbl}, $1::jsonb) ${onConflict}`,
-      JSON.stringify(c.row),
-    );
-    return exists || n > 0;
+  /** Applies changes as `ctx` describes (apply.ts). */
+  applyChanges(changes: SyncChange[], ctx: ApplyContext): Promise<ApplyResult> {
+    return this.applier.apply(changes, ctx);
   }
 
   /**
    * Highest outbox seq below every still-open writer (sync_safe_seq in the
    * migration). Must run as its own statement BEFORE the outbox read, so that
-   * read's snapshot sees every entry up to the bound that will ever commit;
-   * cursors and pruning then never pass an entry not yet visible.
+   * read's snapshot sees every entry up to the bound that will ever commit.
    */
   private async safeSeq(): Promise<bigint> {
     const r = await this.prisma.$queryRawUnsafe<{ s: bigint }[]>(
@@ -463,34 +246,54 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
 
   // ---- server side -------------------------------------------------------
 
-  async pull(since: bigint, device: string, limit = PULL_PAGE) {
+  /**
+   * One page of HQ's outbox for `peer` (G2): HQ-owned rows that are
+   * restaurant-wide or of the peer's branches, the peer's own branch rows
+   * (restore), and rows routed to it (stock transfers in). Never other
+   * branches' data and never the peer's own echo. The filter runs in SQL,
+   * so a page past filtered entries still advances the cursor to the bound.
+   */
+  async pull(since: bigint, peer: PeerIdentity, limit = PULL_PAGE) {
     // A client asking from `since` has everything up to it (compaction bound).
     await this.prisma.$executeRawUnsafe(
       `INSERT INTO sync_cursors (device, seq, "seenAt") VALUES ($1, $2, now())
        ON CONFLICT (device) DO UPDATE SET seq = EXCLUDED.seq, "seenAt" = now()`,
-      device,
+      peer.id,
       since,
     );
     const upTo = await this.safeSeq();
+    const routed = SCOPE.routed
+      .map(
+        (r, i) =>
+          `(tbl = $${6 + 2 * i} AND row ->> $${7 + 2 * i} = ANY ($5::text[]))`,
+      )
+      .join(' OR ');
     const rows = await this.prisma.$queryRawUnsafe<ChangeRow[]>(
-      `SELECT ${CHANGE_COLS} FROM sync_changes WHERE seq > $1 AND seq <= $2 ORDER BY sync_changes.seq LIMIT $3`,
+      `SELECT ${CHANGE_COLS} FROM sync_changes
+        WHERE seq > $1 AND seq <= $2 AND origin <> $3
+          AND ((tbl = ANY ($4::text[]) AND ("branchId" IS NULL OR "branchId" = ANY ($5::text[])))
+               OR "branchId" = ANY ($5::text[])${routed ? ` OR ${routed}` : ''})
+        ORDER BY sync_changes.seq LIMIT ${Number(limit)}`,
       since,
       upTo,
-      limit,
+      peer.id,
+      SCOPE.hqTables,
+      peer.branchIds,
+      ...SCOPE.routed.flatMap((r) => [r.tbl, r.col]),
     );
-    const nextSeq = rows.length ? rows[rows.length - 1].seq : since.toString();
-    const mine = rows.filter((r) => r.origin !== device).map(toWire);
+    const full = rows.length === limit;
+    const bound = upTo > since ? upTo : since;
     return {
-      changes: compact(mine),
-      nextSeq,
-      hasMore: rows.length === limit,
+      changes: compact(rows.map(toWire)),
+      nextSeq: full ? rows[rows.length - 1].seq : bound.toString(),
+      hasMore: full,
     };
   }
 
   /**
    * Server-side compaction (G8): every client has pulled past `min(cursor)`,
    * so below it an entry superseded by a newer one for the same row, and any
-   * tombstone, is no longer needed. The newest upsert of each row (highest HLC) is kept so
+   * tombstone, is no longer needed. The newest upsert of each row is kept so
    * a newly joining client still gets every row. Returns entries removed.
    */
   async compactOutbox(): Promise<number> {
@@ -505,8 +308,14 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  async push(device: string, changes: SyncChange[]) {
-    return this.applyChanges(changes, { origin: device, tieWins: false });
+  /** A branch's page, applied with its ownership (rule 1). */
+  push(peer: PeerIdentity, changes: SyncChange[]) {
+    return this.applier.apply(changes, {
+      origin: peer.id,
+      tieWins: false,
+      receiver: 'hq',
+      branches: peer.branchIds,
+    });
   }
 
   // ---- client side -------------------------------------------------------
@@ -522,12 +331,21 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  /**
+   * Calls the server. With `peer`, authenticates as this registered
+   * install; otherwise with the bootstrap key (connection test, register).
+   */
   private async call<T>(
-    s: { serverUrl: string | null; apiKey: string | null },
+    s: {
+      serverUrl: string | null;
+      apiKey: string | null;
+      peer?: { id: string; key: string };
+    },
     path: string,
     init: RequestInit = {},
   ): Promise<T> {
-    if (!s.serverUrl || !s.apiKey)
+    const key = s.peer?.key ?? s.apiKey;
+    if (!s.serverUrl || !key)
       throw new Error('Server address and sync key are required');
     const res = await fetch(
       `${s.serverUrl.replace(/\/+$/, '')}/api/v1/sync-peer/${path}`,
@@ -535,31 +353,46 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         ...init,
         headers: {
           'content-type': 'application/json',
-          'x-sync-key': s.apiKey,
+          'x-sync-key': key,
+          ...(s.peer ? { 'x-sync-peer': s.peer.id } : {}),
           ...init.headers,
         },
         signal: AbortSignal.timeout(60_000),
       },
     );
     if (res.status === 401 || res.status === 403)
-      throw new Error('Server rejected the sync key');
-    if (!res.ok) throw new Error(`Server answered HTTP ${res.status}`);
+      throw new Error(
+        s.peer
+          ? "HQ rejected this install's sync key (revoked?). Enter the sync key again in Settings > Sync."
+          : 'Server rejected the sync key',
+      );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as {
+        message?: unknown;
+      } | null;
+      const msg = typeof body?.message === 'string' ? body.message : '';
+      throw new Error(msg || `Server answered HTTP ${res.status}`);
+    }
     return (await res.json()) as T;
   }
 
   /**
    * Checks the server before any data moves: it is a sync server, on the same
-   * schema, and its clock agrees with this PC's (HLCs come from local clocks,
-   * so a skewed PC must stop here rather than have its changes rejected).
+   * schema, and its clock agrees with this PC's. A mismatch pauses transfer
+   * (SyncPaused); changes keep queuing in the outbox meanwhile (§4.6).
    */
-  async testConnection(serverUrl: string, apiKey: string) {
+  async testConnection(
+    serverUrl: string,
+    apiKey: string | null,
+    peer?: { id: string; key: string },
+  ) {
     const sent = Date.now();
     const r = await this.call<{
       ok: boolean;
       role: string;
       schema: string;
       now?: number;
-    }>({ serverUrl, apiKey }, 'ping');
+    }>({ serverUrl, apiKey, peer }, 'ping');
     // The server read its clock somewhere in the round trip: take the middle.
     const localAtServer = (sent + Date.now()) / 2;
     const local = await this.schemaVersion();
@@ -568,28 +401,77 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         'That address is not a sync server (SYNC_API_KEY is not set there)',
       );
     if (r.schema !== local) {
-      throw new Error(
-        `App versions differ (this PC: ${local}, server: ${r.schema}). Update both to the same version first.`,
+      throw new SyncPaused(
+        'schema',
+        `App versions differ (this PC: ${local}, server: ${r.schema}). Update ${r.schema > local ? 'this branch' : 'HQ'} to the same version; changes keep queuing meanwhile.`,
       );
     }
     const skew = clockSkewError(localAtServer, r.now);
-    if (skew) throw new Error(skew);
+    if (skew) throw new SyncPaused('clock', skew);
     return { ok: true, schema: r.schema };
   }
 
+  /** Gets this install's own key from HQ (bootstrap key auth). */
+  private async register(
+    serverUrl: string,
+    apiKey: string,
+    deviceId: string,
+    branchIds: string[],
+  ) {
+    return this.call<{ id: string; key: string; branchIds: string[] }>(
+      { serverUrl, apiKey },
+      'register',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          id: deviceId,
+          name: hostname().slice(0, 80) || deviceId,
+          branchIds,
+        }),
+      },
+    );
+  }
+
+  /** Branches this install runs: given, or its only local branch in merge mode. */
+  private async localBranchIds(
+    mode: 'adopt' | 'merge',
+    given?: string[],
+  ): Promise<string[]> {
+    if (given?.length) return [...new Set(given)];
+    if (mode === 'adopt') return [];
+    const rows = await this.prisma.branch.findMany({ select: { id: true } });
+    return rows.length === 1 ? [rows[0].id] : [];
+  }
+
   /** mode 'adopt': replace local data with the server's. 'merge': keep and merge both. */
-  async enable(serverUrl: string, apiKey: string, mode: 'adopt' | 'merge') {
+  async enable(
+    serverUrl: string,
+    apiKey: string,
+    mode: 'adopt' | 'merge',
+    branchIds?: string[],
+  ) {
     // A cycle already in flight holds the previous sequence numbers.
     await this.running?.catch(() => undefined);
     await this.testConnection(serverUrl, apiKey);
-    const meta = await this.tableMeta();
+    const s = await this.state();
+    // Registration first, so a refused branch choice changes nothing here.
+    const reg = await this.register(
+      serverUrl,
+      apiKey,
+      s.deviceId,
+      await this.localBranchIds(mode, branchIds),
+    );
+    const meta = await this.syncedTables();
     await this.prisma.$transaction(
       async (tx) => {
         await tx.$executeRawUnsafe(
-          `UPDATE sync_state SET enabled = false, role = 'client', "serverUrl" = $1, "apiKey" = $2,
-             "lastPullSeq" = 0, "lastPushSeq" = 0, "lastError" = NULL, conflicts = '[]' WHERE id = 1`,
+          `UPDATE sync_state SET enabled = false, role = 'client', "serverUrl" = $1, "apiKey" = NULL,
+             "peerKey" = $2, "branchIds" = $3::text[], "lastPullSeq" = 0, "lastPushSeq" = 0,
+             "lastError" = NULL, conflicts = '[]', failures = 0, "nextAttemptAt" = NULL,
+             "pausedReason" = NULL WHERE id = 1`,
           serverUrl.replace(/\/+$/, ''),
-          apiKey,
+          reg.key,
+          reg.branchIds,
         );
         await tx.$executeRawUnsafe('DELETE FROM sync_changes');
         await tx.$executeRawUnsafe('DELETE FROM sync_versions');
@@ -610,7 +492,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
           await tx.$executeRawUnsafe(
             `ALTER TABLE verifactu_records DISABLE TRIGGER USER`,
           );
-          const tables = [...meta.keys()].map((t) => this.q(t)).join(', ');
+          const tables = meta.map((t) => `"${t}"`).join(', ');
           await tx.$executeRawUnsafe(
             `TRUNCATE ${tables}, verifactu_records CASCADE`,
           );
@@ -628,16 +510,33 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     return this.runOnce();
   }
 
+  private async syncedTables(): Promise<string[]> {
+    const rows = await this.prisma.$queryRawUnsafe<{ t: string }[]>(
+      `SELECT c.relname AS t FROM pg_class c
+        WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r' AND sync_is_synced_table(c.relname)`,
+    );
+    return rows.map((r) => r.t);
+  }
+
   async disable() {
     await this.running?.catch(() => undefined);
     await this.prisma.$executeRawUnsafe(
-      `UPDATE sync_state SET enabled = false, "lastError" = NULL WHERE id = 1 AND role = 'client'`,
+      `UPDATE sync_state SET enabled = false, "lastError" = NULL, "pausedReason" = NULL,
+         failures = 0, "nextAttemptAt" = NULL WHERE id = 1 AND role = 'client'`,
     );
     await this.prisma.$executeRawUnsafe(
       `DELETE FROM sync_changes WHERE (SELECT role FROM sync_state) = 'client'`,
     );
   }
 
+  /** Timer tick: a client in backoff waits until its next attempt is due. */
+  async runScheduled() {
+    const s = await this.state();
+    if (s.nextAttemptAt && s.nextAttemptAt.getTime() > Date.now()) return null;
+    return this.runOnce();
+  }
+
+  /** One cycle now (also from Settings > Sync > Sync now, ignoring backoff). */
   runOnce(): Promise<{
     pulled: number;
     pushed: number;
@@ -658,89 +557,222 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
     if (!s.enabled || s.role !== 'client') return null;
-    let pulled = 0;
-    let pushed = 0;
-    const conflicts: ApplyResult['conflicts'] = [];
     try {
-      await this.testConnection(s.serverUrl!, s.apiKey!);
-
-      let since = s.lastPullSeq;
-      for (;;) {
-        const page = await this.call<{
-          changes: SyncChange[];
-          nextSeq: string;
-          hasMore: boolean;
-        }>(s, `pull?since=${since}&device=${encodeURIComponent(s.deviceId)}`);
-        const r = await this.applyChanges(page.changes, {
-          origin: '__skip',
-          tieWins: true,
-        });
-        pulled += r.applied;
-        conflicts.push(...r.conflicts);
-        since = BigInt(page.nextSeq);
-        // The cursor moves past rejected server changes: keep them first.
-        await this.prisma.$transaction([
-          this.keepRejected('pull', rejectedChanges(page.changes, r.conflicts)),
-          this.prisma.$executeRawUnsafe(
-            `UPDATE sync_state SET "lastPullSeq" = $1 WHERE id = 1`,
-            since,
-          ),
-        ]);
-        if (!page.hasMore) break;
-      }
-
-      let pushedTo = s.lastPushSeq;
-      const upTo = await this.safeSeq();
-      for (;;) {
-        const rows = await this.prisma.$queryRawUnsafe<ChangeRow[]>(
-          `SELECT ${CHANGE_COLS} FROM sync_changes WHERE seq > $1 AND seq <= $2 ORDER BY sync_changes.seq LIMIT $3`,
-          pushedTo,
-          upTo,
-          PUSH_PAGE,
-        );
-        if (!rows.length) break;
-        const changes = compact(rows.map(toWire));
-        const r = await this.call<ApplyResult>(s, 'push', {
-          method: 'POST',
-          body: JSON.stringify({ device: s.deviceId, changes }),
-        });
-        pushed += r.applied;
-        conflicts.push(...r.conflicts);
-        pushedTo = BigInt(rows[rows.length - 1].seq);
-        // Acknowledged by the server: keep what it rejected, then advance the
-        // cursor and drop the page together, so a crash replays at most this
-        // page (idempotent).
-        await this.prisma.$transaction([
-          this.keepRejected('push', rejectedChanges(changes, r.conflicts)),
-          this.prisma.$executeRawUnsafe(
-            `UPDATE sync_state SET "lastPushSeq" = $1 WHERE id = 1`,
-            pushedTo,
-          ),
-          this.prisma.$executeRawUnsafe(
-            `DELETE FROM sync_changes WHERE seq <= $1`,
-            pushedTo,
-          ),
-        ]);
-        if (rows.length < PUSH_PAGE) break;
-      }
-
-      const kept = [
-        ...conflicts.map((c) => ({ ...c, at: new Date().toISOString() })),
-        ...(s.conflicts ?? []),
-      ].slice(0, MAX_CONFLICTS_KEPT);
+      const r = await this.transfer(s);
       await this.prisma.$executeRawUnsafe(
-        `UPDATE sync_state SET "lastSyncAt" = now(), "lastError" = NULL, conflicts = $1::jsonb WHERE id = 1`,
-        JSON.stringify(kept),
+        `UPDATE sync_state SET "lastSyncAt" = now(), "lastError" = NULL, conflicts = $1::jsonb,
+           failures = 0, "nextAttemptAt" = NULL, "pausedReason" = NULL WHERE id = 1`,
+        JSON.stringify(
+          [
+            ...r.conflictList.map((c) => ({
+              ...c,
+              at: new Date().toISOString(),
+            })),
+            ...(s.conflicts ?? []),
+          ].slice(0, MAX_CONFLICTS_KEPT),
+        ),
       );
-      return { pulled, pushed, conflicts: conflicts.length };
+      return { pulled: r.pulled, pushed: r.pushed, conflicts: r.conflicts };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      const paused = e instanceof SyncPaused ? e.reason : null;
+      const failures = (s.failures ?? 0) + 1;
       this.log.warn(`sync failed: ${msg}`);
       await this.prisma.$executeRawUnsafe(
-        `UPDATE sync_state SET "lastError" = $1 WHERE id = 1`,
+        `UPDATE sync_state SET "lastError" = $1, failures = $2, "pausedReason" = $3,
+           "nextAttemptAt" = now() + ($4::text || ' milliseconds')::interval WHERE id = 1`,
         msg,
+        failures,
+        paused,
+        String(backoffMs(failures)),
       );
       throw e;
     }
+  }
+
+  /** Registers if needed, then pulls and pushes every page. */
+  private async transfer(s: Awaited<ReturnType<SyncService['state']>>) {
+    let conn = { ...s };
+    if (!conn.peerKey) {
+      // Enabled before #82 with the shared key: get this install's own key.
+      if (!conn.apiKey)
+        throw new Error('Enter the sync key in Settings > Sync');
+      await this.testConnection(conn.serverUrl!, conn.apiKey);
+      const reg = await this.register(
+        conn.serverUrl!,
+        conn.apiKey,
+        conn.deviceId,
+        conn.branchIds ?? [],
+      );
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE sync_state SET "peerKey" = $1, "branchIds" = $2::text[], "apiKey" = NULL WHERE id = 1`,
+        reg.key,
+        reg.branchIds,
+      );
+      conn = {
+        ...conn,
+        peerKey: reg.key,
+        branchIds: reg.branchIds,
+        apiKey: null,
+      };
+    }
+    // Only rejections kept before this cycle are re-tried at its end.
+    const [{ m: keptBefore }] = await this.prisma.$queryRawUnsafe<
+      { m: bigint }[]
+    >(`SELECT coalesce(max(id), 0) AS m FROM sync_rejected`);
+    const peer = { id: conn.deviceId, key: conn.peerKey! };
+    const link = { serverUrl: conn.serverUrl, apiKey: null, peer };
+    await this.testConnection(conn.serverUrl!, null, peer);
+
+    let pulled = 0;
+    let pushed = 0;
+    const conflictList: ApplyResult['conflicts'] = [];
+    let since = conn.lastPullSeq;
+    for (;;) {
+      const page = await this.call<{
+        changes: SyncChange[];
+        nextSeq: string;
+        hasMore: boolean;
+      }>(link, `pull?since=${since}`);
+      const r = await this.applier.apply(page.changes, {
+        origin: '__skip',
+        tieWins: true,
+        receiver: 'branch',
+        branches: conn.branchIds ?? [],
+      });
+      pulled += r.applied;
+      conflictList.push(...r.conflicts);
+      since = BigInt(page.nextSeq);
+      // The cursor moves past rejected server changes: keep them first.
+      await this.prisma.$transaction([
+        this.keepRejected('pull', rejectedChanges(page.changes, r.conflicts)),
+        this.prisma.$executeRawUnsafe(
+          `UPDATE sync_state SET "lastPullSeq" = $1 WHERE id = 1`,
+          since,
+        ),
+      ]);
+      if (!page.hasMore) break;
+    }
+
+    let pushedTo = conn.lastPushSeq;
+    const upTo = await this.safeSeq();
+    for (;;) {
+      const rows = await this.prisma.$queryRawUnsafe<ChangeRow[]>(
+        `SELECT ${CHANGE_COLS} FROM sync_changes WHERE seq > $1 AND seq <= $2 ORDER BY sync_changes.seq LIMIT $3`,
+        pushedTo,
+        upTo,
+        PUSH_PAGE,
+      );
+      if (!rows.length) break;
+      const changes = compact(rows.map(toWire));
+      const r = await this.call<ApplyResult>(link, 'push', {
+        method: 'POST',
+        body: JSON.stringify({ changes }),
+      });
+      pushed += r.applied;
+      conflictList.push(...r.conflicts);
+      pushedTo = BigInt(rows[rows.length - 1].seq);
+      // Acknowledged by the server: keep what it rejected, then advance the
+      // cursor and drop the page together, so a crash replays at most this
+      // page (idempotent).
+      await this.prisma.$transaction([
+        this.keepRejected('push', rejectedChanges(changes, r.conflicts)),
+        this.prisma.$executeRawUnsafe(
+          `UPDATE sync_state SET "lastPushSeq" = $1 WHERE id = 1`,
+          pushedTo,
+        ),
+        this.prisma.$executeRawUnsafe(
+          `DELETE FROM sync_changes WHERE seq <= $1`,
+          pushedTo,
+        ),
+      ]);
+      if (rows.length < PUSH_PAGE) break;
+    }
+    // Re-tried rejections are already kept: not counted as new conflicts.
+    const retried = await this.retryRejected(
+      link,
+      conn.branchIds ?? [],
+      keptBefore,
+    );
+    return {
+      pulled: pulled + retried.pulled,
+      pushed: pushed + retried.pushed,
+      conflicts: conflictList.length,
+      conflictList,
+    };
+  }
+
+  /** Settings > Sync: re-try every kept rejection in the next cycle, now. */
+  retryAllRejected() {
+    this.retryAllNext = true;
+    return this.runOnce();
+  }
+
+  /**
+   * Re-tries kept rejections (sync_rejected): every cycle the parked ones
+   * (a parent row that had not arrived yet, e.g. a child pulled a page
+   * before its parent's newest entry), or all of them when asked. Replay is
+   * safe because apply is last-writer-wins: a change that has meanwhile been
+   * superseded is skipped. Resolved rows are removed; the rest keep their
+   * latest error.
+   */
+  private async retryRejected(
+    link: {
+      serverUrl: string | null;
+      apiKey: null;
+      peer: { id: string; key: string };
+    },
+    branches: string[],
+    keptBefore: bigint,
+  ) {
+    const all = this.retryAllNext;
+    this.retryAllNext = false;
+    const rows = await this.prisma.$queryRawUnsafe<
+      { id: bigint; side: string; change: SyncChange; error: string }[]
+    >(
+      `SELECT id, side, change, error FROM sync_rejected
+        WHERE change IS NOT NULL AND id <= $1 ORDER BY id LIMIT ${RETRY_PAGE}`,
+      keptBefore,
+    );
+    const out = { pulled: 0, pushed: 0 };
+    for (const side of ['pull', 'push'] as const) {
+      const batch = rows.filter(
+        (r) => r.side === side && (all || PARKED.test(r.error)),
+      );
+      if (!batch.length) continue;
+      const changes = batch.map((r) => r.change);
+      const res =
+        side === 'pull'
+          ? await this.applier.apply(changes, {
+              origin: '__skip',
+              tieWins: true,
+              receiver: 'branch',
+              branches,
+            })
+          : await this.call<ApplyResult>(link, 'push', {
+              method: 'POST',
+              body: JSON.stringify({ changes }),
+            });
+      if (side === 'pull') out.pulled += res.applied;
+      else out.pushed += res.applied;
+      const failed = new Map(
+        res.conflicts.map((c) => [`${c.tbl}\u0000${c.pk}`, c.error]),
+      );
+      for (const r of batch) {
+        const err = failed.get(`${r.change.tbl}\u0000${r.change.pkKey}`);
+        if (err === undefined)
+          await this.prisma.$executeRawUnsafe(
+            `DELETE FROM sync_rejected WHERE id = $1`,
+            r.id,
+          );
+        else
+          await this.prisma.$executeRawUnsafe(
+            `UPDATE sync_rejected SET error = $2 WHERE id = $1`,
+            r.id,
+            err,
+          );
+      }
+    }
+    return out;
   }
 }

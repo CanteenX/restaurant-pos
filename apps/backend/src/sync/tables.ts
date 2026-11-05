@@ -25,8 +25,19 @@ export interface SyncTable {
   owner: SyncOwner;
   rule: SyncRule;
   branch: BranchPath;
-  /** Cached totals recomputed from a ledger after apply (#82); never LWW. */
+  /**
+   * Cached totals recomputed from their ledger after apply (derived.ts);
+   * the wire value never decides them.
+   */
   derived?: string[];
+  /**
+   * Cached totals the owning branch's services maintain (they clamp or set
+   * them without a matching ledger row, so a ledger sum would differ).
+   * Authoritative because only the owner writes the row (rule 1).
+   */
+  ownerTotals?: string[];
+  /** Column naming a second branch that also receives the row (read-only). */
+  routeTo?: string;
   /** Columns never captured: sealed with this install's key (G11). */
   strip?: string[];
   /** Rows reference `permissions.id`, which differs per install (G5). */
@@ -91,20 +102,25 @@ export const SYNC_TABLES: Readonly<Record<string, SyncTable>> = {
   refunds: br(via('orders', 'orderId'), 'append'),
   gateway_payments: br(col(), 'append'),
   order_item_stock_returns: br(via('order_items', 'orderItemId'), 'append'),
-  customers: br(col(), 'lww', { derived: ['loyaltyPoints', 'walletBalance'] }),
+  customers: br(col(), 'lww', {
+    derived: ['walletBalance'],
+    ownerTotals: ['loyaltyPoints'],
+  }),
+  // Store-credit ledger (#82): walletBalance is recomputed from it.
+  customer_wallet_entries: br(col(), 'append'),
   customer_addresses: br(via('customers', 'customerId')),
   customer_memberships: br(via('customers', 'customerId')),
   points_ledger: br(col(), 'append'),
   referrals: br(col(), 'append'),
   gift_cards: br(col(), 'lww', { derived: ['balance'] }),
   gift_card_redemptions: br(via('gift_cards', 'giftCardId'), 'append'),
-  ingredients: br(col(), 'lww', { derived: ['currentStock'] }),
+  ingredients: br(col(), 'lww', { ownerTotals: ['currentStock'] }),
   // Pack sizes (#69) belong to their branch's ingredient.
   ingredient_unit_conversions: br(via('ingredients', 'ingredientId')),
   stock_movements: br(col(), 'append'),
   // FIFO consumption updates quantityRemaining in place, so the batch row is
-  // LWW and the remaining quantity is recomputed from stock_movements.
-  stock_batches: br(col(), 'lww', { derived: ['quantityRemaining'] }),
+  // LWW and the remaining quantity is the owning branch's.
+  stock_batches: br(col(), 'lww', { ownerTotals: ['quantityRemaining'] }),
   waste_logs: br(col(), 'append'),
   purchase_requests: br(col()),
   purchase_request_items: br(via('purchase_requests', 'purchaseRequestId')),
@@ -120,7 +136,9 @@ export const SYNC_TABLES: Readonly<Record<string, SyncTable>> = {
   ),
   supplier_invoices: br(col()),
   supplier_payments: br(col()),
-  stock_transfers: br(col('fromBranchId'), 'append'),
+  stock_transfers: br(col('fromBranchId'), 'append', {
+    routeTo: 'toBranchId',
+  }),
   reservations: br(col()),
   waitlist_entries: br(col()),
   table_requests: br(col()),
@@ -164,6 +182,8 @@ export const LOCAL_TABLES: Readonly<Record<string, string>> = {
   integration_api_keys: 'bearer-token hashes stay on this machine',
   device_tokens: 'push tokens belong to the sending install',
   notifications: 'the bell belongs to this install',
+  sync_peers: 'branch installs registered at this HQ, with key hashes',
+  sync_order_flags: 'branch orders this HQ found inconsistent, for review',
 };
 
 export function syncTable(tbl: string): SyncTable | undefined {

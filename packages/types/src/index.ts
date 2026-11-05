@@ -26,3 +26,4 @@ export * from "./order-lifecycle";
 export * from "./customer-display";
 export * from "./labels";
 export * from "./graphql";
+export * from "./sync";

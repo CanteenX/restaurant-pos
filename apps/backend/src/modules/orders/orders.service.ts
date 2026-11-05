@@ -1,3 +1,4 @@
+import { addWalletEntry } from '../customers/wallet-ledger';
 import {
   BadRequestException,
   ConflictException,
@@ -2063,13 +2064,16 @@ export class OrdersService {
       }
 
       if (dto.method === 'STORE_CREDIT' && order.customerId) {
-        // Atomic increment, not read-then-write: two concurrent
-        // STORE_CREDIT refunds for the same customer (from different
-        // orders) could otherwise both read the same stale walletBalance
-        // and one credit would be silently lost.
-        await tx.customer.update({
-          where: { id: order.customerId },
-          data: { walletBalance: { increment: dto.amount } },
+        // Ledger entry + rounded set under the customer row lock (two
+        // concurrent STORE_CREDIT refunds serialise on it), so the balance
+        // always equals its ledger and sync can recompute it (#82).
+        await addWalletEntry(tx, {
+          customerId: order.customerId,
+          delta: dto.amount,
+          reason: 'REFUND_CREDIT',
+          refundId: created.id,
+          orderId,
+          idempotencyKey: `refund:${created.id}`,
         });
       }
 

@@ -98,7 +98,12 @@ describe('sync table classification', () => {
   it('derived, stripped and permission columns exist', () => {
     for (const [t, spec] of Object.entries(SYNC_TABLES)) {
       const cols = models.get(t)!;
-      for (const c of [...(spec.derived ?? []), ...(spec.strip ?? [])])
+      for (const c of [
+        ...(spec.derived ?? []),
+        ...(spec.ownerTotals ?? []),
+        ...(spec.strip ?? []),
+        ...(spec.routeTo ? [spec.routeTo] : []),
+      ])
         expect(`${t}.${c}:${cols.has(c)}`).toBe(`${t}.${c}:true`);
       if (spec.permissionKeyed) expect(cols.has('permissionId')).toBe(true);
     }
