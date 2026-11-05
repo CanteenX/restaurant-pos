@@ -103,17 +103,26 @@ describe('PettyCashService', () => {
         }),
       },
       cashClosing: { findUnique: jest.fn(() => Promise.resolve(null)) },
+      auditLog: { create: jest.fn(() => Promise.resolve({ id: 'al1' })) },
     };
+    // Mirrors a DB transaction: any rejection rolls every write back.
     const prisma = {
-      $transaction: jest.fn((fn: (t: typeof tx) => unknown) => fn(tx)),
+      $transaction: jest.fn(async (fn: (t: typeof tx) => unknown) => {
+        const snap = structuredClone(state);
+        try {
+          return await fn(tx);
+        } catch (e) {
+          Object.assign(state, snap);
+          throw e;
+        }
+      }),
       ...tx,
     };
-    const audit = { record: jest.fn(() => Promise.resolve()) };
     return {
-      svc: new PettyCashService(prisma as never, audit as never),
+      svc: new PettyCashService(prisma as never),
       state,
       tx,
-      audit,
+      audit: tx.auditLog.create,
     };
   }
 
@@ -230,7 +239,7 @@ describe('PettyCashService', () => {
       expect(state.balance).toBe(4000);
       expect(state.expenses[0]).toMatchObject({ status: 'APPROVED' });
       expect(state.expenses[0].decidedById).toBeUndefined();
-      expect(audit.record).not.toHaveBeenCalled();
+      expect(audit).not.toHaveBeenCalled();
     });
 
     it('refuses a payout above the threshold without expenses.approve', async () => {
@@ -241,7 +250,7 @@ describe('PettyCashService', () => {
       expect(state.balance).toBe(5000);
       expect(state.expenses).toHaveLength(0);
       expect(state.entries).toHaveLength(0);
-      expect(audit.record).not.toHaveBeenCalled();
+      expect(audit).not.toHaveBeenCalled();
     });
 
     it('pre-approves it for an approver, with an explicit audit entry', async () => {
@@ -254,27 +263,40 @@ describe('PettyCashService', () => {
         decisionNote: 'Pre-approved petty-cash payout',
       });
       expect(state.expenses[0].decidedAt).toBeInstanceOf(Date);
-      expect(audit.record).toHaveBeenCalledTimes(1);
-      expect(audit.record).toHaveBeenCalledWith({
-        userId: 'u1',
-        action: 'expense.preapproved',
-        entity: 'Expense',
-        entityId: 'exp1',
-        metadata: {
-          via: 'petty_cash.payout',
-          branchId: 'b1',
-          pettyCashEntryId: entry.id,
-          amount: 2500,
-          threshold: 1000,
+      expect(audit).toHaveBeenCalledTimes(1);
+      expect(audit).toHaveBeenCalledWith({
+        data: {
+          userId: 'u1',
+          action: 'expense.preapproved',
+          entity: 'Expense',
+          entityId: 'exp1',
+          metadata: {
+            via: 'petty_cash.payout',
+            branchId: 'b1',
+            pettyCashEntryId: entry.id,
+            amount: 2500,
+            threshold: 1000,
+          },
         },
       });
+    });
+
+    it('commits nothing when the pre-approval audit write fails', async () => {
+      const { svc, state, audit } = setup(5000, 1000);
+      audit.mockRejectedValueOnce(new Error('audit insert failed'));
+      await expect(svc.record('b1', approver, payout(2500))).rejects.toThrow(
+        'audit insert failed',
+      );
+      expect(state.balance).toBe(5000);
+      expect(state.expenses).toHaveLength(0);
+      expect(state.entries).toHaveLength(0);
     });
 
     it('needs no approval when the threshold is off', async () => {
       const { svc, state, audit } = setup(50000, null);
       await svc.record('b1', clerk, payout(40000));
       expect(state.expenses[0]).toMatchObject({ status: 'APPROVED' });
-      expect(audit.record).not.toHaveBeenCalled();
+      expect(audit).not.toHaveBeenCalled();
     });
 
     it('never reads the threshold for a top-up', async () => {

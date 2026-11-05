@@ -5,7 +5,6 @@ import {
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import type { PettyCashEntryDto, PettyCashReconcileDto } from '@nventra/types';
-import { AuditService } from '../../audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { round2 } from './accounting.calc';
 import { assertPayoutAllowed, readApprovalThreshold } from './expense-approval';
@@ -36,10 +35,7 @@ const PRE_APPROVED_NOTE = 'Pre-approved petty-cash payout';
  */
 @Injectable()
 export class PettyCashService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly audit: AuditService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async balance(branchId: string) {
     const f = await this.prisma.pettyCashFloat.findUnique({
@@ -79,7 +75,7 @@ export class PettyCashService {
   }
 
   async record(branchId: string, actor: PettyActor, dto: PettyCashEntryDto) {
-    const { entry, approval } = await this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx) => {
       const fromTill = dto.kind === 'TOP_UP' && dto.fromTill;
       if (fromTill) await this.assertDayOpen(tx, branchId, dto.businessDate);
       // Checked before the float moves; the expense is booked after it.
@@ -106,26 +102,27 @@ export class PettyCashService {
           expenseId: expense?.id,
         },
       });
-      return {
-        entry,
-        approval: expense && check?.preApproved ? { expense, ...check } : null,
-      };
+      // Same transaction: the payout and its pre-approval audit row commit
+      // together or not at all (a failed audit write moves no cash).
+      if (expense && check?.preApproved) {
+        await tx.auditLog.create({
+          data: {
+            userId: actor.id,
+            action: 'expense.preapproved',
+            entity: 'Expense',
+            entityId: expense.id,
+            metadata: {
+              via: 'petty_cash.payout',
+              branchId,
+              pettyCashEntryId: entry.id,
+              amount: round2(dto.amount),
+              threshold: check.threshold,
+            },
+          },
+        });
+      }
+      return entry;
     });
-    if (approval)
-      await this.audit.record({
-        userId: actor.id,
-        action: 'expense.preapproved',
-        entity: 'Expense',
-        entityId: approval.expense.id,
-        metadata: {
-          via: 'petty_cash.payout',
-          branchId,
-          pettyCashEntryId: entry.id,
-          amount: round2(dto.amount),
-          threshold: approval.threshold,
-        },
-      });
-    return entry;
   }
 
   /**
