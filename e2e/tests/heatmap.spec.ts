@@ -1,11 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
+import { demoBranchId } from "./helpers";
 
 // Seeds REAL paid orders through the demo-stack API (dine-in on Tables 7 and 8,
 // which no other spec touches) so the heat maps render the live report data.
 type Id = { id: string; name?: string; branchId?: string };
 
 async function seedPaidOrder(page: Page, tableName: string, qty: number): Promise<void> {
-  const floors = await (await page.request.get("/api/v1/tables/floors")).json();
+  const floors = await (await page.request.get(`/api/v1/tables/floors?branchId=${await demoBranchId(page)}`)).json();
   const tables = (Array.isArray(floors) ? floors : [floors]).flatMap(
     (f: { tables?: Id[] }) => f.tables ?? [],
   ) as Id[];
