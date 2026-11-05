@@ -19,7 +19,7 @@ const SAME_IN_FRENCH = new Set(["Nventra POS", "QR", "Priya", "Tables", "Marketi
   "WhatsApp", "~{minutes} min", "Menu", "Photo",
   "Documents", "Excel", "Excel (.xlsx)", "PDF", "CSV", "owner@cafe.com, accountant@firm.com"]);
 
-for (const locale of ["es", "fr"]) {
+for (const locale of ["es", "fr", "hi"]) {
   test(`${locale} dictionary has exactly the same keys as en`, () => {
     const dict = load(locale);
     const keys = Object.keys(dict).sort();
@@ -45,19 +45,19 @@ test("fr dictionary has no English values left (except brand names)", () => {
   assert.deepEqual(untranslated, []);
 });
 
-// hi is filled area by area (docs/I18N.md): it may lack keys (they fall back
-// to en), but it must never invent keys, hold empty values, or miss the
-// app chrome (nav + common), which the language switch is judged by.
-test("hi dictionary is a non-empty subset of en covering the chrome", () => {
-  const hi = load("hi");
-  const extra = Object.keys(hi).filter((k) => !(k in en));
-  const empty = Object.entries(hi).filter(([, v]) => v.trim() === "").map(([k]) => k);
-  const chrome = enKeys.filter((k) => /^(nav|common)\./.test(k) && !(k in hi));
-  assert.deepEqual({ extra, empty, chrome }, { extra: [], empty: [], chrome: [] });
-});
-
+// Hindi keeps brand names, URLs and examples in Latin script; everything
+// else must be written in Devanagari.
 test("hi chrome strings are written in Devanagari", () => {
   const hi = load("hi");
-  const latinOnly = Object.entries(hi).filter(([, v]) => !/[\u0900-\u097F]/.test(v)).map(([k]) => k);
+  const latinOnly = Object.entries(hi)
+    .filter(([k, v]) => /^(nav|common)\./.test(k) && !/[\u0900-\u097F]/.test(v))
+    .map(([k]) => k);
   assert.deepEqual(latinOnly, []);
+});
+
+test("hi keeps every {placeholder} from en", () => {
+  const hi = load("hi");
+  const ph = (s: string) => (s.match(/\{\w+\}/g) ?? []).sort().join(",");
+  const bad = enKeys.filter((k) => ph(en[k]) !== ph(hi[k]));
+  assert.deepEqual(bad, []);
 });

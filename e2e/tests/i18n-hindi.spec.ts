@@ -42,3 +42,20 @@ test("switching to Hindi changes the chrome, persists, and renders Devanagari", 
   await expect(page.getByRole("combobox", { name: "भाषा" })).toBeVisible();
   await page.screenshot({ path: "test-results/i18n-hindi-dashboard.png" });
 });
+
+// POS, KDS and tables in Hindi: Devanagari renders and nothing overflows the
+// viewport horizontally (truncated or clipped layouts show up as scroll).
+for (const [name, path] of [["pos", "/pos"], ["kds", "/kds"], ["tables", "/tables"]] as const) {
+  test(`${name} screen in Hindi has Devanagari text and no horizontal overflow`, async ({ page }) => {
+    await page.goto("/dashboard");
+    await page.evaluate(() => localStorage.setItem("nodedr-locale", "hi"));
+    await page.goto(path);
+    await expect(page.locator("html")).toHaveAttribute("lang", "hi");
+    await expect(page.getByRole("navigation").first().getByRole("link", { name: /^ऑर्डर/ })).toBeVisible();
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: `test-results/i18n-hindi-${name}.png` });
+  });
+}

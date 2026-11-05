@@ -1,0 +1,5 @@
+# Hindi glossary (Nventra POS)
+
+Terms used in `apps/web/lib/i18n/dictionaries/hi.json`. Keep new strings consistent with these. Native-speaker review is tracked in #55.
+Keep in Latin/loanword: KOT, KDS, GST, UPI, QR, PDF, CSV, Excel, Tally, WhatsApp, POS, PIN, OTP, SMS, API, URL, Nventra POS, units (kg, g, ml), emails/URLs.
+Order=ऑर्डर, Table=टेबल, Menu=मेन्यू, Kitchen=किचन, Customer=ग्राहक, Report=रिपोर्ट, Inventory=इन्वेंटरी, Supplier=आपूर्तिकर्ता, Purchase order=खरीद ऑर्डर, Invoice=इनवॉइस, Bill=बिल, Payment=भुगतान, Cash=नकद, Card=कार्ड, Discount=छूट, Tax=कर, Tip=टिप, Refund=रिफ़ंड, Void=रद्द, Staff=स्टाफ़, Shift=शिफ़्ट, Branch=शाखा, Reservation=आरक्षण, Delivery=डिलीवरी, Loyalty=लॉयल्टी, Coupon=कूपन, Gift card=गिफ़्ट कार्ड, Expense=खर्च, Budget=बजट, Settings=सेटिंग्स, Save=सहेजें, Cancel=रद्द करें, Delete=हटाएं, Edit=संपादित करें, Search=खोजें, Add=जोड़ें, Status=स्थिति, Total=कुल, Amount=राशि, Date=तारीख़, Sign in=साइन इन, Sign out=साइन आउट, Dashboard=डैशबोर्ड, Accounting=लेखा, Item=आइटम, Category=श्रेणी, Stock=स्टॉक, Recipe=रेसिपी, Waste=बर्बादी.
