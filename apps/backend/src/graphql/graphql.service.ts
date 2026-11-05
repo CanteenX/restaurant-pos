@@ -15,7 +15,10 @@ import {
   depthLimitRule,
   validationRules,
 } from './graphql-limits';
-import { rootValue, schema } from './graphql.schema';
+import { BranchAccessService } from '../common/services/branch-access.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { createRootValue } from './graphql-resolvers';
+import { schema } from './graphql.schema';
 
 export type GraphqlResponse = { status: number; body: ExecutionResult };
 
@@ -25,6 +28,11 @@ export class GraphqlService {
   private readonly maxDepth = envLimit('GRAPHQL_MAX_DEPTH', 8);
   private readonly maxCost = envLimit('GRAPHQL_MAX_COST', 1000);
   private readonly maxTokens = envLimit('GRAPHQL_MAX_TOKENS', 5000);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchAccess: BranchAccessService,
+  ) {}
 
   async run(
     req: GraphqlRequest,
@@ -55,7 +63,10 @@ export class GraphqlService {
     const result = await execute({
       schema,
       document,
-      rootValue,
+      rootValue: createRootValue(
+        { prisma: this.prisma, branchAccess: this.branchAccess },
+        ctx,
+      ),
       contextValue: ctx,
       variableValues: variables,
       operationName: req.operationName ?? undefined,

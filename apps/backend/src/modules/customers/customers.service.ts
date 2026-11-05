@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import type {
   CustomerAddressDto,
   CustomerAddressUpdateDto,
@@ -7,6 +8,20 @@ import type {
 import { AuditService } from '../../audit/audit.service';
 import { diffFields } from '../../audit/audit-diff';
 import { PrismaService } from '../../prisma/prisma.service';
+
+/** Name / mobile / email match used by every customer search (REST, GraphQL). */
+export function customerSearchWhere(
+  search?: string | null,
+): Prisma.CustomerWhereInput {
+  if (!search) return {};
+  return {
+    OR: [
+      { name: { contains: search, mode: 'insensitive' } },
+      { phone: { contains: search } },
+      { email: { contains: search, mode: 'insensitive' } },
+    ],
+  };
+}
 
 @Injectable()
 export class CustomersService {
@@ -17,18 +32,7 @@ export class CustomersService {
 
   list(branchId: string, search?: string) {
     return this.prisma.customer.findMany({
-      where: {
-        branchId,
-        ...(search
-          ? {
-              OR: [
-                { name: { contains: search, mode: 'insensitive' } },
-                { phone: { contains: search } },
-                { email: { contains: search, mode: 'insensitive' } },
-              ],
-            }
-          : {}),
-      },
+      where: { branchId, ...customerSearchWhere(search) },
       orderBy: { createdAt: 'desc' },
     });
   }
