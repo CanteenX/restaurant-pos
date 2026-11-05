@@ -10,6 +10,7 @@ import {
   isVarianceColumn,
   type VarianceCell,
 } from "@/lib/price-variance";
+import { useI18n } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -19,6 +20,7 @@ interface Props {
 }
 
 export function PriceVarianceTable({ columns, rows, csvHref }: Props) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [threshold, setThreshold] = useState(DEFAULT_VARIANCE_THRESHOLD);
   const [onlyHigh, setOnlyHigh] = useState(false);
@@ -29,18 +31,18 @@ export function PriceVarianceTable({ columns, rows, csvHref }: Props) {
       <div className="flex flex-wrap items-center gap-3 print:hidden">
         <Input
           className="w-56"
-          placeholder="Filter ingredient or supplier"
-          aria-label="Filter ingredient or supplier"
+          placeholder={t("reports.variance.filter")}
+          aria-label={t("reports.variance.filter")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
         <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          Highlight at ±
+          {t("reports.variance.highlight")}
           <Input
             type="number"
             min={0}
             className="w-20"
-            aria-label="Variance threshold percent"
+            aria-label={t("reports.variance.threshold")}
             value={threshold}
             onChange={(e) => setThreshold(Math.max(0, Number(e.target.value) || 0))}
           />
@@ -48,7 +50,7 @@ export function PriceVarianceTable({ columns, rows, csvHref }: Props) {
         </label>
         <label className="flex items-center gap-2 text-sm text-muted-foreground">
           <input type="checkbox" checked={onlyHigh} onChange={(e) => setOnlyHigh(e.target.checked)} />
-          Only high variance
+          {t("reports.variance.onlyHigh")}
         </label>
         {csvHref && (
           <a
@@ -56,12 +58,12 @@ export function PriceVarianceTable({ columns, rows, csvHref }: Props) {
             data-testid="price-variance-csv"
             className="inline-flex h-8 items-center rounded-lg border border-border px-3 text-sm hover:bg-secondary"
           >
-            <Download className="mr-2 h-4 w-4" /> CSV
+            <Download className="mr-2 h-4 w-4" /> {t("reports.variance.csv")}
           </a>
         )}
       </div>
       {shown.length === 0 ? (
-        <p className="py-6 text-center text-sm text-muted-foreground">No rows match the filter.</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">{t("reports.variance.none")}</p>
       ) : (
         <table className="w-full text-sm">
           <thead className="text-left text-xs text-muted-foreground">

@@ -126,6 +126,11 @@ test("audit ignores code fragments between tags", () => {
   assert.deepEqual(findHardcodedStrings(src), []);
 });
 
+test("audit ignores the glue of a JSX ternary", () => {
+  const src = `{a ? <Skeleton />\n) : error ? (\n<p>Real copy</p>) : null}`;
+  assert.deepEqual(findHardcodedStrings(src).map((h) => h.text), ["Real copy"]);
+});
+
 test("audit groups files into areas", () => {
   assert.equal(areaOf("app/(dashboard)/inventory/waste/page.tsx"), "inventory");
   assert.equal(areaOf("components/inventory/create-po-dialog.tsx"), "inventory");

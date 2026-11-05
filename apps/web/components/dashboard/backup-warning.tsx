@@ -5,15 +5,17 @@ import Link from "next/link";
 import { hasPermission, useCurrentUser } from "@/hooks/use-auth";
 import { useBackups, useLocalBackupStatus } from "@/hooks/use-backups";
 import { backupWarning } from "@/lib/backup-status";
+import { useI18n, type TranslationKey } from "@/lib/i18n/context";
 
 const MESSAGES = {
-  none: "No good backup yet. Set up backups so your data is safe.",
-  stale: "Your last good backup is more than 48 hours old.",
-  failed: "The latest backup failed.",
-} as const;
+  none: "dashboard.backup.none",
+  stale: "dashboard.backup.stale",
+  failed: "dashboard.backup.failed",
+} as const satisfies Record<string, TranslationKey>;
 
 /** Owner-only banner: shown when backups are stale, missing or failing. */
 export function BackupWarning() {
+  const { t, formatDate } = useI18n();
   const { data: me } = useCurrentUser();
   const can = hasPermission(me?.user, "backup.manage");
   const { data: backups, isLoading: l1 } = useBackups(can);
@@ -38,15 +40,15 @@ export function BackupWarning() {
     >
       <DatabaseBackup className="h-5 w-5 shrink-0 text-warning" aria-hidden />
       <div className="min-w-0 flex-1">
-        <p className="font-medium text-foreground">{MESSAGES[warning.kind]}</p>
+        <p className="font-medium text-foreground">{t(MESSAGES[warning.kind])}</p>
         <p className="text-muted-foreground">
           {warning.lastGoodAt
-            ? `Last good backup: ${new Date(warning.lastGoodAt).toLocaleString()}`
-            : "No successful backup recorded."}
+            ? t("dashboard.backup.lastGood", { when: formatDate(warning.lastGoodAt, { dateStyle: "medium", timeStyle: "short" }) })
+            : t("dashboard.backup.never")}
         </p>
       </div>
       <Link href="/settings/backup" className="font-medium text-primary underline-offset-2 hover:underline">
-        Open backup settings
+        {t("dashboard.backup.open")}
       </Link>
     </div>
   );
