@@ -367,6 +367,51 @@ describe('Sync apply at HQ (e2e)', () => {
       expect([r.body.applied, r.body.conflicts]).toEqual([1, []]);
       expect((await orderRow(mine.id))?.notes).toBe('synced');
     });
+
+  it('yields when the derived recompute meets a locked parent row', async () => {
+    // A till's plain UPDATE of the customer holds FOR NO KEY UPDATE: the
+    // ledger insert (FK, FOR KEY SHARE) passes, the walletBalance recompute
+    // after it waits and must yield instead of failing the push (#209 audit).
+    const c = { id: uid('cus'), branchId: b1, name: 'Busy Guest' };
+    await push(p1, [ch('customers', c, p1)]).expect(200);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => (locked = r));
+    const local = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRawUnsafe(
+          `SELECT 1 FROM customers WHERE id = $1 FOR NO KEY UPDATE`,
+          c.id,
+        );
+        locked();
+        await gate;
+      },
+      { timeout: 30_000 },
+    );
+    await isLocked;
+    setTimeout(release, 1_200);
+    const r = await push(p1, [
+      ch(
+        'customer_wallet_entries',
+        {
+          id: uid('wal'),
+          branchId: b1,
+          customerId: c.id,
+          delta: '25.00',
+          reason: 'REFUND_CREDIT',
+          idempotencyKey: uid('k'),
+        },
+        p1,
+      ),
+    ]).expect(200);
+    await local;
+    expect([r.body.applied, r.body.conflicts]).toEqual([1, []]);
+    const row = await prisma.customer.findUniqueOrThrow({
+      where: { id: c.id },
+    });
+    expect(row.walletBalance.toString()).toBe('25');
+  });
   });
 
   // ---- duplicate and out-of-order changes converge -------------------------
@@ -501,6 +546,39 @@ describe('Sync apply at HQ (e2e)', () => {
         where: { id: card.id },
       });
       expect(gc.balance.toString()).toBe('70');
+    });
+
+    it('recomputes a petty-cash float from its signed entries', async () => {
+      const float = {
+        branchId: b1,
+        balance: '999.00',
+        updatedAt: new Date().toISOString(),
+      };
+      const entry = (kind: string, amount: string) => ({
+        id: uid('pce'),
+        branchId: b1,
+        businessDate: '2026-11-05',
+        kind,
+        amount,
+        balanceAfter: '0.00',
+        reason: 'synced',
+        createdById: ownerId,
+      });
+      const fk = JSON.stringify({ branchId: b1 }).replace(':', ': ');
+      const r = await push(p1, [
+        ch('petty_cash_floats', float as unknown as Row, p1, {
+          pk: { branchId: b1 },
+          pkKey: fk,
+        }),
+        ch('petty_cash_entries', entry('TOP_UP', '500.00'), p1),
+        ch('petty_cash_entries', entry('PAYOUT', '-120.50'), p1),
+        ch('petty_cash_entries', entry('ADJUST', '0.25'), p1),
+      ]).expect(200);
+      expect(r.body.conflicts).toEqual([]);
+      const f = await prisma.pettyCashFloat.findUniqueOrThrow({
+        where: { branchId: b1 },
+      });
+      expect(f.balance.toString()).toBe('379.75');
     });
 
     it('store credit is booked in the ledger with a rounded set, once per key', async () => {

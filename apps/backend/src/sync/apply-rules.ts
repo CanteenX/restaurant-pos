@@ -118,7 +118,8 @@ export function derivedTargets(
     if (c.op !== 'U' || !c.row) continue;
     for (const d of DERIVED) {
       const ids = out.get(`${d.table}.${d.column}`)!;
-      if (c.tbl === d.table && typeof c.row.id === 'string') ids.add(c.row.id);
+      const key = c.row[d.key];
+      if (c.tbl === d.table && typeof key === 'string') ids.add(key);
       const fk = c.row[d.fk];
       if (c.tbl === d.ledger && typeof fk === 'string') ids.add(fk);
     }

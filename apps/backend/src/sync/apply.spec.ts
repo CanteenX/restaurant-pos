@@ -250,6 +250,18 @@ describe('derived balances (rule 5)', () => {
     expect([...t.get('customers.walletBalance')!].sort()).toEqual(['c1', 'c2']);
     expect([...t.get('gift_cards.balance')!].sort()).toEqual(['g1', 'g2']);
   });
+
+  it('keys petty-cash floats by branchId, their primary key', () => {
+    const t = derivedTargets([
+      ch('petty_cash_entries', { id: 'e1', branchId: 'b1' }),
+      ch('petty_cash_floats', { branchId: 'b2', balance: '9.00' }),
+    ]);
+    expect([...t.get('petty_cash_floats.balance')!].sort()).toEqual([
+      'b1',
+      'b2',
+    ]);
+  });
+
 });
 
 describe('order reconciliation at HQ (rule 7 audit)', () => {

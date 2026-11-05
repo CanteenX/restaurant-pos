@@ -202,8 +202,15 @@ export class SyncApplier {
             else r.conflicts.push(conflictOf(c, e));
           }
         }
-        await this.recomputeDerived(tx, done);
-        if (opts.receiver === 'hq') await this.checkOrders(tx, done, opts);
+        // These lock parent rows too (#209 audit): a till holding one must
+        // make the slice yield, not fail the whole push or pull.
+        try {
+          await this.recomputeDerived(tx, done);
+          if (opts.receiver === 'hq') await this.checkOrders(tx, done, opts);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          throw isContended(msg) ? new Contended(msg) : e;
+        }
         return r;
       },
       { timeout: 120_000, maxWait: 30_000 },
@@ -444,9 +451,10 @@ export class SyncApplier {
         const [v] = await tx.$queryRawUnsafe<
           { hlc: string; peer: string; ts: Date }[]
         >(
-          `SELECT hlc::text, peer, ts FROM sync_versions WHERE tbl = $1 AND "pkKey" = jsonb_build_object('id', $2::text)::text`,
+          `SELECT hlc::text, peer, ts FROM sync_versions WHERE tbl = $1 AND "pkKey" = jsonb_build_object($3::text, $2::text)::text`,
           d.table,
           id,
+          d.key,
         );
         await tx.$queryRawUnsafe(
           `SELECT set_config('app.sync_origin', '__skip', true), set_config('app.sync_hlc', $1, true),
@@ -457,7 +465,7 @@ export class SyncApplier {
         );
         await tx.$executeRawUnsafe(
           `UPDATE ${q(d.table)} t SET ${q(d.column)} = ${d.expr}
-            WHERE t.id = $1 AND t.${q(d.column)} IS DISTINCT FROM ${d.expr}`,
+            WHERE t.${q(d.key)} = $1 AND t.${q(d.column)} IS DISTINCT FROM ${d.expr}`,
           id,
         );
       }
