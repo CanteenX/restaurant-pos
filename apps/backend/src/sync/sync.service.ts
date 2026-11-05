@@ -7,7 +7,7 @@ import {
 import { hostname } from 'os';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApplyContext, ApplyResult, SyncApplier } from './apply';
-import { backoffMs, keyForServer, pullScope } from './apply-rules';
+import { backoffMs, fitPushPage, keyForServer, pullScope } from './apply-rules';
 import { captureSql } from './capture-sql';
 import {
   clockSkewError,
@@ -17,6 +17,7 @@ import {
   SyncChange,
 } from './outbox';
 import { SyncPeersService } from './peers.service';
+import { RejectedReplay } from './rejected';
 
 export type { SyncChange } from './outbox';
 export type { ApplyResult } from './apply';
@@ -50,14 +51,19 @@ class SyncPaused extends Error {
   }
 }
 
-/** Rejections a later cycle may get past: the parent row arrives afterwards. */
-const PARKED = /violates foreign key|23503|waiting for parent row/;
-const RETRY_PAGE = 200;
 const PULL_PAGE = 500;
 const PUSH_PAGE = 200;
+/** Below HQ's default 100 kB body limit (BODY_LIMIT), with headroom. */
+const PUSH_MAX_BYTES = 64_000;
 const TICK_MS = 30_000;
 const MAX_CONFLICTS_KEPT = 50;
 const SCOPE = pullScope();
+const withoutRestore = (c: ApplyResult['conflicts'][number]) => ({
+  seq: c.seq,
+  tbl: c.tbl,
+  pk: c.pk,
+  error: c.error,
+});
 
 /**
  * Two-way sync between branch installs (clients) and HQ (the server),
@@ -73,6 +79,7 @@ const SCOPE = pullScope();
 export class SyncService implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger(SyncService.name);
   private readonly applier: SyncApplier;
+  private readonly replay: RejectedReplay;
   private timer: NodeJS.Timeout | null = null;
   private running: Promise<unknown> | null = null;
   private retryAllNext = false;
@@ -82,6 +89,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     private readonly peers: SyncPeersService,
   ) {
     this.applier = new SyncApplier(prisma, () => this.schemaVersion());
+    this.replay = new RejectedReplay(prisma, this.applier);
   }
 
   async onModuleInit() {
@@ -649,6 +657,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         tieWins: true,
         receiver: 'branch',
         branches: conn.branchIds ?? [],
+        localPeer: conn.deviceId,
       });
       pulled += r.applied;
       conflictList.push(...r.conflicts);
@@ -674,14 +683,21 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         PUSH_PAGE,
       );
       if (!rows.length) break;
-      const changes = compact(rows.map(toWire));
+      // As many rows as fit HQ's body limit; the rest go in the next page.
+      const wire = rows.map(toWire);
+      const fit = fitPushPage(wire, PUSH_MAX_BYTES);
+      const changes = compact(wire.slice(0, fit));
       const r = await this.call<ApplyResult>(link, 'push', {
         method: 'POST',
         body: JSON.stringify({ changes }),
       });
       pushed += r.applied;
-      conflictList.push(...r.conflicts);
-      pushedTo = BigInt(rows[rows.length - 1].seq);
+      conflictList.push(...r.conflicts.map(withoutRestore));
+      pushedTo = BigInt(rows[fit - 1].seq);
+      await this.replay.applyRestores(r.conflicts, {
+        branches: conn.branchIds ?? [],
+        localPeer: conn.deviceId,
+      });
       // Acknowledged by the server: keep what it rejected, then advance the
       // cursor and drop the page together, so a crash replays at most this
       // page (idempotent).
@@ -696,14 +712,22 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
           pushedTo,
         ),
       ]);
-      if (rows.length < PUSH_PAGE) break;
+      if (rows.length < PUSH_PAGE && fit === rows.length) break;
     }
     // Re-tried rejections are already kept: not counted as new conflicts.
-    const retried = await this.retryRejected(
-      link,
-      conn.branchIds ?? [],
+    const all = this.retryAllNext;
+    this.retryAllNext = false;
+    const retried = await this.replay.retry({
+      all,
       keptBefore,
-    );
+      branches: conn.branchIds ?? [],
+      localPeer: conn.deviceId,
+      push: (changes) =>
+        this.call<ApplyResult>(link, 'push', {
+          method: 'POST',
+          body: JSON.stringify({ changes }),
+        }),
+    });
     return {
       pulled: pulled + retried.pulled,
       pushed: pushed + retried.pushed,
@@ -716,73 +740,5 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   retryAllRejected() {
     this.retryAllNext = true;
     return this.runOnce();
-  }
-
-  /**
-   * Re-tries kept rejections (sync_rejected): every cycle the parked ones
-   * (a parent row that had not arrived yet, e.g. a child pulled a page
-   * before its parent's newest entry), or all of them when asked. Replay is
-   * safe because apply is last-writer-wins: a change that has meanwhile been
-   * superseded is skipped. Resolved rows are removed; the rest keep their
-   * latest error.
-   */
-  private async retryRejected(
-    link: {
-      serverUrl: string | null;
-      apiKey: null;
-      peer: { id: string; key: string };
-    },
-    branches: string[],
-    keptBefore: bigint,
-  ) {
-    const all = this.retryAllNext;
-    this.retryAllNext = false;
-    const rows = await this.prisma.$queryRawUnsafe<
-      { id: bigint; side: string; change: SyncChange; error: string }[]
-    >(
-      `SELECT id, side, change, error FROM sync_rejected
-        WHERE change IS NOT NULL AND id <= $1 ORDER BY id LIMIT ${RETRY_PAGE}`,
-      keptBefore,
-    );
-    const out = { pulled: 0, pushed: 0 };
-    for (const side of ['pull', 'push'] as const) {
-      const batch = rows.filter(
-        (r) => r.side === side && (all || PARKED.test(r.error)),
-      );
-      if (!batch.length) continue;
-      const changes = batch.map((r) => r.change);
-      const res =
-        side === 'pull'
-          ? await this.applier.apply(changes, {
-              origin: '__skip',
-              tieWins: true,
-              receiver: 'branch',
-              branches,
-            })
-          : await this.call<ApplyResult>(link, 'push', {
-              method: 'POST',
-              body: JSON.stringify({ changes }),
-            });
-      if (side === 'pull') out.pulled += res.applied;
-      else out.pushed += res.applied;
-      const failed = new Map(
-        res.conflicts.map((c) => [`${c.tbl}\u0000${c.pk}`, c.error]),
-      );
-      for (const r of batch) {
-        const err = failed.get(`${r.change.tbl}\u0000${r.change.pkKey}`);
-        if (err === undefined)
-          await this.prisma.$executeRawUnsafe(
-            `DELETE FROM sync_rejected WHERE id = $1`,
-            r.id,
-          );
-        else
-          await this.prisma.$executeRawUnsafe(
-            `UPDATE sync_rejected SET error = $2 WHERE id = $1`,
-            r.id,
-            err,
-          );
-      }
-    }
-    return out;
   }
 }

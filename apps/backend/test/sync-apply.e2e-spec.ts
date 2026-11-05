@@ -281,6 +281,12 @@ describe('Sync apply at HQ (e2e)', () => {
       expect(r.body.conflicts.map((c: { error: string }) => c.error)).toEqual([
         'not-owner: menu_items is HQ-owned',
       ]);
+      // HQ answers with its own copy so the branch can put the row back (#83).
+      const restore = r.body.conflicts[0].restore;
+      expect(restore).toMatchObject({ tbl: 'menu_items', op: 'U' });
+      expect(String(restore.row.price)).toBe(
+        String(Number(before.price.toString())),
+      );
       const after = await prisma.menuItem.findUniqueOrThrow({
         where: { id: menuItemId },
       });

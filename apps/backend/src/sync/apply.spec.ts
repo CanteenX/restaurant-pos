@@ -1,6 +1,8 @@
 import {
   backoffMs,
   columnsToWrite,
+  fitPushPage,
+  ownerWinsOver,
   derivedTargets,
   isContended,
   keyForServer,
@@ -401,6 +403,52 @@ describe('lock contention (#82 review)', () => {
     ]);
     expect(yieldDelayMs(0, () => 0)).toBe(75);
     expect(yieldDelayMs(0, () => 1)).toBe(125);
+});
+});
+
+describe('owner wins over local edits of rows this install does not own (#83)', () => {
+  it("a branch ignores its own versions of HQ-owned rows, so HQ's value stands", () => {
+    expect(ownerWinsOver('branch', syncTable('menu_items'), 'dev-1')).toBe(
+      'dev-1',
+    );
+  });
+
+  it('owned rows and HQ itself keep plain last-writer-wins', () => {
+    expect(ownerWinsOver('branch', syncTable('orders'), 'dev-1')).toBeNull();
+    expect(ownerWinsOver('hq', syncTable('menu_items'), 'dev-1')).toBeNull();
+    expect(ownerWinsOver('branch', undefined, 'dev-1')).toBeNull();
+    expect(
+      ownerWinsOver('branch', syncTable('menu_items'), undefined),
+    ).toBeNull();
+  });
+});
+
+describe('push page size (#83: HQ refused 200 rows with HTTP 413)', () => {
+  const change = (n: number): SyncChange => ({
+    tbl: 'customers',
+    pk: { id: `c${n}` },
+    pkKey: `{"id": "c${n}"}`,
+    op: 'U',
+    row: { id: `c${n}`, name: 'x'.repeat(400) },
+    ts: '',
+    hlc: String(n),
+    peer: 'p',
+  });
+
+  it('sends as many outbox rows as fit the byte budget, at least one', () => {
+    const rows = Array.from({ length: 200 }, (_, i) => change(i));
+    const n = fitPushPage(rows, 20_000);
+    expect(n).toBeGreaterThan(0);
+    expect(n).toBeLessThan(200);
+    expect(
+      JSON.stringify({ changes: rows.slice(0, n) }).length,
+    ).toBeLessThanOrEqual(20_000);
+    expect(
+      JSON.stringify({ changes: rows.slice(0, n + 1) }).length,
+    ).toBeGreaterThan(20_000);
+    expect(fitPushPage(rows.slice(0, 3), 100_000)).toBe(3);
+    expect(fitPushPage([change(1)], 10)).toBe(1);
+    expect(fitPushPage([], 10)).toBe(0);
   });
 });
 

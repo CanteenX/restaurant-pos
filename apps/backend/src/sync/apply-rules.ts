@@ -253,3 +253,33 @@ export function yieldDelayMs(attempt: number, rand = Math.random): number {
   const base = 100 * 2 ** Math.min(attempt, 4);
   return Math.round(base * (0.75 + rand() / 2));
 }
+
+/**
+ * Rows this install does not own are the owner's to decide (#83). A branch
+ * that edited an HQ-owned row anyway has its own version on top; HQ's next
+ * value (or the restore HQ sends back when it rejects that edit) must still
+ * apply, so the receiver's own versions of such rows are ignored by LWW.
+ * Returns the peer id whose versions to ignore, or null for plain LWW.
+ */
+export function ownerWinsOver(
+  receiver: 'hq' | 'branch',
+  table: SyncTable | undefined,
+  localPeer: string | undefined,
+): string | null {
+  if (receiver !== 'branch' || !table || !localPeer) return null;
+  return table.owner === 'hq' ? localPeer : null;
+}
+
+/**
+ * How many changes (in order) fit one push body of at most `maxBytes` as
+ * JSON, at least one. HQ's body limit (BODY_LIMIT, 100 kB by default) would
+ * otherwise refuse a page of large rows with HTTP 413 on every cycle (#83).
+ */
+export function fitPushPage(changes: SyncChange[], maxBytes: number): number {
+  let size = '{"changes":[]}'.length;
+  for (let i = 0; i < changes.length; i++) {
+    size += JSON.stringify(changes[i]).length + (i ? 1 : 0);
+    if (size > maxBytes) return Math.max(i, 1);
+  }
+  return changes.length;
+}
