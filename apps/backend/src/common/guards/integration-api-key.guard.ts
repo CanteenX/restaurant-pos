@@ -45,17 +45,7 @@ export class IntegrationApiKeyGuard implements CanActivate {
       );
     }
 
-    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
-    const key = await this.prisma.integrationApiKey.findUnique({
-      where: { tokenHash },
-    });
-    if (
-      !key ||
-      key.revokedAt ||
-      (key.expiresAt && key.expiresAt.getTime() <= Date.now())
-    ) {
-      throw new UnauthorizedException('Invalid, expired or revoked API key');
-    }
+    const key = await findActiveIntegrationKey(this.prisma, rawToken);
 
     const required = this.reflector.getAllAndOverride<string[]>(
       INTEGRATION_SCOPES_KEY,
@@ -92,12 +82,38 @@ export class IntegrationApiKeyGuard implements CanActivate {
       branchId: key.branchId,
       scopes: key.scopes,
     };
-
-    // Best-effort — must never block an already-authenticated request.
-    this.prisma.integrationApiKey
-      .update({ where: { id: key.id }, data: { lastUsedAt: new Date() } })
-      .catch(() => undefined);
+    touchIntegrationKey(this.prisma, key.id);
 
     return true;
   }
+}
+
+/**
+ * Looks up a raw integration key and throws 401 unless it exists and is
+ * neither revoked nor expired. Shared by the REST and GraphQL guards so both
+ * accept exactly the same credentials.
+ */
+export async function findActiveIntegrationKey(
+  prisma: PrismaService,
+  rawToken: string,
+) {
+  const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+  const key = await prisma.integrationApiKey.findUnique({
+    where: { tokenHash },
+  });
+  if (
+    !key ||
+    key.revokedAt ||
+    (key.expiresAt && key.expiresAt.getTime() <= Date.now())
+  ) {
+    throw new UnauthorizedException('Invalid, expired or revoked API key');
+  }
+  return key;
+}
+
+/** Best-effort lastUsedAt — must never block an authenticated request. */
+export function touchIntegrationKey(prisma: PrismaService, id: string) {
+  prisma.integrationApiKey
+    .update({ where: { id }, data: { lastUsedAt: new Date() } })
+    .catch(() => undefined);
 }

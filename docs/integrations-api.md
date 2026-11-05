@@ -352,6 +352,13 @@ website can show the price before the guest orders:
 - `scheduledFor` — ISO time at least 10 minutes ahead. The kitchen ticket is
   released about 25 minutes before it (click & collect / pre-orders).
 
+## GraphQL
+
+The same integration API keys (and staff sessions) also work against a
+GraphQL endpoint at `/api/v1/graphql` — see [graphql-api.md](graphql-api.md).
+
+---
+
 ## 3. Webhooks (events pushed to your system)
 
 Add one under **Settings > Webhooks**. Each request is a `POST` with a JSON
