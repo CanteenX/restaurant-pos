@@ -308,9 +308,15 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  /** A branch's page, applied with its ownership (rule 1). */
+  /**
+   * A branch's page, applied with its ownership (rule 1). A branch pushes
+   * only what it wrote (pulled rows skip its outbox), so the authoring peer
+   * is always the authenticated one: never the wire's claim (LWW ties and
+   * echo filtering use it).
+   */
   push(peer: PeerIdentity, changes: SyncChange[]) {
-    return this.applier.apply(changes, {
+    const own = changes.map((c) => ({ ...c, peer: peer.id }));
+    return this.applier.apply(own, {
       origin: peer.id,
       tieWins: false,
       receiver: 'hq',
@@ -417,6 +423,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     apiKey: string,
     deviceId: string,
     branchIds: string[],
+    currentKey?: string | null,
   ) {
     return this.call<{ id: string; key: string; branchIds: string[] }>(
       { serverUrl, apiKey },
@@ -427,6 +434,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
           id: deviceId,
           name: hostname().slice(0, 80) || deviceId,
           branchIds,
+          ...(currentKey ? { currentKey } : {}),
         }),
       },
     );
@@ -460,6 +468,8 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       apiKey,
       s.deviceId,
       await this.localBranchIds(mode, branchIds),
+      // Already registered there (re-enabling): prove it with its key.
+      s.peerKey,
     );
     const meta = await this.syncedTables();
     await this.prisma.$transaction(

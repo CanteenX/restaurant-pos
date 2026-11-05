@@ -205,3 +205,19 @@ export function pullScope(tables = SYNC_TABLES) {
       .map((t) => ({ tbl: t, col: tables[t].routeTo! })),
   };
 }
+
+/**
+ * A lock wait the applier should yield on instead of reporting: a deadlock
+ * (40P01), its own lock_timeout (55P03) or a serialization failure (40001).
+ */
+export function isContended(message: string): boolean {
+  return /deadlock detected|40P01|lock timeout|55P03|could not serialize|40001/.test(
+    message,
+  );
+}
+
+/** Backoff before re-trying a contended slice: 100 ms doubling, jittered. */
+export function yieldDelayMs(attempt: number, rand = Math.random): number {
+  const base = 100 * 2 ** Math.min(attempt, 4);
+  return Math.round(base * (0.75 + rand() / 2));
+}

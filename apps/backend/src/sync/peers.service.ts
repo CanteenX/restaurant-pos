@@ -18,6 +18,12 @@ export interface SyncPeerRecord {
 }
 
 const hash = (key: string) => createHash('sha256').update(key).digest('hex');
+/** Constant-time check of a key against its stored SHA-256 hash. */
+const sameHash = (key: string, keyHash: string) => {
+  const a = Buffer.from(hash(key), 'hex');
+  const b = Buffer.from(keyHash, 'hex');
+  return a.length === b.length && timingSafeEqual(a, b);
+};
 
 /**
  * HQ's registry of branch installs (§4.1, G12, G13). A branch registers once
@@ -37,6 +43,15 @@ export class SyncPeersService {
     if (existing?.revokedAt)
       throw new ConflictException(
         'This install was revoked at HQ. Ask HQ to remove the revocation, or sync from a new install.',
+      );
+    // The bootstrap key alone can't take over an active install: device ids
+    // travel on every change, so re-registering one needs its current key.
+    if (
+      existing &&
+      !(dto.currentKey && sameHash(dto.currentKey, existing.keyHash))
+    )
+      throw new ConflictException(
+        'This install is already registered at HQ. Connect from the install that holds its key, or ask HQ to revoke it (Settings > Sync) and connect from a new install.',
       );
     const branches = await this.prisma.branch.findMany({
       select: { id: true, name: true },
@@ -79,10 +94,7 @@ export class SyncPeersService {
   async authenticate(id: string, key: string): Promise<SyncPeerRecord | null> {
     if (!id || !key) return null;
     const p = await this.prisma.syncPeer.findUnique({ where: { id } });
-    if (!p || p.revokedAt) return null;
-    const a = Buffer.from(hash(key), 'hex');
-    const b = Buffer.from(p.keyHash, 'hex');
-    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+    if (!p || p.revokedAt || !sameHash(key, p.keyHash)) return null;
     await this.prisma.syncPeer.update({
       where: { id },
       data: { lastSeenAt: new Date() },

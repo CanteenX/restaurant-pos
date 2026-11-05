@@ -345,8 +345,14 @@ the table list if answered differently:
   match pk`), so LWW and tombstones always key the row the DML writes. It
   then takes a transaction advisory lock on (`sync_row`, table + key), held
   until commit, so two concurrent pushes of one row are serialised and the
-  older HLC is skipped instead of overwriting the newer one. A deadlock
-  between two such pushes is retried in the next pass.
+  older HLC is skipped instead of overwriting the newer one.
+- **Apply yields to the till** (#82 review): a slice of up to 200 changes
+  is one transaction that locks many rows in arbitrary order while the POS
+  keeps writing, so a deadlock with a local write is possible. Each slice
+  sets `lock_timeout = 500ms`; on that timeout, a deadlock (40P01) or a
+  serialization failure the whole slice rolls back, freeing every row it
+  locked, and is re-tried up to 5 times with jittered backoff (100 ms
+  doubling), then in a later pass. The applier, not the cashier, backs off.
 - **An apply never beats an open local write**: local POS writes don't take
   that advisory lock, so apply also locks the target row (`FOR UPDATE`)
   before the LWW check. A local edit still open on the row commits first,
@@ -407,8 +413,12 @@ the table list if answered differently:
   from the peer record, never from the request. One install per branch
   (§4.5): a branch already held by an active peer is refused. A peer is
   revoked on its own (`POST /v1/sync/peers/:id/revoke`, `settings.manage`);
-  a revoked id can't re-register. After registering, the client drops the
-  bootstrap key, so a lost branch PC only holds its revocable key.
+  a revoked id can't re-register, and an *active* id re-registers only with
+  its current key (`currentKey`, sent when an install re-enables sync):
+  device ids are not secret, so the bootstrap key alone can't take over a
+  branch. After registering, the client drops the bootstrap key, so a lost
+  branch PC only holds its revocable key. HQ stamps every pushed change's
+  `peer` with the authenticated peer id, never the wire's claim.
 - **Ownership (rule 1, G1)**: `apply-rules.ts ownership()` runs before any
   write, on facts read on the receiver: the incoming row's branch through
   *its* parent rows (`sync_branch_of` on this install, not the sender's

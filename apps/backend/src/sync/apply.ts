@@ -3,9 +3,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   columnsToWrite,
   derivedTargets,
+  isContended,
   orderProblems,
   ownership,
   schemaSkew,
+  yieldDelayMs,
 } from './apply-rules';
 import { DERIVED } from './derived';
 import {
@@ -48,10 +50,22 @@ type Opts = ApplyContext & {
 };
 
 const PAGE = 200;
+/** Longest the applier waits for a row a local writer holds (lock_timeout). */
+const LOCK_WAIT = '500ms';
+/** Tries per slice before its changes wait for a later pass. */
+const SLICE_TRIES = 5;
+
+interface SliceResult extends ApplyResult {
+  retry: SyncChange[];
+}
+
+/** A lock wait the applier gave up on: the whole slice is rolled back. */
+class Contended extends Error {}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const MAX_PASSES = 6;
-/** Errors a later pass may get past: a parent row still to come, a deadlock. */
-const RETRYABLE =
-  /violates foreign key|23503|deadlock detected|40P01|waiting for parent row/;
+/** Errors a later pass may get past: a parent row still to come. */
+const RETRYABLE = /violates foreign key|23503|waiting for parent row/;
 
 /**
  * Applies changes from a peer: last-writer-wins per row by HLC against
@@ -108,34 +122,92 @@ export class SyncApplier {
       );
       for (let i = 0; i < ordered.length; i += PAGE) {
         const slice = ordered.slice(i, i + PAGE);
-        await this.prisma.$transaction(
-          async (tx) => {
-            const done: SyncChange[] = [];
-            for (const c of slice) {
-              await tx.$executeRawUnsafe('SAVEPOINT sp');
-              try {
-                const did = await this.applyOne(tx, c, meta, opts);
-                if (did) {
-                  result.applied++;
-                  done.push(c);
-                } else result.skipped++;
-                await tx.$executeRawUnsafe('RELEASE SAVEPOINT sp');
-              } catch (e) {
-                await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT sp');
-                const msg = e instanceof Error ? e.message : String(e);
-                if (RETRYABLE.test(msg) && pass < MAX_PASSES - 1) retry.push(c);
-                else result.conflicts.push(conflictOf(c, e));
-              }
-            }
-            await this.recomputeDerived(tx, done);
-            if (ctx.receiver === 'hq') await this.checkOrders(tx, done, ctx);
-          },
-          { timeout: 120_000, maxWait: 30_000 },
-        );
+        const r = await this.applySliceYielding(slice, meta, opts, pass);
+        result.applied += r.applied;
+        result.skipped += r.skipped;
+        result.conflicts.push(...r.conflicts);
+        retry.push(...r.retry);
       }
       pending = retry;
     }
     return result;
+  }
+
+  /**
+   * One slice in one transaction. The applier never makes the till wait
+   * (#82 review): it gives up on a lock after LOCK_WAIT, and on that or a
+   * deadlock the whole slice rolls back (freeing every row it had locked)
+   * and is tried again after a short backoff. Postgres would otherwise pick
+   * either side of a deadlock, often the POS write.
+   */
+  private async applySliceYielding(
+    slice: SyncChange[],
+    meta: Map<string, TableMeta>,
+    opts: Opts,
+    pass: number,
+  ): Promise<SliceResult> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.applySlice(slice, meta, opts, pass);
+      } catch (e) {
+        if (!(e instanceof Contended)) throw e;
+        if (attempt + 1 < SLICE_TRIES) {
+          await sleep(yieldDelayMs(attempt));
+          continue;
+        }
+        // Still contended: a later pass, or a retryable conflict.
+        if (pass < MAX_PASSES - 1)
+          return { applied: 0, skipped: 0, conflicts: [], retry: slice };
+        return {
+          applied: 0,
+          skipped: 0,
+          conflicts: slice.map((c) => conflictOf(c, e)),
+          retry: [],
+        };
+      }
+    }
+  }
+
+  private applySlice(
+    slice: SyncChange[],
+    meta: Map<string, TableMeta>,
+    opts: Opts,
+    pass: number,
+  ): Promise<SliceResult> {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const r: SliceResult = {
+          applied: 0,
+          skipped: 0,
+          conflicts: [],
+          retry: [],
+        };
+        await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_WAIT}'`);
+        const done: SyncChange[] = [];
+        for (const c of slice) {
+          await tx.$executeRawUnsafe('SAVEPOINT sp');
+          try {
+            const did = await this.applyOne(tx, c, meta, opts);
+            if (did) {
+              r.applied++;
+              done.push(c);
+            } else r.skipped++;
+            await tx.$executeRawUnsafe('RELEASE SAVEPOINT sp');
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            // Rolling back to the savepoint keeps the slice's other locks.
+            if (isContended(msg)) throw new Contended(msg);
+            await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT sp');
+            if (RETRYABLE.test(msg) && pass < MAX_PASSES - 1) r.retry.push(c);
+            else r.conflicts.push(conflictOf(c, e));
+          }
+        }
+        await this.recomputeDerived(tx, done);
+        if (opts.receiver === 'hq') await this.checkOrders(tx, done, opts);
+        return r;
+      },
+      { timeout: 120_000, maxWait: 30_000 },
+    );
   }
 
   private async applyOne(

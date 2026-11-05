@@ -76,11 +76,11 @@ describe('Sync apply at HQ (e2e)', () => {
       .set('x-sync-peer', p.id)
       .set('x-sync-key', p.key)
       .send({ device, changes });
-  const register = (id: string, branchIds?: string[]) =>
+  const register = (id: string, branchIds?: string[], currentKey?: string) =>
     http()
       .post('/api/v1/sync-peer/register')
       .set('x-sync-key', BOOT)
-      .send({ id, name: `Install ${id}`, branchIds });
+      .send({ id, name: `Install ${id}`, branchIds, currentKey });
 
   let orderNo = 0;
   const order = (branchId: string, extra: Record<string, unknown> = {}) => ({
@@ -248,6 +248,24 @@ describe('Sync apply at HQ (e2e)', () => {
       await register(p.id, [tmpBranch.id]).expect(409);
       await push(p1, []).expect(200);
     });
+
+    it('the bootstrap key alone cannot take over an active install (#82 review)', async () => {
+      const tmpBranch = await prisma.branch.create({
+        data: { restaurantId, name: `Own-${tag}` },
+      });
+      const reg = await register(uid('peer9'), [tmpBranch.id]).expect(200);
+      const p = { id: reg.body.id, key: reg.body.key };
+      const hijack = await register(p.id, [tmpBranch.id]).expect(409);
+      expect(hijack.body.message).toMatch(/already registered at HQ/);
+      await register(p.id, [tmpBranch.id], 'f'.repeat(64)).expect(409);
+      await push(p, []).expect(200);
+
+      // The install itself re-registering (re-enabling) proves its key.
+      const again = await register(p.id, [tmpBranch.id], p.key).expect(200);
+      expect(again.body.key).not.toBe(p.key);
+      await push(p, []).expect(401);
+      await push({ id: p.id, key: again.body.key }, []).expect(200);
+    });
   });
 
   // ---- ownership (rule 1) --------------------------------------------------
@@ -297,6 +315,57 @@ describe('Sync apply at HQ (e2e)', () => {
         mine.id,
       );
       expect(entry.origin).toBe(p1.id);
+    });
+
+    it("stamps the authoring peer from the key, never the wire's claim (#82 review)", async () => {
+      const mine = order(b1);
+      await push(p1, [ch('orders', mine, p1, { peer: p2.id })]).expect(200);
+      const rows = await prisma.$queryRawUnsafe<{ peer: string }[]>(
+        `SELECT peer FROM sync_versions WHERE tbl = 'orders' AND "pkKey" = $1
+         UNION ALL
+         SELECT peer FROM sync_changes WHERE tbl = 'orders' AND "pkKey" = $1`,
+        key(mine.id),
+      );
+      expect(rows.length).toBeGreaterThan(1);
+      expect(rows.every((r) => r.peer === p1.id)).toBe(true);
+    });
+  });
+
+  // ---- lock contention with local writers (#82 review) ---------------------
+
+  describe('lock contention', () => {
+    it('yields to a local writer holding the row and applies once it commits', async () => {
+      const mine = order(b1, { notes: 'before' });
+      await push(p1, [ch('orders', mine, p1)]).expect(200);
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let locked!: () => void;
+      const isLocked = new Promise<void>((r) => (locked = r));
+      const local = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRawUnsafe(
+            `SELECT 1 FROM orders WHERE id = $1 FOR UPDATE`,
+            mine.id,
+          );
+          locked();
+          await gate;
+          await tx.order.update({
+            where: { id: mine.id },
+            data: { notes: 'local' },
+          });
+        },
+        { timeout: 30_000 },
+      );
+      await isLocked;
+      setTimeout(release, 1_200);
+      const started = Date.now();
+      const r = await push(p1, [
+        ch('orders', { ...mine, notes: 'synced' }, p1),
+      ]).expect(200);
+      await local; // the local writer never errored
+      expect(Date.now() - started).toBeGreaterThanOrEqual(1_000);
+      expect([r.body.applied, r.body.conflicts]).toEqual([1, []]);
+      expect((await orderRow(mine.id))?.notes).toBe('synced');
     });
   });
 

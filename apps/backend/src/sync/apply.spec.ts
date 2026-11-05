@@ -2,10 +2,12 @@ import {
   backoffMs,
   columnsToWrite,
   derivedTargets,
+  isContended,
   orderProblems,
   ownership,
   pullScope,
   schemaSkew,
+  yieldDelayMs,
   type OwnershipInput,
 } from './apply-rules';
 import { DERIVED } from './derived';
@@ -336,5 +338,34 @@ describe('pull scope (G2)', () => {
     expect(s.hqTables).toContain('menu_items');
     expect(s.hqTables).not.toContain('orders');
     expect(s.routed).toEqual([{ tbl: 'stock_transfers', col: 'toBranchId' }]);
+  });
+});
+
+describe('lock contention (#82 review)', () => {
+  it('yields on deadlocks, its own lock timeout and serialization failures', () => {
+    for (const m of [
+      'Raw query failed. Code: `40P01`. Message: `deadlock detected`',
+      'Raw query failed. Code: `55P03`. Message: `canceling statement due to lock timeout`',
+      'could not serialize access due to concurrent update',
+    ])
+      expect(isContended(m)).toBe(true);
+  });
+
+  it('does not treat ordinary apply errors as contention', () => {
+    for (const m of [
+      'violates foreign key constraint "order_items_orderId_fkey"',
+      'waiting for parent row',
+      'not-owner: menu_items is HQ-owned',
+    ])
+      expect(isContended(m)).toBe(false);
+  });
+
+  it('backs off from 100 ms, doubling, capped and jittered', () => {
+    const mid = () => 0.5;
+    expect([0, 1, 2, 3, 4, 9].map((a) => yieldDelayMs(a, mid))).toEqual([
+      100, 200, 400, 800, 1600, 1600,
+    ]);
+    expect(yieldDelayMs(0, () => 0)).toBe(75);
+    expect(yieldDelayMs(0, () => 1)).toBe(125);
   });
 });

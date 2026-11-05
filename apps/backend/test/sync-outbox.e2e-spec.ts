@@ -466,7 +466,14 @@ describe('Sync outbox (e2e)', () => {
         first.pkKey,
         String(BigInt(ms - 60_000) * 65536n),
       );
-      const r = await hqApply('legacy-client', changes);
+      // Only this test's rows: the outbox also holds writes of suites
+      // running alongside, and applying those here locked their rows
+      // (purchase-returns deadlock, #82 review).
+      const ours = new Set([floor.id, relayed]);
+      const r = await hqApply(
+        'legacy-client',
+        changes.filter((c) => ours.has(String(c.pk.id))),
+      );
       results.push(r);
       return r;
     });

@@ -28,6 +28,8 @@ export const syncRegisterSchema = z.object({
   name: z.string().trim().min(1).max(80),
   // Empty: HQ picks its only branch, or answers with the list to choose from.
   branchIds: z.array(z.string().min(1).max(64)).max(50).default([]),
+  // Re-registering an id HQ already has proves the key issued for it.
+  currentKey: z.string().min(1).max(128).optional(),
 });
 export type SyncRegisterDto = z.infer<typeof syncRegisterSchema>;
 
