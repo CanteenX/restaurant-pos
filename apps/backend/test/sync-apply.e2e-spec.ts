@@ -556,6 +556,60 @@ describe('Sync apply at HQ (e2e)', () => {
       expect(rows).toEqual([]);
     });
 
+    it("cannot tombstone another branch's float before HQ has it (#209 audit)", async () => {
+      const fk = JSON.stringify({ branchId: b2 }).replace(':', ': ');
+      const versionOf = () =>
+        prisma.$queryRawUnsafe<{ b: string | null }[]>(
+          `SELECT "branchId" AS b FROM sync_versions WHERE tbl = 'petty_cash_floats' AND "pkKey" = $1`,
+          fk,
+        );
+      await prisma.pettyCashFloat.deleteMany({ where: { branchId: b2 } });
+      await prisma.$executeRawUnsafe(
+        `DELETE FROM sync_versions WHERE tbl = 'petty_cash_floats' AND "pkKey" = $1`,
+        fk,
+      );
+      const tomb = (over: Partial<SyncChange>) => ({
+        ...ch('petty_cash_floats', { id: 'x' }, p1, {
+          pk: { branchId: b2 },
+          pkKey: fk,
+          ...over,
+        }),
+        op: 'D' as const,
+        row: null,
+      });
+      // Claiming its own branch, or a later HLC, changes nothing.
+      for (const t of [
+        tomb({ branchId: b1 }),
+        tomb({ branchId: b2, hlc: String(tick + 3_600_000n * 65536n) }),
+      ]) {
+        const r = await push(p1, [t]).expect(200);
+        expect(r.body.applied).toBe(0);
+        expect(r.body.conflicts.map((x: { error: string }) => x.error)).toEqual(
+          [`not-owner: row belongs to branch ${b2}`],
+        );
+      }
+      expect(await versionOf()).toEqual([]);
+      // Branch 2 still owns its float.
+      const float = {
+        branchId: b2,
+        balance: '0.00',
+        updatedAt: new Date().toISOString(),
+      };
+      const mine = await push(p2, [
+        ch('petty_cash_floats', float as unknown as Row, p2, {
+          pk: { branchId: b2 },
+          pkKey: fk,
+          branchId: b1, // a wrong claim is never stored
+        }),
+      ]).expect(200);
+      expect(mine.body.conflicts).toEqual([]);
+      expect(mine.body.applied).toBe(1);
+      expect(
+        await prisma.pettyCashFloat.findUnique({ where: { branchId: b2 } }),
+      ).not.toBeNull();
+      expect(await versionOf()).toEqual([{ b: b2 }]);
+    });
+
     it('recomputes a gift card balance from its redemptions', async () => {
       const o = order(b1);
       const card = {

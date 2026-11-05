@@ -77,6 +77,28 @@ describe('ownership (rule 1)', () => {
       ).toEqual({ ok: true });
     });
 
+    it("refuses tombstoning another branch's row HQ does not have yet (#209 audit)", () => {
+      const float = {
+        tbl: 'petty_cash_floats',
+        table: syncTable('petty_cash_floats'),
+        op: 'D' as const,
+        exists: false,
+        currentBranch: undefined,
+      };
+      // newBranch: the delete's branch resolved here (from the pk, else the
+      // claim checked against the peer's branches).
+      expect(verdict({ ...float, newBranch: 'b2' })).toMatchObject({
+        ok: false,
+        retry: false,
+        error: 'not-owner: row belongs to branch b2',
+      });
+      expect(verdict({ ...float, newBranch: null })).toMatchObject({
+        ok: false,
+        retry: false,
+      });
+      expect(verdict({ ...float, newBranch: 'b1' })).toEqual({ ok: true });
+    });
+
     it('retries a child whose parent row has not arrived yet', () => {
       expect(
         verdict({

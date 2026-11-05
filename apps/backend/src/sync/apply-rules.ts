@@ -22,7 +22,8 @@ export interface OwnershipInput {
   /**
    * Branch of the incoming row, resolved on the receiver (through parent
    * rows for child tables). `undefined`: a parent row is not there yet;
-   * `null`: restaurant-wide or a delete.
+   * `null`: restaurant-wide. For a delete at HQ: the branch from the pk when
+   * it holds the branch column, else the sender's claim.
    */
   newBranch: string | null | undefined;
   /** Branch of the receiver's current version of the row, if known. */
@@ -64,7 +65,14 @@ export function ownership(i: OwnershipInput): Verdict {
   }
   if (i.exists && i.currentBranch && !i.branches.includes(i.currentBranch))
     return no(`not-owner: row belongs to branch ${i.currentBranch}`);
-  if (i.op === 'D') return ok;
+  if (i.op === 'D') {
+    // A delete of a row HQ doesn't hold (or whose branch it can't tell)
+    // goes by the branch resolved here: it must be one of the peer's, or a
+    // tombstone would claim another branch's row for good (#209 audit).
+    const b = i.currentBranch ?? i.newBranch;
+    if (b && i.branches.includes(b)) return ok;
+    return no(`not-owner: row belongs to branch ${b ?? 'none'}`);
+  }
   if (i.newBranch === undefined) return no('waiting for parent row', true);
   if (!i.newBranch || !i.branches.includes(i.newBranch))
     return no(`not-owner: row belongs to branch ${i.newBranch ?? 'none'}`);

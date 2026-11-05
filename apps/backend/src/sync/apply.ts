@@ -234,10 +234,11 @@ export class SyncApplier {
     const c = localizePermission(wire, opts.permissionId);
     // A local writer of this row commits before the LWW check reads its
     // version (#81 audit): the row lock is taken first.
+    let branch: string | null = null;
     for (let attempt = 0; ; attempt++) {
       const exists = await this.lockRow(tx, c, t);
       if (!(await this.isNewer(tx, c, opts))) return false;
-      await this.assertOwner(tx, c, t, exists, opts);
+      branch = await this.assertOwner(tx, c, t, exists, opts);
       await tx.$queryRawUnsafe(
         `SELECT set_config('app.sync_origin', $1, true), set_config('app.sync_ts', $2, true),
                 set_config('app.sync_hlc', $3, true), set_config('app.sync_peer', $4, true)`,
@@ -246,7 +247,8 @@ export class SyncApplier {
         c.hlc,
         c.peer,
       );
-      if (c.op === 'D' && !exists) return this.deleteAbsent(tx, c, t, opts);
+      if (c.op === 'D' && !exists)
+        return this.deleteAbsent(tx, c, t, opts, branch);
       if (await this.writeRow(tx, c, t, exists, opts)) break;
       if (attempt) throw new Error('row changed twice during apply');
     }
@@ -263,7 +265,7 @@ export class SyncApplier {
       c.hlc,
       c.peer,
       c.op === 'D',
-      c.branchId ?? null,
+      branch,
       c.ts,
     );
     return true;
@@ -273,6 +275,7 @@ export class SyncApplier {
    * Rule 1, resolved on this install: the incoming row's branch (through its
    * parent rows here, never the sender's `branchId` claim) and the branch of
    * the row as this install has it, so a row can't be moved between branches.
+   * Returns that branch: the one stored on the version, never the wire's.
    */
   private async assertOwner(
     tx: Tx,
@@ -280,22 +283,9 @@ export class SyncApplier {
     t: TableMeta,
     exists: boolean,
     opts: Opts,
-  ) {
+  ): Promise<string | null> {
     const table = syncTable(c.tbl);
-    const tbl = q(c.tbl);
-    const pkCols = t.pk.map(q).join(', ');
-    const [cur] = exists
-      ? await tx.$queryRawUnsafe<{ b: string | null }[]>(
-          `SELECT sync_branch_of($1, to_jsonb(r)) AS b FROM ${tbl} r
-            WHERE (${pkCols}) = (SELECT ${pkCols} FROM jsonb_populate_record(NULL::${tbl}, $2::jsonb))`,
-          c.tbl,
-          JSON.stringify(c.pk),
-        )
-      : await tx.$queryRawUnsafe<{ b: string | null }[]>(
-          `SELECT "branchId" AS b FROM sync_versions WHERE tbl = $1 AND "pkKey" = $2`,
-          c.tbl,
-          c.pkKey,
-        );
+    const cur = await this.currentBranchOf(tx, c, t, exists);
     let newBranch: string | null | undefined = null;
     if (c.op === 'U' && table?.branch) {
       const [n] = await tx.$queryRawUnsafe<{ b: string | null }[]>(
@@ -305,6 +295,10 @@ export class SyncApplier {
       );
       // A child's branch comes from its parent; absent parent = not yet here.
       newBranch = n.b ?? ('via' in table.branch ? undefined : null);
+    } else if (c.op === 'D' && table?.branch && cur?.b == null) {
+      // A row HQ doesn't hold: its pk names the branch when the branch
+      // column is part of it; otherwise ownership checks the claim (#209).
+      newBranch = await this.branchOfPk(tx, c, opts);
     }
     const routed = table?.routeTo ? c.row?.[table.routeTo] : null;
     const v = ownership({
@@ -319,6 +313,42 @@ export class SyncApplier {
       branches: opts.branches,
     });
     if (!v.ok) throw new Error(v.error);
+    return (c.op === 'D' ? cur?.b : undefined) ?? newBranch ?? null;
+  }
+
+  /** The row's branch as this install has it (row, else its version). */
+  private async currentBranchOf(
+    tx: Tx,
+    c: SyncChange,
+    t: TableMeta,
+    exists: boolean,
+  ): Promise<{ b: string | null } | undefined> {
+    const tbl = q(c.tbl);
+    const pkCols = t.pk.map(q).join(', ');
+    const [cur] = exists
+      ? await tx.$queryRawUnsafe<{ b: string | null }[]>(
+          `SELECT sync_branch_of($1, to_jsonb(r)) AS b FROM ${tbl} r
+            WHERE (${pkCols}) = (SELECT ${pkCols} FROM jsonb_populate_record(NULL::${tbl}, $2::jsonb))`,
+          c.tbl,
+          JSON.stringify(c.pk),
+        )
+      : await tx.$queryRawUnsafe<{ b: string | null }[]>(
+          `SELECT "branchId" AS b FROM sync_versions WHERE tbl = $1 AND "pkKey" = $2`,
+          c.tbl,
+          c.pkKey,
+        );
+    return cur;
+  }
+
+  /** A delete's branch from its pk; at HQ, else the claim ownership checks. */
+  private async branchOfPk(tx: Tx, c: SyncChange, opts: Opts) {
+    const [p] = await tx.$queryRawUnsafe<{ b: string | null }[]>(
+      `SELECT sync_branch_of($1, $2::jsonb) AS b`,
+      c.tbl,
+      JSON.stringify(c.pk),
+    );
+    if (p.b) return p.b;
+    return opts.receiver === 'hq' ? (c.branchId ?? null) : null;
   }
 
   /**
@@ -332,6 +362,7 @@ export class SyncApplier {
     c: SyncChange,
     t: TableMeta,
     opts: Opts,
+    branch: string | null,
   ): Promise<boolean> {
     const won = await tx.$queryRawUnsafe<unknown[]>(
       `INSERT INTO sync_versions AS v (tbl, "pkKey", hlc, peer, deleted, "branchId", ts)
@@ -344,7 +375,7 @@ export class SyncApplier {
       c.pkKey,
       c.hlc,
       c.peer,
-      c.branchId ?? null,
+      branch,
       c.ts,
       opts.tieWins,
     );
