@@ -1,3 +1,5 @@
+import { NotFoundException } from '@nestjs/common';
+import { graphqlSetMenuItemAvailabilityArgsSchema } from '@nventra/types';
 import type { MenuCategory, MenuItem } from '@prisma/client';
 import {
   adjustOnlinePrice,
@@ -6,6 +8,7 @@ import {
 } from '../../common/online-price';
 import { ACCESS, menuVisibility } from '../graphql-access';
 import { requireAccess } from '../graphql-context';
+import { parseArgs } from '../graphql-input';
 import { clampPage, type PageLimits } from '../graphql-limits';
 import { BatchLoader } from '../graphql-loader';
 import {
@@ -118,6 +121,32 @@ export function menuResolvers(s: RequestScope) {
       const isKey = s.ctx.principal.kind === 'integration';
       const adj = isKey ? await onlineAdjust() : null;
       return toConnection(SORT, rows, size, (i) => presentItem(i, adj));
+    },
+
+    // Mutation (#79): MenuService.updateItem, so the change is audited and
+    // pushed to delivery platforms exactly like the REST item edit.
+    setMenuItemAvailability: async (raw: unknown) => {
+      requireAccess(s.ctx, ACCESS.menuAvailability);
+      const { id, available } = parseArgs(
+        graphqlSetMenuItemAvailabilityArgsSchema,
+        raw,
+      );
+      // Tenant (and a locked key's own branch) filter; any other item is
+      // indistinguishable from one that does not exist.
+      const item = await s.prisma.menuItem.findFirst({
+        where: { AND: [{ id }, await s.branchWhere(null)] },
+      });
+      if (!item) throw new NotFoundException('Menu item not found');
+      const p = s.ctx.principal;
+      const isKey = p.kind === 'integration';
+      const updated = await s.menu.updateItem(
+        item.branchId,
+        id,
+        isKey ? null : p.id,
+        { isActive: available },
+        isKey ? { integrationKeyId: p.id } : undefined,
+      );
+      return presentItem(updated, isKey ? await onlineAdjust() : null);
     },
   };
 }

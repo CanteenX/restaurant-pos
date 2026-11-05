@@ -9,6 +9,12 @@ import { deliveryInfoSchema } from "./orders";
 export const INTEGRATION_SCOPES = [
   { key: "locations:read", label: "View locations", description: "List active branches and their basic info." },
   { key: "menu:read", label: "View menu", description: "Read a location's menu, categories, and prices." },
+  {
+    key: "menu:availability",
+    label: "Turn dishes on/off",
+    description:
+      "Mark a menu item available or sold out through the GraphQL API. Delivery platforms are updated as if staff had changed it.",
+  },
   { key: "orders:write", label: "Create orders", description: "Place a new takeaway/delivery order for a location." },
   {
     key: "orders:read",

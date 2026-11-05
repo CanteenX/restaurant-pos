@@ -13,9 +13,12 @@ import type { GraphqlContext } from './graphql-context';
 import {
   costLimitRule,
   depthLimitRule,
+  mutationLimitRule,
   validationRules,
 } from './graphql-limits';
 import { BranchAccessService } from '../common/services/branch-access.service';
+import { IntegrationsService } from '../integrations/integrations.service';
+import { MenuService } from '../modules/menu/menu.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { createRootValue } from './graphql-resolvers';
 import { schema } from './graphql.schema';
@@ -32,6 +35,8 @@ export class GraphqlService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly branchAccess: BranchAccessService,
+    private readonly integrations: IntegrationsService,
+    private readonly menu: MenuService,
   ) {}
 
   async run(
@@ -57,6 +62,7 @@ export class GraphqlService {
     const limitErrors = validate(schema, document, [
       depthLimitRule(this.maxDepth),
       costLimitRule(this.maxCost, variables),
+      mutationLimitRule(1),
     ]);
     if (limitErrors.length) return requestError(limitErrors);
 
@@ -64,7 +70,12 @@ export class GraphqlService {
       schema,
       document,
       rootValue: createRootValue(
-        { prisma: this.prisma, branchAccess: this.branchAccess },
+        {
+          prisma: this.prisma,
+          branchAccess: this.branchAccess,
+          integrations: this.integrations,
+          menu: this.menu,
+        },
         ctx,
       ),
       contextValue: ctx,
@@ -113,5 +124,9 @@ function httpCode(status: number): string {
   if (status === 401) return 'UNAUTHENTICATED';
   if (status === 403) return 'FORBIDDEN';
   if (status === 404) return 'NOT_FOUND';
+  if (status === 409) return 'CONFLICT';
+  // Business-rule rejections from the REST services (an unavailable dish,
+  // below the minimum order, an Idempotency-Key reused with another body).
+  if (status === 400 || status === 422) return 'BAD_USER_INPUT';
   return status < 500 ? 'BAD_REQUEST' : 'INTERNAL_SERVER_ERROR';
 }

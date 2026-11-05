@@ -151,6 +151,62 @@ export const typeDefs = /* GraphQL */ `
     pageInfo: PageInfo!
   }
 
+  "One dish in a new order. Prices come from the live menu, never from you."
+  input OrderItemInput {
+    menuItemId: ID!
+    "1 to 99."
+    quantity: Int!
+    modifierIds: [ID!]
+    kitchenNote: String
+  }
+
+  "Required for DELIVERY orders. phone defaults to customerPhone."
+  input DeliveryInput {
+    address: String!
+    pincode: String!
+    phone: String
+    "Send both lat and lng, or neither."
+    lat: Float
+    lng: Float
+    place: String
+  }
+
+  "The REST Integration API order body (docs/integrations-api.md), minus rewards."
+  input CreateOrderInput {
+    "TAKEAWAY (default) or DELIVERY."
+    type: OrderType
+    customerName: String!
+    customerPhone: String!
+    customerEmail: String
+    notes: String
+    "ISO 8601, at least 10 minutes ahead (pre-order)."
+    scheduledFor: String
+    delivery: DeliveryInput
+    "1 to 50 lines."
+    items: [OrderItemInput!]!
+  }
+
+  "One mutation field per request."
+  type Mutation {
+    """
+    Scope orders:write (integration keys only). Server-priced and tax-inclusive;
+    the order waits for staff to accept it (acceptance PENDING). Reuse an
+    idempotencyKey (8-64 of A-Z a-z 0-9 _ -) to retry safely: the same key
+    with the same input returns the original order, with other input it is
+    BAD_USER_INPUT. Keys are shared with the REST Idempotency-Key header.
+    """
+    createOrder(
+      branchId: ID!
+      input: CreateOrderInput!
+      idempotencyKey: String
+    ): Order!
+    """
+    Scope menu:availability / permission menu.manage. Marks a dish sold out
+    (false) or back on (true); connected delivery platforms are updated.
+    """
+    setMenuItemAvailability(id: ID!, available: Boolean!): MenuItem!
+  }
+
   type Query {
     viewer: Viewer!
     "Scope menu:read / permission menu.view. Ordered by sortOrder."

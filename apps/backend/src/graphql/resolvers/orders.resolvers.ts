@@ -1,7 +1,10 @@
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { graphqlCreateOrderArgsSchema } from '@nventra/types';
 import type { Customer, Order, OrderStatus, Prisma } from '@prisma/client';
 import { orderTotals } from '../../integrations/integrations.service';
 import { ACCESS, orderVisibility } from '../graphql-access';
-import { requireAccess } from '../graphql-context';
+import { requireAccess, scopedBranchId } from '../graphql-context';
+import { parseArgs } from '../graphql-input';
 import { clampPage, type PageLimits } from '../graphql-limits';
 import { BatchLoader } from '../graphql-loader';
 import {
@@ -125,6 +128,39 @@ export function orderResolvers(s: RequestScope) {
         },
       });
       return row ? presentOrder(row) : null;
+    },
+
+    // Mutation (#79). The REST order path does the rest: tenant/branch check,
+    // server pricing, minimum order, website price, idempotent replay.
+    createOrder: async (raw: unknown) => {
+      requireAccess(s.ctx, ACCESS.orderWrite);
+      const p = s.ctx.principal;
+      // ACCESS.orderWrite has no staff permission; this narrows the type.
+      if (p.kind !== 'integration') throw new ForbiddenException();
+      const args = parseArgs(graphqlCreateOrderArgsSchema, raw);
+      const branchId = scopedBranchId(s.ctx, args.branchId)!;
+      const created = await s.integrations.createOrder(
+        {
+          id: p.id,
+          restaurantId: s.ctx.restaurantId,
+          branchId: s.ctx.branchId,
+          scopes: [...p.scopes],
+        },
+        branchId,
+        args.input,
+        args.idempotencyKey,
+      );
+      const row = await s.prisma.order.findFirst({
+        where: {
+          AND: [
+            { id: created.id },
+            orderVisibility(s.ctx),
+            { branch: { restaurantId: s.ctx.restaurantId } },
+          ],
+        },
+      });
+      if (!row) throw new NotFoundException('Order not found');
+      return presentOrder(row);
     },
   };
 }

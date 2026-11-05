@@ -144,8 +144,11 @@ export class MenuService {
   async updateItem(
     branchId: string,
     id: string,
-    userId: string,
+    // null when an integration key made the change (GraphQL, #79); the key
+    // is then named in the audit metadata instead.
+    userId: string | null,
     dto: Partial<MenuItemDto>,
+    actor?: { integrationKeyId: string },
   ) {
     const existing = await this.getItem(branchId, id);
     const { modifierGroupIds, ...rest } = dto;
@@ -199,6 +202,7 @@ export class MenuService {
         priceBefore: Number(existing.price),
         priceAfter: Number(updated.price),
         changes: rest,
+        ...actor,
       },
     });
 

@@ -21,6 +21,11 @@ export const ACCESS = {
     permission: 'customers.manage',
   },
   customers: { scope: 'customers:read', permission: 'customers.manage' },
+  // Writes (#79). Placing an order is key-only: staff ring orders up at the
+  // POS, which carries the table, waiter and payment context GraphQL lacks.
+  orderWrite: { scope: 'orders:write' },
+  // Sold out / back on, the same permission as the REST item edit.
+  menuAvailability: { scope: 'menu:availability', permission: 'menu.manage' },
 } as const satisfies Record<string, AccessRule>;
 
 export function hasAccess(ctx: GraphqlContext, rule: AccessRule): boolean {
