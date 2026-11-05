@@ -1,8 +1,8 @@
 # Multi-branch sync — audit and design
 
-Status: design (issue #80). Implementation follows in #81 (capture/outbox),
-#82 (apply, conflict rules, agent loop) and #83 (two-instance convergence test).
-No code changes in this document.
+Status: design (issue #80); capture and outbox implemented in #81 (see §8).
+Still to come: #82 (apply, conflict rules, agent loop) and #83 (two-instance
+convergence test).
 
 ## 1. Goal
 
@@ -49,7 +49,7 @@ branch-aware.
 | G8 | **Server log never pruned.** | `sync_changes` on HQ grows without bound. | #81 |
 | G9 | **Schema skew is all-or-nothing.** `ping` compares the newest migration name; any difference stops sync completely. | Branches must all upgrade at the same minute; an offline branch that missed an upgrade cannot sync until updated (acceptable, but the UI must say so and keep queuing). | #82 |
 | G10 | **Device-local tables are synced.** `local_backup_config` (a USB/NAS path on that PC), `device_tokens`, `notifications` (per-branch bell), `integration_logs`, `audit_logs` all replicate. | A branch inherits HQ's backup folder; push tokens fire from the wrong install. | #81 |
-| G11 | **Encrypted secrets don't travel.** `integration_connections` credentials (`integration-hub/secret-box.ts`), `users.twoFactorSecret` and `webhook_endpoints.secret` (`auth/totp.ts` `sealSecret`) are sealed with a key derived from each install's `INTEGRATION_SECRET_KEY`/`JWT_SECRET`. | A synced row can't be decrypted on the other install: 2FA logins and webhook signing break there. | #81 (exclude / strip) |
+| G11 | **Encrypted secrets don't travel.** `integration_connections` credentials (`integration-hub/secret-box.ts`), `users.twoFactorSecret`, `webhook_endpoints.secret` (`auth/totp.ts` `sealSecret`) and the VERI*FACTU certificate in `verifactu_settings` (`verifactu.service.ts`, `VERIFACTU_KEY`) are sealed with a key derived from each install's `INTEGRATION_SECRET_KEY`/`JWT_SECRET`. | A synced row can't be decrypted on the other install: 2FA logins, webhook signing and AEAT submission break there. | #81 (exclude / strip) |
 | G12 | **Device id is self-declared.** `pull?device=` / `push.device` are trusted as sent. | A key holder can claim another device's id to receive its echo or hide its own changes. | #82 |
 | G13 | **Single shared key**, stored in plaintext in `sync_state.apiKey`, no per-branch revocation. | Losing one branch PC means rotating the key on every install. | #82 (per-branch keys) |
 | G14 | **Offline duration** is unbounded but untested; pages are 200/500 rows with no total cap or progress. | A week offline = tens of thousands of rows in one cycle; one bad row blocks nothing but gives no progress signal. | #81 (outbox), #83 (test) |
@@ -118,7 +118,6 @@ its parent's branch.
 | `delivery_zones` (B) | LWW | Pricing input (delivery fee). |
 | `coupons` (B), `promotions` (B), `campaigns` (B), `membership_tiers` (R) | LWW | Discounts are money rules; marketing is central. |
 | `suppliers` (B) | LWW | Central vendor list. |
-| `verifactu_settings` (B) | LWW | Fiscal configuration; the chain itself is local. |
 | `report_schedules` (B), `budgets` (B) | LWW | Finance planning is HQ's. |
 | `staff_pay` →user, `payroll_runs` (B), `payroll_lines` →run | LWW | Payroll is run at HQ. |
 | `documents` (B), `document_files` →document | LWW | Policies/contracts uploaded centrally. File blobs are not synced in v1 (path only). |
@@ -148,6 +147,7 @@ its parent's branch.
 |---|---|
 | `_prisma_migrations`, `sync_state`, `sync_changes` | Bookkeeping of this install. (excluded today) |
 | `verifactu_records` | Append-only hash chain per installation; cannot be merged. (excluded today) |
+| `verifactu_settings` | The certificate is sealed with this install's key (G11), and `nextNumber` / `nextRefundNumber` continue this install's own chain: an HQ copy would break AEAT submission or roll a counter back into duplicate invoice numbers. Each install configures its own VERI*FACTU (#81 audit). |
 | `backups`, `backup_config`, `local_backup_config` | Backups and their target folder belong to the machine. (`local_backup_config` is synced today — G10) |
 | `webhook_deliveries`, `integration_logs` | Delivery attempts made by this install. |
 | `download_stats` | Install telemetry. (excluded today) |
@@ -287,3 +287,132 @@ the table list if answered differently:
 2. Is the menu always HQ-controlled, or may a branch manager edit items for
    their own branch? [Default: HQ-owned; a per-branch "local edits allowed"
    flag can be added later.]
+
+## 8. Implementation status
+
+### #81 — capture and outbox (done)
+
+- **Classification** lives in `apps/backend/src/sync/tables.ts`
+  (`SYNC_TABLES` with owner, rule, branch path, derived and stripped
+  columns; `LOCAL_TABLES` with a reason). `tables.spec.ts` parses
+  `schema.prisma` and fails on any unclassified or stale table. Unknown
+  tables never sync. Additions to §4.3: `integration_outbox` (delivery queue
+  for this install's connections) and the new `sync_versions` /
+  `sync_cursors` are Local; `stock_batches` is LWW with `quantityRemaining`
+  Derived, because FIFO consumption updates it in place; `purchase_returns` /
+  `purchase_return_items` (#63) are Branch-owned LWW like goods receipts, and
+  `ingredient_unit_conversions` (#69 pack sizes) is Branch-owned LWW via its
+  ingredient.
+- **Capture SQL is generated** from that file at every boot
+  (`capture-sql.ts`: `sync_is_synced_table`, `sync_branch_of`,
+  `sync_capture_row`), then `sync_install_triggers()` adds the row trigger
+  to synced tables and drops it from Local ones.
+- **Outbox** (`sync_changes`, migration `20261104130000_sync_outbox`): every
+  entry carries `seq` (order), a per-row **HLC** `hlc = (ms << 16) + counter`
+  that never goes backwards for a row, the writing `peer` (device id), the
+  row's `branchId` (followed through parent rows; kept from the last version
+  for deletes) and the `schemaVersion` it was written with. Deletes are
+  tombstone entries.
+- **`sync_versions`** keeps the newest version of every row (and delete
+  tombstones). Apply compares against it, not the outbox, so pruning can't
+  let an older change win (G7). Same HLC from the same peer = replay →
+  skipped; same HLC from another peer → server wins.
+- **Pruning on acknowledgement**: the client deletes a push page in the same
+  transaction that advances `lastPushSeq`; a crash replays at most that page.
+- **Rejected changes are kept, not pruned**: conflicts carry the change's
+  `seq`. Whatever the server rejected on push (malformed, unknown table, FK
+  still failing after the retry passes), and whatever this install rejected
+  on pull before moving `lastPullSeq` past it, is written to the local
+  `sync_rejected` table (`side` = `push` / `pull`, the full change and the
+  error) in the same transaction. `GET /sync/status` reports the count as
+  `rejectedChanges`. Replaying them is an admin action (#82).
+- **Cursors never pass an open writer**: `seq` is assigned at insert, not at
+  commit, so an entry can become visible after a higher one. Each
+  transaction that writes outbox entries first reads the sequence head and
+  holds a shared advisory lock on `2^40 + head` until it ends.
+  `sync_safe_seq()` reads the head, then those locks, and returns a bound
+  below every open writer's entries. Server pull and client push only read
+  `seq <= bound` (bound read in its own statement first), so `nextSeq`,
+  `lastPushSeq` and the client's `DELETE … seq <= pushedTo` only move over
+  entries that are already visible. `pg_locks` is cluster-wide, so only
+  locks of the current database count; writers in another database on the
+  same Postgres never stall this one.
+- **One apply per row at a time**: before the LWW check, apply recomputes
+  the row key with `sync_pk()` on the wire `pk` (as the sender's trigger
+  did) and rejects a change whose `pkKey` differs (`pkKey does not match
+  pk`), or whose update row has other key values than `pk` (`row does not
+  match pk`), so LWW and tombstones always key the row the DML writes. It
+  then takes a transaction advisory lock on (`sync_row`, table + key), held
+  until commit, so two concurrent pushes of one row are serialised and the
+  older HLC is skipped instead of overwriting the newer one. A deadlock
+  between two such pushes is retried in the next pass.
+- **An apply never beats an open local write**: local POS writes don't take
+  that advisory lock, so apply also locks the target row (`FOR UPDATE`)
+  before the LWW check. A local edit still open on the row commits first,
+  and the check then sees its version. The lock order (row, then
+  `sync_versions` in the trigger) is the same as a local `UPDATE`'s, so the
+  two can't deadlock. A row that was absent is only inserted (`ON CONFLICT
+  DO NOTHING`); if a local writer created it meanwhile, apply locks it and
+  re-checks. As a backstop, neither the trigger nor apply ever lowers a
+  row's `sync_versions.hlc`, and server compaction keeps each row's
+  highest-HLC entry, not its highest seq.
+- **A delete waits for a row being created**: a remote delete of a row that
+  is absent when locked may race a local insert still open on that key. The
+  uncommitted row is invisible to `DELETE`, but its `sync_versions` row is
+  not, so apply upserts the tombstone first (waiting for that writer) with
+  the LWW check in its `WHERE`. If the delete still wins, apply locks and
+  deletes the row the writer committed; if not, it is skipped. A local
+  write's trigger records `greatest(its HLC, current version + 1)` under the
+  version row's lock, so a local write that commits after an applied
+  version always orders after it, in `sync_versions` and in the outbox.
+- **A PC with a wrong clock pauses, it never drops data**: HLCs come from
+  each PC's own clock, so `ping` returns the server's `now` and every client
+  cycle (and the settings page's connection test) compares it with this
+  PC's clock, at the middle of the round trip. More than 5 min apart
+  (`MAX_CLOCK_SKEW_MS`) and the cycle stops before pulling or pushing, with
+  `lastError` = "This PC's clock is 6 min ahead of the server; fix the time
+  to resume sync." Cursors don't move and nothing is pruned or
+  dead-lettered; the queued changes go out once the clock is fixed.
+- **Incoming HLCs are bounded**: a change whose HLC is at the bigint limit
+  (the trigger's `hlc + 1` would overflow and lock the row everywhere), or
+  more than 24 h (`MAX_HLC_FUTURE_MS`) ahead of the receiver's clock, is
+  malformed: rejected and dead-lettered. The 24 h ceiling is deliberately
+  loose: devices that each pass the 5 min clock check can still carry HLCs
+  up to ~10 min apart (HLCs keep the highest clock seen), and those must
+  apply normally.
+- **Upgrade path**: entries queued before this migration (no HLC, no peer)
+  are backfilled by `sync_backfill_legacy()`: HLC from their `ts`, strictly
+  increasing per row in outbox order; peer = this device for local entries,
+  the sending device for entries relayed on a server; and each row's newest
+  version is recorded in `sync_versions`. Old seed entries keep HLC 0 and get
+  peer `seed`.
+- **Server compaction** (G8): pulls record each client's position in
+  `sync_cursors`; below the lowest position, superseded entries and
+  tombstones are dropped, while the newest upsert of each row is kept so a
+  new client can still join from 0.
+- `users.twoFactorSecret` is never captured and an incoming row never
+  overwrites it; `role_permissions` / `user_permission_overrides` travel
+  with `permissionKey` (pk and row) and are mapped to the local id on apply.
+- Fixed: outbox pages were ordered by `seq::text` (the output alias), so
+  `1000` sorted before `999` and a page boundary could skip changes.
+
+Not yet: ownership enforcement, branch-filtered pull, HLC-advance on
+receive across rows, derived-column recompute, per-peer keys (#82).
+
+Known limits, to address in #82:
+- A stale `sync_cursors` row (decommissioned or reset device) pins the
+  compaction floor, so the server log stops compacting. Cursors need to
+  expire by `seenAt`, or an admin needs to be able to drop a device.
+- `sync_versions` tombstones are never pruned.
+- Compaction drops tombstones below the floor, so a device that joins later
+  in `merge` mode with its own copy of a deleted row never receives that
+  delete and will push the row back.
+- Legacy `role_permissions` / `user_permission_overrides` entries backfilled
+  by `sync_backfill_legacy()` still carry the sender's `permissionId`, not
+  `permissionKey`. They fail on FK elsewhere and are dead-lettered.
+- The trigger reads and upserts `sync_versions` on every captured write;
+  measure this on the order hot path when #82 adds the apply side.
+- `sync_safe_seq()` stops at the oldest open writer, so one connection left
+  idle in a transaction after writing a synced row stalls pull and push for
+  every device until it ends. Consider `idle_in_transaction_session_timeout`
+  on the app role, or a "waiting on an open transaction" status.

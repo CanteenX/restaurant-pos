@@ -2617,34 +2617,75 @@ model VerifactuRecord {
 // Two-way server sync (see src/sync). Raw-SQL managed by triggers; modelled
 // here only so `prisma migrate dev` doesn't see drift.
 model SyncState {
-  id          Int       @id @default(1)
-  enabled     Boolean   @default(false)
-  role        String    @default("client")
-  deviceId    String    @default(dbgenerated("md5(((random())::text || (clock_timestamp())::text))"))
-  serverUrl   String?
-  apiKey      String?
-  seeded      Boolean   @default(false)
-  lastPullSeq BigInt    @default(0)
-  lastPushSeq BigInt    @default(0)
-  lastSyncAt  DateTime?
-  lastError   String?
-  conflicts   Json      @default("[]")
+  id            Int       @id @default(1)
+  enabled       Boolean   @default(false)
+  role          String    @default("client")
+  deviceId      String    @default(dbgenerated("md5(((random())::text || (clock_timestamp())::text))"))
+  serverUrl     String?
+  apiKey        String?
+  seeded        Boolean   @default(false)
+  lastPullSeq   BigInt    @default(0)
+  lastPushSeq   BigInt    @default(0)
+  lastSyncAt    DateTime?
+  lastError     String?
+  conflicts     Json      @default("[]")
+  schemaVersion String?
 
   @@map("sync_state")
 }
 
 model SyncChange {
-  seq    BigInt   @id @default(autoincrement())
-  tbl    String
-  pk     Json
-  pkKey  String
-  op     String   @db.Char(1)
-  row    Json?
-  ts     DateTime @db.Timestamptz(3)
-  origin String
+  seq           BigInt   @id @default(autoincrement())
+  tbl           String
+  pk            Json
+  pkKey         String
+  op            String   @db.Char(1)
+  row           Json?
+  ts            DateTime @db.Timestamptz(3)
+  origin        String
+  hlc           BigInt   @default(0)
+  peer          String   @default("")
+  branchId      String?
+  schemaVersion String?
 
   @@index([tbl, pkKey], map: "sync_changes_row_idx")
   @@map("sync_changes")
+}
+
+// Newest known version (or delete tombstone) of each synced row.
+model SyncVersion {
+  tbl      String
+  pkKey    String
+  hlc      BigInt
+  peer     String
+  deleted  Boolean  @default(false)
+  branchId String?
+  ts       DateTime @default(now()) @db.Timestamptz(3)
+
+  @@id([tbl, pkKey])
+  @@map("sync_versions")
+}
+
+// Changes a peer rejected; kept instead of pruned with the acknowledged page.
+model SyncRejected {
+  id     BigInt   @id @default(autoincrement())
+  side   String
+  tbl    String
+  pkKey  String
+  change Json?
+  error  String
+  at     DateTime @default(now()) @db.Timestamptz(3)
+
+  @@map("sync_rejected")
+}
+
+// Server side: how far each client has pulled (for outbox compaction).
+model SyncCursor {
+  device String   @id
+  seq    BigInt   @default(0)
+  seenAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@map("sync_cursors")
 }
 
 // ---------------------------------------------------------------------------

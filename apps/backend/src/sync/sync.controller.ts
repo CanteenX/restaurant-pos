@@ -26,6 +26,8 @@ export class SyncPeerController {
       ok: true,
       role: 'server',
       schema: await this.sync.schemaVersion(),
+      // Clients refuse to sync while their clock is off from this one.
+      now: Date.now(),
     };
   }
 
