@@ -138,3 +138,23 @@ export const createIntegrationReservationSchema = z.object({
   specialRequests: z.string().optional(),
 });
 export type CreateIntegrationReservationDto = z.infer<typeof createIntegrationReservationSchema>;
+
+// Item mapping for a delivery channel (settings > integrations, #60). A patch,
+// never the whole map: the server merges it onto what is stored, so two
+// people editing different dishes never wipe each other's mappings.
+const menuItemIdSchema = z.string().trim().min(1).max(60);
+const platformItemIdSchema = z.string().trim().min(1).max(120);
+
+export const integrationItemMapPatchSchema = z
+  .object({
+    /** Our menu item id -> the platform's item id, added or changed. */
+    set: z
+      .record(menuItemIdSchema, platformItemIdSchema)
+      .refine((o) => Object.keys(o).length <= 2000, "At most 2000 items")
+      .default({}),
+    /** Our menu item ids whose mapping is removed. */
+    remove: z.array(menuItemIdSchema).max(2000).default([]),
+  })
+  .refine((p) => Object.keys(p.set).length + p.remove.length > 0, "Nothing to change")
+  .refine((p) => !p.remove.some((id) => id in p.set), "An item cannot be both set and removed");
+export type IntegrationItemMapPatchDto = z.infer<typeof integrationItemMapPatchSchema>;

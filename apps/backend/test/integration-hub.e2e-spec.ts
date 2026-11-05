@@ -218,6 +218,89 @@ run('Integrations hub (e2e)', () => {
     expect(on.body.status).toBe('PENDING_CONFIGURATION');
   });
 
+  it('shows the item map and no last order before any order arrives', async () => {
+    const z = await zomato();
+    expect(z.connection.itemMap).toEqual({});
+    expect(z.connection.lastOrderAt).toBeNull();
+    expect(z.connection.outbox).toEqual({ pending: 0, dead: 0 });
+  });
+
+  it('edits the item map by patch, never wiping mappings it did not touch', async () => {
+    const [a, b] = await prisma.menuItem.findMany({
+      where: { branchId: 'demo-branch' },
+      orderBy: { id: 'asc' },
+      take: 2,
+      select: { id: true },
+    });
+    const patch = (body: object) =>
+      owner.patch(`${H}/zomato/item-map`).send(body);
+    expect(
+      (await patch({ set: { [a.id]: 'Z-A' } }).expect(200)).body.itemMap,
+    ).toEqual({ [a.id]: 'Z-A' });
+    // A second, independent edit keeps the first.
+    await patch({ set: { [b.id]: 'Z-B' } }).expect(200);
+    expect((await zomato()).connection.itemMap).toEqual({
+      [a.id]: 'Z-A',
+      [b.id]: 'Z-B',
+    });
+    // Saving credentials without an itemMap keeps it too.
+    await owner.put(`${H}/zomato`).send({ credentials: {} }).expect(200);
+    await patch({ remove: [a.id] }).expect(200);
+    const row = await prisma.integrationConnection.findFirstOrThrow({
+      where: { restaurantId, provider: 'zomato' },
+    });
+    expect((row.config as any).itemMap).toEqual({ [b.id]: 'Z-B' });
+    // Credentials and outlets in the same config are untouched.
+    expect((row.config as any).credentialKeys).toEqual(['webhookSecret']);
+    const logs = (await owner.get(`${H}/zomato/logs`).expect(200))
+      .body as any[];
+    expect(logs.map((l) => l.event)).toContain('item_map_saved');
+  });
+
+  it('keeps every edit when several patches race', async () => {
+    const items = await prisma.menuItem.findMany({
+      where: { branchId: 'demo-branch' },
+      orderBy: { id: 'desc' },
+      take: 4,
+      select: { id: true },
+    });
+    const before = (await zomato()).connection.itemMap;
+    await Promise.all(
+      items.map((it, i) =>
+        owner
+          .patch(`${H}/zomato/item-map`)
+          .send({ set: { [it.id]: `RACE-${i}` } })
+          .expect(200),
+      ),
+    );
+    const after = (await zomato()).connection.itemMap;
+    for (const [i, it] of items.entries())
+      expect(after[it.id]).toBe(`RACE-${i}`);
+    for (const [k, v] of Object.entries(before)) expect(after[k]).toBe(v);
+    await owner
+      .patch(`${H}/zomato/item-map`)
+      .send({ remove: items.map((it) => it.id) })
+      .expect(200);
+  });
+
+  it('refuses bad item map patches', async () => {
+    const patch = (body: object, a = owner, provider = 'zomato') =>
+      a.patch(`${H}/${provider}/item-map`).send(body);
+    await patch({}).expect(400);
+    const r = await patch({ set: { 'not-a-dish': 'Z-X' } }).expect(400);
+    expect(r.body.message).toMatch(/not part of this restaurant/);
+    const [b] = Object.keys((await zomato()).connection.itemMap);
+    const c = await prisma.menuItem.findFirstOrThrow({
+      where: { branchId: 'demo-branch', id: { not: b } },
+      select: { id: true },
+    });
+    const dup = await patch({ set: { [c.id]: 'Z-B' } }).expect(400);
+    expect(dup.body.message).toMatch(/same platform item id/);
+    await patch({ set: { [c.id]: 'Z-C' } }, owner, 'swiggy').expect(404);
+    await patch({ set: { [c.id]: 'Z-C' } }, cashier).expect(403);
+    await patch({ set: { [c.id]: 'Z-C' } }, other).expect(404);
+  });
+
   it('is closed to staff without settings.manage and to anonymous callers', async () => {
     await cashier.get(H).expect(403);
     await cashier.put(`${H}/zomato`).send({ credentials: {} }).expect(403);
