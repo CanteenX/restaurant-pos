@@ -4,10 +4,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import type { IntegrationItemMapPatchDto } from '@nventra/types';
 import type { IntegrationConnection, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { outletsForBranch } from './aggregator-menu';
-import { getProvider, listProviders } from './providers/registry';
+import { mergeItemMap } from './item-map';
+import { getProvider, listProviders, sourceOf } from './providers/registry';
 import type { IntegrationProvider, TestResult } from './providers/provider';
 import { IntegrationOutboxService } from './outbox/integration-outbox.service';
 import { decryptSecret, encryptSecret } from './secret-box';
@@ -50,13 +52,18 @@ export class IntegrationHubService {
   private view(
     c: IntegrationConnection | null,
     outbox: { pending: number; dead: number } = { pending: 0, dead: 0 },
+    lastOrderAt: Date | null = null,
   ) {
     if (!c) return null;
     const cfg = c.config as StoredConfig;
     const keys = cfg?.credentialKeys;
     return {
       outlets: cfg?.outlets ?? {},
+      /** Our menu item id -> the platform's item id (ids only, no secrets). */
+      itemMap: cfg?.itemMap ?? {},
       outbox,
+      /** When the newest order from this channel arrived, or null. */
+      lastOrderAt,
       id: c.id,
       enabled: c.enabled,
       status: c.status,
@@ -75,6 +82,7 @@ export class IntegrationHubService {
     });
     const byProvider = new Map(rows.map((r) => [r.provider, r]));
     const counts = await this.outbox.counts(rows.map((r) => r.id));
+    const lastOrders = await this.lastOrders(restaurantId);
     return listProviders().map((p) => ({
       key: p.key,
       name: p.name,
@@ -90,8 +98,24 @@ export class IntegrationHubService {
       connection: this.view(
         byProvider.get(p.key) ?? null,
         counts.get(byProvider.get(p.key)?.id ?? ''),
+        lastOrders.get(sourceOf(p)) ?? null,
       ),
     }));
+  }
+
+  /** Newest order per external source (zomato, swiggy, ...), read-only. */
+  private async lastOrders(restaurantId: string, source?: string) {
+    const rows = await this.prisma.order.groupBy({
+      by: ['externalSource'],
+      where: {
+        branch: { restaurantId },
+        externalSource: source ?? { not: null },
+      },
+      _max: { createdAt: true },
+    });
+    return new Map(
+      rows.map((r) => [r.externalSource ?? '', r._max.createdAt ?? null]),
+    );
   }
 
   private async log(
@@ -232,7 +256,17 @@ export class IntegrationHubService {
     restaurantId: string,
     itemMap: Record<string, string>,
   ) {
-    const ids = Object.keys(itemMap);
+    await this.checkOwnItems(restaurantId, Object.keys(itemMap));
+    const ext = Object.values(itemMap);
+    if (new Set(ext).size !== ext.length) {
+      throw new BadRequestException(
+        'Two dishes are mapped to the same platform item id',
+      );
+    }
+    return itemMap;
+  }
+
+  private async checkOwnItems(restaurantId: string, ids: string[]) {
     const own = await this.prisma.menuItem.count({
       where: { id: { in: ids }, branch: { restaurantId } },
     });
@@ -241,13 +275,46 @@ export class IntegrationHubService {
         'An item is mapped that is not part of this restaurant',
       );
     }
-    const ext = Object.values(itemMap);
-    if (new Set(ext).size !== ext.length) {
-      throw new BadRequestException(
-        'Two dishes are mapped to the same platform item id',
+  }
+
+  /**
+   * Applies an item-map patch onto the stored map. The write only lands if
+   * the row is unchanged since it was read (optimistic check on updatedAt),
+   * so two concurrent edits are both kept instead of the last one winning.
+   */
+  async patchItemMap(
+    restaurantId: string,
+    providerKey: string,
+    patch: IntegrationItemMapPatchDto,
+  ) {
+    await this.require(restaurantId, providerKey);
+    await this.checkOwnItems(restaurantId, Object.keys(patch.set));
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const c = await this.require(restaurantId, providerKey);
+      const cfg = (c.config as StoredConfig) ?? {};
+      const itemMap = mergeItemMap(cfg.itemMap, patch);
+      const { count } = await this.prisma.integrationConnection.updateMany({
+        where: { id: c.id, updatedAt: c.updatedAt },
+        data: { config: { ...cfg, itemMap } },
+      });
+      if (count === 0) continue; // someone else saved in between: re-read
+      await this.log(
+        c.id,
+        'INFO',
+        'item_map_saved',
+        `Item mapping saved (${Object.keys(patch.set).length} set, ${patch.remove.length} removed)`,
       );
+      const row = await this.require(restaurantId, providerKey);
+      const counts = await this.outbox.counts([row.id]);
+      const last = await this.lastOrders(
+        restaurantId,
+        sourceOf(this.provider(providerKey)),
+      );
+      return this.view(row, counts.get(row.id), [...last.values()][0] ?? null);
     }
-    return itemMap;
+    throw new BadRequestException(
+      'The item mapping is being changed elsewhere - try again',
+    );
   }
 
   /** Publishes one branch's menu to the platform now (queued, retried). */

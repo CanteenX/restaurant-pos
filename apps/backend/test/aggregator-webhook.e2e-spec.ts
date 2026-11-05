@@ -167,6 +167,13 @@ run('Aggregator webhook (e2e)', () => {
       include: { items: true },
     });
     expect(rows).toHaveLength(1);
+    // The settings page shows when the last order came in on this channel.
+    const z = ((await owner.get(H).expect(200)).body as any[]).find(
+      (p) => p.key === 'zomato',
+    );
+    expect(new Date(z.connection.lastOrderAt as string).getTime()).toBe(
+      rows[0].createdAt.getTime(),
+    );
     const o = rows[0];
     expect(o.channel).toBe('ONLINE');
     expect(o.acceptance).toBe('PENDING');

@@ -3,6 +3,7 @@
 import { AlertTriangle, CheckCircle2, CircleDashed, Copy, KeyRound, Link2, PauseCircle, ShieldAlert, Webhook } from "lucide-react";
 import Link from "next/link";
 import { Fragment, useState, type ReactNode } from "react";
+import { ChannelHealthLine, ChannelItemsDialog } from "@/components/settings/online-channel";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -114,7 +115,7 @@ function WebhookDetails({ p }: { p: IntegrationProviderInfo }) {
   );
 }
 
-function ProviderCard({ p, onConfigure }: { p: IntegrationProviderInfo; onConfigure: () => void }) {
+function ProviderCard({ p, onConfigure, onItems }: { p: IntegrationProviderInfo; onConfigure: () => void; onItems: () => void }) {
   const { t } = useI18n();
   const when = (s: string | null) => (s ? new Date(s).toLocaleString() : t("settings.integrations.never"));
   const { test, setEnabled, disconnect } = useIntegrationActions();
@@ -126,7 +127,7 @@ function ProviderCard({ p, onConfigure }: { p: IntegrationProviderInfo; onConfig
   const unsupported = !p.capabilities.receiveOrders && !p.capabilities.webhooks;
 
   return (
-    <Card className="flex flex-col gap-3 p-5">
+    <Card data-testid={`channel-${p.key}`} className="flex flex-col gap-3 p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-[18px] font-medium text-foreground">{p.name}</h3>
@@ -148,6 +149,8 @@ function ProviderCard({ p, onConfigure }: { p: IntegrationProviderInfo; onConfig
       </div>
 
       <StatusBadge status={c?.status ?? "NOT_CONNECTED"} />
+
+      <ChannelHealthLine p={p} />
 
       {unsupported && (
         <p className="rounded-lg bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
@@ -186,6 +189,9 @@ function ProviderCard({ p, onConfigure }: { p: IntegrationProviderInfo; onConfig
               }
             >
               {test.isPending ? t("settings.integrations.checking") : p.webhookPath ? t("settings.integrations.checkStatus") : t("settings.integrations.testConnection")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={onItems}>
+              {t("settings.integrations.items.open")}
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setShowLog((v) => !v)} aria-expanded={showLog}>
               {t("settings.integrations.activity")}
@@ -327,8 +333,10 @@ export default function IntegrationsPage() {
   const { t } = useI18n();
   const { data, isLoading, isError, error } = useIntegrationHub();
   const [configuring, setConfiguring] = useState<string | null>(null);
+  const [mapping, setMapping] = useState<string | null>(null);
   const delivery = data?.filter((p) => p.category === "FOOD_DELIVERY") ?? [];
   const current = data?.find((p) => p.key === configuring);
+  const mapped = data?.find((p) => p.key === mapping && p.connection);
 
   return (
     <div className="flex flex-col gap-6">
@@ -352,7 +360,7 @@ export default function IntegrationsPage() {
         ) : (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {delivery.map((p) => (
-              <ProviderCard key={p.key} p={p} onConfigure={() => setConfiguring(p.key)} />
+              <ProviderCard key={p.key} p={p} onConfigure={() => setConfiguring(p.key)} onItems={() => setMapping(p.key)} />
             ))}
           </div>
         )}
@@ -372,6 +380,7 @@ export default function IntegrationsPage() {
       </p>
 
       {current && <ConfigureDialog key={current.key} p={current} onClose={() => setConfiguring(null)} />}
+      {mapped && <ChannelItemsDialog key={mapped.key} p={mapped} onClose={() => setMapping(null)} />}
     </div>
   );
 }

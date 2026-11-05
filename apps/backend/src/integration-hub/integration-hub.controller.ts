@@ -4,12 +4,17 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Put,
   UsePipes,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import type { SessionUser } from '@nventra/types';
+import {
+  integrationItemMapPatchSchema,
+  type IntegrationItemMapPatchDto,
+  type SessionUser,
+} from '@nventra/types';
 import { z } from 'zod';
 import { AuditAction } from '../audit/audit-action';
 import { Auth } from '../common/decorators/auth.decorator';
@@ -74,6 +79,19 @@ export class IntegrationHubController {
     body: z.infer<typeof enabledSchema>,
   ) {
     return this.hub.setEnabled(u.restaurantId, provider, body.enabled);
+  }
+
+  // A patch, merged server-side: never replaces mappings it does not name.
+  @Auth('settings.manage')
+  @AuditAction('integration.item_map_saved', 'IntegrationConnection')
+  @Patch(':provider/item-map')
+  patchItemMap(
+    @CurrentUser() u: SessionUser,
+    @Param('provider') provider: string,
+    @Body(new ZodValidationPipe(integrationItemMapPatchSchema))
+    body: IntegrationItemMapPatchDto,
+  ) {
+    return this.hub.patchItemMap(u.restaurantId, provider, body);
   }
 
   @Auth('settings.manage')
