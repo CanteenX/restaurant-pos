@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   columnsToWrite,
   derivedTargets,
+  inPullScope,
   isContended,
   orderProblems,
   ownerWinsOver,
@@ -483,20 +484,29 @@ export class SyncApplier {
     const [r] = await tx.$queryRawUnsafe<
       {
         row: Record<string, unknown> | null;
+        branch: string | null;
         hlc: string | null;
         peer: string | null;
+        vbranch: string | null;
       }[]
     >(
-      `SELECT (SELECT sync_capture_row($1, to_jsonb(x)) FROM ${tbl} x
-                WHERE (${pkCols}) = (SELECT ${pkCols} FROM jsonb_populate_record(NULL::${tbl}, $2::jsonb))) AS row,
-              v.hlc::text AS hlc, v.peer
+      `SELECT h.row, h.branch, v.hlc::text AS hlc, v.peer, v."branchId" AS vbranch
          FROM (SELECT 1) one
+         LEFT JOIN LATERAL (
+           SELECT sync_capture_row($1, to_jsonb(x)) AS row, sync_branch_of($1, to_jsonb(x)) AS branch
+             FROM ${tbl} x
+            WHERE (${pkCols}) = (SELECT ${pkCols} FROM jsonb_populate_record(NULL::${tbl}, $2::jsonb))
+         ) h ON true
          LEFT JOIN sync_versions v ON v.tbl = $1 AND v."pkKey" = $3`,
       wire.tbl,
       JSON.stringify(local.pk),
       wire.pkKey,
     );
     if (!r.row && !r.hlc) return {};
+    // Only what this peer could pull anyway (#211 review): HQ's copy of
+    // another branch's row (a kiosk or QR token, payroll) never leaks.
+    const branch = r.row ? r.branch : r.vbranch;
+    if (!inPullScope(branch, opts.branches)) return {};
     return {
       restore: {
         tbl: wire.tbl,

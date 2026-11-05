@@ -13,6 +13,7 @@ import {
   schemaSkew,
   yieldDelayMs,
   type OwnershipInput,
+  inPullScope,
 } from './apply-rules';
 import { DERIVED } from './derived';
 import { SyncChange } from './outbox';
@@ -167,6 +168,15 @@ describe('ownership (rule 1)', () => {
         },
       );
     });
+  });
+});
+
+describe('inPullScope (restore filter, #211 review)', () => {
+  it('allows restaurant-wide rows and the peer\'s own branches only', () => {
+    expect(inPullScope(null, ['b1'])).toBe(true);
+    expect(inPullScope('b1', ['b1', 'b3'])).toBe(true);
+    expect(inPullScope('b2', ['b1'])).toBe(false);
+    expect(inPullScope('b2', [])).toBe(false);
   });
 });
 

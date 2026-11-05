@@ -531,7 +531,12 @@ Known limits, to address in #82:
     own copy of the row (`Conflict.restore`, a tombstone if HQ deleted it), the
     branch applies it, and a branch's own versions of rows it doesn't own
     never beat the owner's changes in LWW (`ownerWinsOver`). The rejected
-    edit stays in `sync_rejected` for review.
+    edit stays in `sync_rejected` for review. A restore is only sent for a
+    row the peer could pull anyway (`inPullScope`: restaurant-wide, or one
+    of the peer's branches, resolved through parent rows for `via` tables;
+    a tombstone uses its recorded branch). A push naming another branch's
+    row (its `branches` row with the kiosk token, its tables' QR tokens,
+    payroll) gets the `not-owner` conflict with no restore (#211 review).
   - **Push pages over HQ's body limit**: 200 customer rows exceed the default
     100 kB `BODY_LIMIT`, so HQ answered HTTP 413 on every cycle and the
     branch never got past that page. Push pages are now cut to at most

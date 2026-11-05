@@ -239,6 +239,18 @@ export function pullScope(tables = SYNC_TABLES) {
 }
 
 /**
+ * Whether a row of `branch` (null = restaurant-wide) is one the server's
+ * pull filter sends to a peer owning `branches`. HQ answers a rejected push
+ * with its own copy of a row only when this holds (#211 review).
+ */
+export function inPullScope(
+  branch: string | null | undefined,
+  branches: readonly string[],
+): boolean {
+  return branch == null || branches.includes(branch);
+}
+
+/**
  * A lock wait the applier should yield on instead of reporting: a deadlock
  * (40P01), its own lock_timeout (55P03) or a serialization failure (40001).
  */

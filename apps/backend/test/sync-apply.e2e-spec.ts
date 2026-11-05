@@ -293,6 +293,41 @@ describe('Sync apply at HQ (e2e)', () => {
       expect(after.price.toString()).toBe(before.price.toString());
     });
 
+    it("never restores another branch's HQ-owned rows to a peer (#211 review)", async () => {
+      const floor = await prisma.floor.create({
+        data: { branchId: b2, name: `F2-${tag}` },
+      });
+      const table = await prisma.table.create({
+        data: { floorId: floor.id, number: `T2-${tag}` },
+      });
+      // A b2 dish HQ deleted: its tombstone carries branch b2.
+      const gone = await prisma.menuItem.create({
+        data: {
+          branchId: b2,
+          categoryId: (
+            await prisma.menuCategory.create({
+              data: { branchId: b2, name: `Cat2-${tag}` },
+            })
+          ).id,
+          name: `Gone-${tag}`,
+          price: 5,
+        },
+      });
+      await prisma.menuItem.delete({ where: { id: gone.id } });
+      const r = await push(p1, [
+        ch('branches', { id: b2, name: 'x' }, p1),
+        ch('tables', { id: table.id, floorId: floor.id, number: 'x' }, p1),
+        ch('menu_items', { id: gone.id, branchId: b1, name: 'x' }, p1),
+      ]).expect(200);
+      const out = r.body.conflicts as { error: string; restore?: unknown }[];
+      expect(out).toHaveLength(3);
+      for (const c of out) {
+        expect(c.error).toMatch(/^not-owner/);
+        expect(c.restore).toBeUndefined();
+      }
+      expect(JSON.stringify(r.body)).not.toMatch(/kioskToken|qrToken/);
+    });
+
     it("rejects another branch's rows, including through a parent row", async () => {
       const theirs = order(b2);
       expect((await push(p2, [ch('orders', theirs, p2)])).body.applied).toBe(1);
