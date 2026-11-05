@@ -34,6 +34,8 @@ const EXTRACTED_PATHS = [
   "app/(dashboard)/reservations",
   "components/tables",
   "components/reservations",
+  "app/(dashboard)/menu",
+  "components/menu",
 ];
 
 for (const path of EXTRACTED_PATHS) {

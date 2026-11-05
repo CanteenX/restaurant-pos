@@ -24,5 +24,7 @@
   "common.save": "सहेजें",
   "common.cancel": "रद्द करें",
   "common.back": "वापस",
-  "common.done": "हो गया"
+  "common.done": "हो गया",
+  "common.edit": "संपादित करें",
+  "common.delete": "हटाएं"
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { useI18n } from "@/lib/i18n/context";
 import { ImagePlus, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "@/lib/toast";
@@ -46,6 +47,7 @@ export function EditItemDialog({
   categories: MenuCategory[];
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [name, setName] = useState(item.name);
   const [categoryId, setCategoryId] = useState(item.categoryId);
   const [stationId, setStationId] = useState(item.stationId ?? "");
@@ -63,7 +65,7 @@ export function EditItemDialog({
   const updateItem = useUpdateMenuItem(branchId);
   const uploadImage = useUploadItemImage();
   const priceLabel =
-    settings?.branch.taxMode === "EXCLUSIVE" ? "Price (excl. tax)" : "Price (incl. tax)";
+    settings?.branch.taxMode === "EXCLUSIVE" ? t("menu.item.priceExcl") : t("menu.item.priceIncl");
 
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -72,7 +74,7 @@ export function EditItemDialog({
     uploadImage.mutate(file, {
       onSuccess: (res) => setImageUrl(res.url),
       onError: (err) => {
-        toast.error(err instanceof ApiError ? err.message : "Could not upload image");
+        toast.error(err instanceof ApiError ? err.message : t("menu.item.uploadFailed"));
         setImagePreview(item.imageUrl ?? undefined);
       },
     });
@@ -81,7 +83,7 @@ export function EditItemDialog({
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!categoryId) {
-      toast.error("Choose a category");
+      toast.error(t("menu.item.chooseCategory"));
       return;
     }
     updateItem.mutate(
@@ -100,10 +102,10 @@ export function EditItemDialog({
       },
       {
         onSuccess: () => {
-          toast.success(`"${name}" updated`);
+          toast.success(t("menu.category.updated", { name }));
           onClose();
         },
-        onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not update item"),
+        onError: (err) => toast.error(err instanceof ApiError ? err.message : t("menu.item.updateFailed")),
       },
     );
   };
@@ -113,11 +115,11 @@ export function EditItemDialog({
       <DialogContent className="sm:max-w-md">
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>Edit menu item</DialogTitle>
+            <DialogTitle>{t("menu.item.edit")}</DialogTitle>
           </DialogHeader>
 
           <div className="flex flex-col gap-2">
-            <Label>Photo</Label>
+            <Label>{t("menu.item.photo")}</Label>
             <input
               ref={fileInputRef}
               type="file"
@@ -137,13 +139,13 @@ export function EditItemDialog({
                     if (fileInputRef.current) fileInputRef.current.value = "";
                   }}
                   className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-background/80 text-foreground"
-                  aria-label="Remove photo"
+                  aria-label={t("menu.item.removePhoto")}
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
                 {uploadImage.isPending && (
                   <div className="absolute inset-0 flex items-center justify-center bg-background/60 text-xs">
-                    Uploading…
+                    {t("menu.item.uploading")}
                   </div>
                 )}
               </div>
@@ -154,28 +156,28 @@ export function EditItemDialog({
                 className="flex h-28 w-28 flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border text-muted-foreground hover:border-primary hover:text-primary"
               >
                 <ImagePlus className="h-5 w-5" />
-                <span className="text-xs">Add photo</span>
+                <span className="text-xs">{t("menu.item.addPhoto")}</span>
               </button>
             )}
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="item-edit-name">Name</Label>
+            <Label htmlFor="item-edit-name">{t("menu.col.name")}</Label>
             <Input
               id="item-edit-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Margherita Pizza"
+              placeholder={t("menu.item.namePlaceholder")}
               required
               autoFocus
             />
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label>Category</Label>
+            <Label>{t("menu.col.category")}</Label>
             <Select value={categoryId} onValueChange={(v) => setCategoryId(v ?? "")}>
               <SelectTrigger>
-                <SelectValue placeholder="Select category" />
+                <SelectValue placeholder={t("menu.item.selectCategory")} />
               </SelectTrigger>
               <SelectContent>
                 {categories.map((c) => (
@@ -201,7 +203,7 @@ export function EditItemDialog({
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="edit-tax">Tax rate %</Label>
+              <Label htmlFor="edit-tax">{t("menu.item.taxRate")}</Label>
               <Input
                 id="edit-tax"
                 type="number"
@@ -216,7 +218,7 @@ export function EditItemDialog({
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="edit-half">Half portion price (optional)</Label>
+            <Label htmlFor="edit-half">{t("menu.item.halfPrice")}</Label>
             <Input
               id="edit-half"
               type="number"
@@ -224,18 +226,18 @@ export function EditItemDialog({
               step="0.01"
               value={halfPrice}
               onChange={(e) => setHalfPrice(e.target.value)}
-              placeholder="Leave empty if there is no half/full choice"
+              placeholder={t("menu.item.halfPricePlaceholder")}
             />
             <p className="text-xs text-muted-foreground">
-              When set, the POS asks Half / Full / Custom. The price above is the Full portion.
+              {t("menu.item.halfPriceHelp")}
             </p>
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label>Kitchen station</Label>
+            <Label>{t("menu.item.station")}</Label>
             <Select value={stationId} onValueChange={(v) => setStationId(v ?? "")}>
               <SelectTrigger>
-                <SelectValue placeholder="None" />
+                <SelectValue placeholder={t("menu.item.stationNone")} />
               </SelectTrigger>
               <SelectContent>
                 {stations?.map((s) => (
@@ -249,14 +251,14 @@ export function EditItemDialog({
 
           <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
             <Label htmlFor="edit-is-veg" className="cursor-pointer">
-              Vegetarian
+              {t("menu.item.vegetarian")}
             </Label>
             <Switch id="edit-is-veg" checked={isVeg} onCheckedChange={setIsVeg} />
           </div>
 
           <DialogFooter>
             <Button type="submit" disabled={updateItem.isPending || uploadImage.isPending}>
-              {updateItem.isPending ? "Saving…" : "Save changes"}
+              {updateItem.isPending ? t("menu.saving") : t("menu.saveChanges")}
             </Button>
           </DialogFooter>
         </form>
