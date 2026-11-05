@@ -36,3 +36,19 @@ export function envLimit(name: string, fallback: number): number {
   const n = Number(process.env[name]);
   return Number.isInteger(n) && n > 0 ? n : fallback;
 }
+
+// ONE write budget per integration key, shared by every transport that can
+// place orders or bookings with it: the REST guard (any non-GET route) and
+// GraphQL mutations. Separate limiters would let a key multiply its write
+// rate by switching transports. The limit is read per call so it always
+// matches the env the process runs with.
+const integrationWrites = new KeyRateLimiter();
+
+/** Charges one write to `keyId`; returns seconds to wait when over, else 0. */
+export function hitIntegrationWrite(keyId: string, now = Date.now()): number {
+  return integrationWrites.hit(
+    `${keyId}:w`,
+    envLimit('INTEGRATION_WRITE_LIMIT_PER_MIN', 30),
+    now,
+  );
+}

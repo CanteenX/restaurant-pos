@@ -3,8 +3,9 @@
 `POST /api/v1/graphql` offers a GraphQL endpoint for integrators alongside
 the REST [Integration API](integrations-api.md), with the same credentials
 and the same tenant isolation. This page covers the transport, auth and
-limits, and the read fields for menu, orders and customers. Mutations
-arrive in a follow-up release.
+limits, the read fields for menu, orders and customers, and the
+mutations. For copy-paste examples start with the developer guide,
+[GRAPHQL.md](GRAPHQL.md).
 
 ## Decision: schema-first on plain `graphql-js`
 
@@ -104,11 +105,46 @@ query RecentOrders($after: String) {
 (prices are tax-inclusive, so `tax` is informational). For a settled order it
 equals the bill and the payments.
 
+## Mutations
+
+| Mutation | Integration key scope | Staff permission | Notes |
+|---|---|---|---|
+| `createOrder(branchId, input, idempotencyKey)` | `orders:write` | — (staff use the POS) | the REST order path: server-priced, website price, minimum order, `acceptance: PENDING` |
+| `setMenuItemAvailability(id, available)` | `menu:availability` | `menu.manage` | sets `isActive`; audited, and pushed to connected delivery platforms |
+
+- **One mutation field per request.** A document with two (aliases and
+  fragments count) is refused with `400` before anything runs, so every
+  write gets its own response and is charged once to the write limit.
+- **Write limit.** A mutation sent with an integration key spends the
+  **same** per-key write budget as a REST write
+  (`INTEGRATION_WRITE_LIMIT_PER_MIN`, default 30/min), on top of the
+  request limit. REST and GraphQL writes from one key are counted together.
+  Over it the request gets `429`, `Retry-After`, and an error with
+  `extensions.code: "RATE_LIMITED"`; nothing runs. Staff sessions are not
+  charged, as on REST.
+- **Validation.** After GraphQL's type checks, arguments are parsed with the
+  shared Zod schemas (`graphqlCreateOrderArgsSchema`,
+  `graphqlSetMenuItemAvailabilityArgsSchema` in `packages/types`). The order
+  body is the REST `createIntegrationOrderSchema`, minus `referralCode`,
+  `sharedItemId` and `redeemPoints`. Explicit `null` means "not sent".
+  Failures are `BAD_USER_INPUT` with `extensions.field`.
+- **Idempotency.** `idempotencyKey` is the REST `Idempotency-Key`, in the
+  same per-key namespace: a retry with the same key and input (over either
+  transport) returns the original order; the same key with different input
+  is `BAD_USER_INPUT`. Payment mutations are out of scope.
+- **Error codes** from the services: `FORBIDDEN` (scope, permission, another
+  location), `NOT_FOUND` (an id that is not yours), `BAD_USER_INPUT`
+  (validation and business rules, for example a dish that is unavailable).
+  **Changed in #79:** a `400` from a service now maps to `BAD_USER_INPUT`
+  on every field, reads included; before #79 read fields returned
+  `BAD_REQUEST` for it. Other 4xx codes still map to `BAD_REQUEST`.
+
 ## Limits
 
 | Limit | Default | Env var |
 |---|---|---|
 | Requests per minute, per key / staff member | 120 | `GRAPHQL_LIMIT_PER_MIN` |
+| Writes (mutations) per minute, per integration key, shared with REST writes | 30 | `INTEGRATION_WRITE_LIMIT_PER_MIN` |
 | Selection depth | 8 | `GRAPHQL_MAX_DEPTH` |
 | Query cost | 1000 | `GRAPHQL_MAX_COST` |
 | Parser tokens | 5000 | `GRAPHQL_MAX_TOKENS` |
@@ -135,8 +171,8 @@ argument default so the cost rule charges what the resolver loads. The cost
 rule is one cap, not the only one.
 
 A request over a limit, or with invalid syntax or fields, gets `400` with
-`{"errors": [...]}` and nothing runs. Over the rate limit you get `429` with
-`Retry-After`. Errors raised while fields run are returned with
+`{"errors": [...]}` and nothing runs. Over a rate limit (requests or writes) you get
+`429` with `Retry-After`. Errors raised while fields run are returned with
 `extensions.code` (`FORBIDDEN`, `NOT_FOUND`, …); unexpected server errors are
 logged and returned as `Internal server error`.
 

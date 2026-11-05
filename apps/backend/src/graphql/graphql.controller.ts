@@ -30,10 +30,14 @@ export class GraphqlController {
     @Req() req: Request & { user?: SessionUser },
     @Res() res: Response,
   ) {
-    const { status, body: result } = await this.graphql.run(
-      body,
-      buildGraphqlContext(req),
-    );
+    const {
+      status,
+      body: result,
+      headers,
+    } = await this.graphql.run(body, buildGraphqlContext(req));
+    for (const [name, value] of Object.entries(headers ?? {})) {
+      res.setHeader(name, value);
+    }
     res.status(status).json(result);
   }
 

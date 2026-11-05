@@ -6,6 +6,7 @@ import {
   isInterfaceType,
   isObjectType,
   Kind,
+  OperationTypeNode,
   NoSchemaIntrospectionCustomRule,
   specifiedRules,
   type ASTVisitor,
@@ -211,6 +212,36 @@ function viaFragment(
   seen.delete(name);
   memo.set(name, value);
   return value;
+}
+
+/**
+ * At most `max` root fields in a mutation (aliases and fragments included).
+ * One write per request means each write is charged once to the per-key
+ * write limit (GraphqlService.chargeWrite, shared with REST) and gets its
+ * own HTTP response, so a retry never replays a batch.
+ */
+export function mutationLimitRule(max: number): ValidationRule {
+  return operationRule((sel, fragments, _context, operation) => {
+    if (operation.operation !== OperationTypeNode.MUTATION) return null;
+    const memo = new Map<string, number>();
+    const count = (set: SelectionSetNode, seen: Set<string>): number => {
+      let n = 0;
+      for (const s of set.selections) {
+        if (s.kind === Kind.FIELD) {
+          if (s.name.value !== '__typename') n += 1;
+        } else if (s.kind === Kind.INLINE_FRAGMENT) {
+          n += count(s.selectionSet, seen);
+        } else {
+          n += viaFragment(s.name.value, fragments, memo, seen, count);
+        }
+      }
+      return n;
+    };
+    const n = count(sel, new Set());
+    return n > max
+      ? `Send one mutation field per request (got ${n}, maximum ${max})`
+      : null;
+  });
 }
 
 function operationRule(

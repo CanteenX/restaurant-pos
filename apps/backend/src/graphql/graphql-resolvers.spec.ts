@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { GraphQLObjectType, type GraphQLField } from 'graphql';
 import type { BranchAccessService } from '../common/services/branch-access.service';
+import type { IntegrationsService } from '../integrations/integrations.service';
+import type { MenuService } from '../modules/menu/menu.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { GraphqlContext } from './graphql-context';
 import { GraphqlService } from './graphql.service';
@@ -74,6 +76,8 @@ function setup() {
   const service = new GraphqlService(
     prisma as unknown as PrismaService,
     branchAccess as unknown as BranchAccessService,
+    {} as IntegrationsService,
+    {} as MenuService,
   );
   return { prisma, service };
 }

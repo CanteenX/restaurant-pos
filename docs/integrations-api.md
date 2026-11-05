@@ -121,6 +121,8 @@ needs: for a typical website `locations:read`, `menu:read`, `orders:write`,
 and address, `orders:read_customer`.
 `customers:read` is only used by the [GraphQL API](graphql-api.md) and
 exposes customer profiles (personal data); a website does not need it.
+`menu:availability` (GraphQL only) lets a back-office system mark dishes sold
+out or back on; a website does not need it either.
 
 To expose the API on the internet, and a complete Next.js example, see
 [website-integration.md](website-integration.md).
@@ -357,7 +359,9 @@ website can show the price before the guest orders:
 ## GraphQL
 
 The same integration API keys (and staff sessions) also work against a
-GraphQL endpoint at `/api/v1/graphql` — see [graphql-api.md](graphql-api.md).
+GraphQL endpoint at `/api/v1/graphql` — see [graphql-api.md](graphql-api.md)
+for the reference and [GRAPHQL.md](GRAPHQL.md) for worked examples, including
+the `createOrder` and `setMenuItemAvailability` mutations.
 
 ---
 
