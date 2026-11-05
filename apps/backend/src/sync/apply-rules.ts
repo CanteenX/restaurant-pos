@@ -187,6 +187,29 @@ export function orderProblems(
   return problems;
 }
 
+/** URL with host case and trailing slashes normalised; null if invalid. */
+function serverId(url: string): string | null {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The stored peer key proves a re-registration, but only to the HQ that
+ * issued it; re-pointing to another (or mistyped) server never sends it.
+ */
+export function keyForServer(
+  s: { serverUrl: string | null; peerKey: string | null },
+  serverUrl: string,
+): string | null {
+  if (!s.peerKey || !s.serverUrl) return null;
+  const a = serverId(s.serverUrl);
+  return a !== null && a === serverId(serverUrl) ? s.peerKey : null;
+}
+
 export const RETRY_BASE_MS = 30_000;
 export const RETRY_MAX_MS = 10 * 60_000;
 

@@ -128,7 +128,7 @@ its parent's branch.
 |---|---|---|
 | `orders` (B), `order_items`, `order_item_modifiers`, `kots`, `kot_items` →order | LWW per row, numbering rule §4.5 | Sales happen at the branch; HQ reports on them. An order is edited only at its branch. |
 | `payments`, `refunds`, `gateway_payments` (RB), `order_item_stock_returns` →order | Append (+ LWW for status fields) | Money records; idempotent by id / `clientRequestId`. Totals stay server-authoritative at the branch that took the payment. |
-| `customers` (B), `customer_addresses` →customer, `customer_memberships` →customer | LWW, balances **Derived** | Customers are branch-scoped in the schema today (G15). `loyaltyPoints` derived from `points_ledger`, `walletBalance` from its ledger (#82). |
+| `customers` (B), `customer_addresses` →customer, `customer_memberships` →customer, `customer_wallet_entries` →customer (Append) | LWW, balances **Derived** | Customers are branch-scoped in the schema today (G15). `loyaltyPoints` derived from `points_ledger`, `walletBalance` from its ledger (#82). |
 | `points_ledger` (B), `referrals` (B) | Append | Ledger; `idempotencyKey` already unique. |
 | `gift_cards` (B), `gift_card_redemptions` →card | LWW / Append, `balance` **Derived** | Balance recomputed from redemptions. |
 | `ingredients` (B) | LWW, `currentStock` **Derived** | Ingredient definitions are created at the branch (stock is per branch). `currentStock` is recomputed from `stock_movements`. |

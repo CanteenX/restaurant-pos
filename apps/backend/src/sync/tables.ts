@@ -106,8 +106,9 @@ export const SYNC_TABLES: Readonly<Record<string, SyncTable>> = {
     derived: ['walletBalance'],
     ownerTotals: ['loyaltyPoints'],
   }),
-  // Store-credit ledger (#82): walletBalance is recomputed from it.
-  customer_wallet_entries: br(col(), 'append'),
+  // Store-credit ledger (#82): walletBalance is recomputed from it. Owned
+  // through its customer, never the wire's branchId (#209 audit).
+  customer_wallet_entries: br(via('customers', 'customerId'), 'append'),
   customer_addresses: br(via('customers', 'customerId')),
   customer_memberships: br(via('customers', 'customerId')),
   points_ledger: br(col(), 'append'),

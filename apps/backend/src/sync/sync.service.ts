@@ -7,7 +7,7 @@ import {
 import { hostname } from 'os';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApplyContext, ApplyResult, SyncApplier } from './apply';
-import { backoffMs, pullScope } from './apply-rules';
+import { backoffMs, keyForServer, pullScope } from './apply-rules';
 import { captureSql } from './capture-sql';
 import {
   clockSkewError,
@@ -468,8 +468,8 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       apiKey,
       s.deviceId,
       await this.localBranchIds(mode, branchIds),
-      // Already registered there (re-enabling): prove it with its key.
-      s.peerKey,
+      // Re-enabling against the same HQ: prove it with its key (#209 audit).
+      keyForServer(s, serverUrl),
     );
     const meta = await this.syncedTables();
     await this.prisma.$transaction(

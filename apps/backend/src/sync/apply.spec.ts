@@ -3,6 +3,7 @@ import {
   columnsToWrite,
   derivedTargets,
   isContended,
+  keyForServer,
   orderProblems,
   ownership,
   pullScope,
@@ -261,7 +262,6 @@ describe('derived balances (rule 5)', () => {
       'b2',
     ]);
   });
-
 });
 
 describe('order reconciliation at HQ (rule 7 audit)', () => {
@@ -379,5 +379,24 @@ describe('lock contention (#82 review)', () => {
     ]);
     expect(yieldDelayMs(0, () => 0)).toBe(75);
     expect(yieldDelayMs(0, () => 1)).toBe(125);
+  });
+});
+
+describe('keyForServer (#209 audit)', () => {
+  const s = { serverUrl: 'https://hq.example.com', peerKey: 'pk_old' };
+  it('re-sends the stored peer key only to the HQ that issued it', () => {
+    expect(keyForServer(s, 'https://hq.example.com')).toBe('pk_old');
+    expect(keyForServer(s, 'https://hq.example.com//')).toBe('pk_old');
+    expect(keyForServer(s, 'https://other.example.com')).toBeNull();
+    expect(keyForServer(s, 'http://hq.example.com')).toBeNull();
+    expect(keyForServer(s, 'https://hq.example.com.evil.test')).toBeNull();
+  });
+  it('sends nothing without a stored key or URL', () => {
+    expect(
+      keyForServer({ serverUrl: null, peerKey: 'pk' }, 'https://a'),
+    ).toBeNull();
+    expect(
+      keyForServer({ serverUrl: 'https://a', peerKey: null }, 'https://a'),
+    ).toBeNull();
   });
 });

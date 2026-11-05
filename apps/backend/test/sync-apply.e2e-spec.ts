@@ -368,50 +368,50 @@ describe('Sync apply at HQ (e2e)', () => {
       expect((await orderRow(mine.id))?.notes).toBe('synced');
     });
 
-  it('yields when the derived recompute meets a locked parent row', async () => {
-    // A till's plain UPDATE of the customer holds FOR NO KEY UPDATE: the
-    // ledger insert (FK, FOR KEY SHARE) passes, the walletBalance recompute
-    // after it waits and must yield instead of failing the push (#209 audit).
-    const c = { id: uid('cus'), branchId: b1, name: 'Busy Guest' };
-    await push(p1, [ch('customers', c, p1)]).expect(200);
-    let release!: () => void;
-    const gate = new Promise<void>((r) => (release = r));
-    let locked!: () => void;
-    const isLocked = new Promise<void>((r) => (locked = r));
-    const local = prisma.$transaction(
-      async (tx) => {
-        await tx.$queryRawUnsafe(
-          `SELECT 1 FROM customers WHERE id = $1 FOR NO KEY UPDATE`,
-          c.id,
-        );
-        locked();
-        await gate;
-      },
-      { timeout: 30_000 },
-    );
-    await isLocked;
-    setTimeout(release, 1_200);
-    const r = await push(p1, [
-      ch(
-        'customer_wallet_entries',
-        {
-          id: uid('wal'),
-          branchId: b1,
-          customerId: c.id,
-          delta: '25.00',
-          reason: 'REFUND_CREDIT',
-          idempotencyKey: uid('k'),
+    it('yields when the derived recompute meets a locked parent row', async () => {
+      // A till's plain UPDATE of the customer holds FOR NO KEY UPDATE: the
+      // ledger insert (FK, FOR KEY SHARE) passes, the walletBalance recompute
+      // after it waits and must yield instead of failing the push (#209 audit).
+      const c = { id: uid('cus'), branchId: b1, name: 'Busy Guest' };
+      await push(p1, [ch('customers', c, p1)]).expect(200);
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let locked!: () => void;
+      const isLocked = new Promise<void>((r) => (locked = r));
+      const local = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRawUnsafe(
+            `SELECT 1 FROM customers WHERE id = $1 FOR NO KEY UPDATE`,
+            c.id,
+          );
+          locked();
+          await gate;
         },
-        p1,
-      ),
-    ]).expect(200);
-    await local;
-    expect([r.body.applied, r.body.conflicts]).toEqual([1, []]);
-    const row = await prisma.customer.findUniqueOrThrow({
-      where: { id: c.id },
+        { timeout: 30_000 },
+      );
+      await isLocked;
+      setTimeout(release, 1_200);
+      const r = await push(p1, [
+        ch(
+          'customer_wallet_entries',
+          {
+            id: uid('wal'),
+            branchId: b1,
+            customerId: c.id,
+            delta: '25.00',
+            reason: 'REFUND_CREDIT',
+            idempotencyKey: uid('k'),
+          },
+          p1,
+        ),
+      ]).expect(200);
+      await local;
+      expect([r.body.applied, r.body.conflicts]).toEqual([1, []]);
+      const row = await prisma.customer.findUniqueOrThrow({
+        where: { id: c.id },
+      });
+      expect(row.walletBalance.toString()).toBe('25');
     });
-    expect(row.walletBalance.toString()).toBe('25');
-  });
   });
 
   // ---- duplicate and out-of-order changes converge -------------------------
@@ -517,6 +517,43 @@ describe('Sync apply at HQ (e2e)', () => {
         c.id,
       );
       expect(origins).toEqual([{ origin: p1.id }]);
+    });
+
+    it("refuses a wallet entry for another branch's customer (#209 audit)", async () => {
+      const c = {
+        id: uid('cus'),
+        branchId: b2,
+        name: 'Other Branch Guest',
+        walletBalance: '0.00',
+      };
+      expect(
+        (await push(p2, [ch('customers', c, p2)]).expect(200)).body.applied,
+      ).toBe(1);
+      // Branch 1 claims the entry is its own; the customer says otherwise.
+      const forged = {
+        id: uid('wal'),
+        branchId: b1,
+        customerId: c.id,
+        delta: '10000.00',
+        reason: 'REFUND_CREDIT',
+        idempotencyKey: uid('k'),
+      };
+      const r = await push(p1, [
+        ch('customer_wallet_entries', forged, p1),
+      ]).expect(200);
+      expect(r.body.applied).toBe(0);
+      expect(r.body.conflicts.map((x: { error: string }) => x.error)).toEqual([
+        `not-owner: row belongs to branch ${b2}`,
+      ]);
+      const after = await prisma.customer.findUniqueOrThrow({
+        where: { id: c.id },
+      });
+      expect(after.walletBalance.toString()).toBe('0');
+      const rows = await prisma.$queryRawUnsafe<unknown[]>(
+        `SELECT 1 FROM customer_wallet_entries WHERE id = $1`,
+        forged.id,
+      );
+      expect(rows).toEqual([]);
     });
 
     it('recomputes a gift card balance from its redemptions', async () => {
