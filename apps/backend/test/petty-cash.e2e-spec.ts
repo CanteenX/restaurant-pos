@@ -180,6 +180,52 @@ run('Petty cash ledger (e2e)', () => {
       .expect(400);
   });
 
+  it('a bank debit equal to a payout is never matched to it', async () => {
+    const exps = (
+      await owner
+        .get(`/api/v1/accounting/expenses${q}&from=${D}&to=${D}`)
+        .expect(200)
+    ).body as { id: string; category: string }[];
+    const payout = exps.find((e) => e.category === `Petty ${tag}`)!;
+
+    const imp = await owner
+      .post(`/api/v1/accounting/bank/import${q}`)
+      .send({
+        csv: `Date,Description,Ref No,Amount\n${D},Bank debit ${tag},PC-${tag},-250.50`,
+      })
+      .expect(201);
+    expect(imp.body.imported).toBe(1);
+    await owner.post(`/api/v1/accounting/bank/auto-match${q}`).expect(201);
+
+    const rec = (
+      await owner
+        .get(`/api/v1/accounting/bank${q}&from=${D}&to=${D}`)
+        .expect(200)
+    ).body as {
+      transactions: {
+        id: string;
+        reference: string;
+        status: string;
+        expense: unknown;
+      }[];
+    };
+    const line = rec.transactions.find((t) => t.reference === `PC-${tag}`)!;
+    expect(line.status).toBe('UNMATCHED');
+    expect(line.expense).toBeNull();
+
+    const cands = (
+      await owner
+        .get(`/api/v1/accounting/bank/${line.id}/candidates${q}`)
+        .expect(200)
+    ).body as { id: string }[];
+    expect(cands.map((c) => c.id)).not.toContain(payout.id);
+
+    await owner
+      .post(`/api/v1/accounting/bank/${line.id}/match${q}`)
+      .send({ expenseId: payout.id })
+      .expect(404);
+  });
+
   it('summarises the day', async () => {
     const s = (await owner.get(`${BASE}/summary${q}&date=${D}`).expect(200))
       .body;

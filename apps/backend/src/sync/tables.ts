@@ -130,6 +130,10 @@ export const SYNC_TABLES: Readonly<Record<string, SyncTable>> = {
   expenses: br(col()),
   cash_closings: br(col()),
   bank_transactions: br(col()),
+  // Petty cash (#72): entries are the ledger; the float's balance is a cached
+  // total recomputed from them, never LWW (G3).
+  petty_cash_entries: br(col(), 'append'),
+  petty_cash_floats: br(col(), 'lww', { derived: ['balance'] }),
   equipment: br(col()),
   service_logs: br(via('equipment', 'equipmentId')),
   audit_logs: br(null, 'append'),
