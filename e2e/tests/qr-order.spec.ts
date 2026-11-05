@@ -1,12 +1,13 @@
 import { expect, test } from "@playwright/test";
-import { openDashboard } from "./helpers";
+import { demoBranchId, openDashboard } from "./helpers";
 
 // Guest scans a table QR code and orders without logging in; the ticket must
 // reach the right kitchen station with the guest's name. Uses Table 6.
 test("guest QR order reaches the kitchen display", async ({ page, browser }) => {
   await openDashboard(page);
 
-  const floors = await (await page.request.get("/api/v1/tables/floors")).json();
+  const branchId = await demoBranchId(page);
+  const floors = await (await page.request.get(`/api/v1/tables/floors?branchId=${branchId}`)).json();
   const tables = (Array.isArray(floors) ? floors : [floors]).flatMap((f: { tables?: unknown[] }) => f.tables ?? []) as {
     id: string;
     name: string;
@@ -16,7 +17,7 @@ test("guest QR order reaches the kitchen display", async ({ page, browser }) => 
   expect(table, "seeded Table 6").toBeTruthy();
 
   const rotated = await page.request.post(
-    `/api/v1/tables/${table!.id}/qr-token${table!.branchId ? `?branchId=${table!.branchId}` : ""}`,
+    `/api/v1/tables/${table!.id}/qr-token?branchId=${table!.branchId ?? branchId}`,
   );
   expect(rotated.ok()).toBeTruthy();
   const { qrToken } = (await rotated.json()) as { qrToken: string };

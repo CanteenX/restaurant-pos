@@ -21,3 +21,12 @@ export async function openDashboard(page: Page): Promise<void> {
 }
 
 export const LOGGED_OUT = { cookies: [], origins: [] };
+
+/** Resolve the demo owner's first branch id (branch-scoped APIs return 403 without ?branchId). */
+export async function demoBranchId(page: Page): Promise<string> {
+  const users = (await (await page.request.get("/api/v1/users")).json()) as {
+    email: string;
+    branches: { branch: { id: string } }[];
+  }[];
+  return users.find((u) => u.email === DEMO_OWNER.email)!.branches[0].branch.id;
+}

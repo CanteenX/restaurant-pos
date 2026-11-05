@@ -50,3 +50,5 @@ apps/backend/src/system/db-identity-upgrade.spec.ts  # unit tests for the legacy
 apps/backend/test/db-identity-upgrade.e2e-spec.ts    # e2e: legacy role/db renamed with data intact
 scripts/test-db-identity-upgrade.sh                  # drill: starts a stack with the legacy identity
 docs/UPGRADING.md                                    # tells admins which legacy names get renamed
+apps/backend/src/auth/session.ts                     # clears the legacy session cookie (#147)
+apps/backend/src/auth/session.spec.ts                # clears the legacy session cookie (#147)
