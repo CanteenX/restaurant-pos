@@ -34,6 +34,13 @@ export const sessionUserSchema = z.object({
 });
 export type SessionUser = z.infer<typeof sessionUserSchema>;
 
+/** Session settings the browser follows (returned by GET /auth/me, #18). */
+export const clientSessionSchema = z.object({
+  idleMinutes: z.number().positive(),
+  idleSignOut: z.boolean(),
+});
+export type ClientSession = z.infer<typeof clientSessionSchema>;
+
 export const twoFactorCodeSchema = z.object({ code: z.string().trim().min(6).max(20) });
 export const twoFactorDisableSchema = z.object({
   password: z.string().min(1),

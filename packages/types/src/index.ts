@@ -25,3 +25,4 @@ export * from "./marketing";
 export * from "./order-lifecycle";
 export * from "./customer-display";
 export * from "./labels";
+export * from "./graphql";

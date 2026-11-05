@@ -1766,5 +1766,17 @@
   "pos.gatewayQr.newQr": "Nuevo QR",
   "pos.gatewayQr.manualHeld": "Hay un QR de {gateway} abierto en esta cuenta: se cierra sola cuando el cliente paga.",
   "pos.gatewayQr.override": "El cliente paga de otra forma",
-  "pos.gatewayQr.overrideOn": "Cobrando de otra forma. Si el QR también se paga, se marcará para reembolso."
+  "pos.gatewayQr.overrideOn": "Cobrando de otra forma. Si el QR también se paga, se marcará para reembolso.",
+  "session.idle.title": "¿Sigues ahí?",
+  "session.idle.body": "Se cerrará tu sesión en {seconds} segundos porque esta pantalla ha estado inactiva.",
+  "session.idle.signOutNow": "Cerrar sesión ahora",
+  "session.idle.stay": "Mantener la sesión",
+  "session.revokeAll": "Cerrar sesión en todos los dispositivos",
+  "session.revokeAllConfirm": "¿Cerrar sesión en todos los dispositivos, incluido este? Cada dispositivo tendrá que iniciar sesión de nuevo.",
+  "session.revokeAllFailed": "No se pudo cerrar sesión en los otros dispositivos",
+  "settings.staff.signOutEverywhere": "Cerrar sesión en todas partes",
+  "settings.staff.signOutEverywhereHint": "Cerrar la sesión de esta persona en todos los dispositivos (dispositivo perdido o compartido)",
+  "settings.staff.signOutEverywhereConfirm": "¿Cerrar la sesión de {name} en todos los dispositivos? Tendrá que iniciar sesión de nuevo.",
+  "settings.staff.signOutEverywhereDone": "Se cerró la sesión de {name} en todos los dispositivos",
+  "settings.staff.signOutEverywhereFailed": "No se pudo cerrar la sesión"
 }

@@ -104,7 +104,11 @@ nothing about it is tied to a specific machine or network:
 
 **Sessions.** A login stays valid while it is used and signs out after
 `SESSION_IDLE_MINUTES` (default 60) of inactivity, and never lasts longer
-than `SESSION_MAX_HOURS` (default 12) after sign-in, however active. `POST
+than `SESSION_MAX_HOURS` (default 12) after sign-in, however active. The
+web app warns and signs a browser out after the same idle window without
+a tap or key press (the Kitchen Display is exempt so an unattended kitchen
+tablet keeps receiving tickets); `SESSION_IDLE_SIGNOUT=false` turns that
+browser-side sign-out off. `POST
 /api/v1/auth/sessions/revoke` signs the caller out of every device, and
 `POST /api/v1/auth/sessions/revoke/:userId` (needs `users.manage`) does the
 same for a staff member; a password reset or 2FA reset by an admin, and
@@ -161,7 +165,7 @@ by phase.
 | 12 | Branch Management — branch switcher, cross-branch overview, branch-to-branch stock transfers | ✅ |
 | 13 | Analytics — live dashboard plus 18 reports (peak hours, food cost & margins, retention…) with print, CSV, Excel and PDF export, and scheduled report emails | ✅ |
 | 14 | Marketing — coupons, happy-hour discounts, email (your SMTP) / SMS / WhatsApp campaigns with opt-out | ✅ |
-| 15 | Finance — daily cash closing, expenses, monthly budgets | ✅ expense approvals · 🚧 petty cash |
+| 15 | Finance — daily cash closing, expenses, monthly budgets | ✅ expense approvals · 🚧 petty cash (API done, screen pending) |
 | 16 | Maintenance — equipment register, service schedules with overdue flags | ✅ |
 | 17 | Documents — SOPs, contracts, recipes, purchase paperwork, with file attachments (PDF, images, Office) | ✅ |
 | 18 | Security — RBAC, audit log, two-factor sign-in with recovery codes, backup/restore, session expiry, PIN login | ✅ |

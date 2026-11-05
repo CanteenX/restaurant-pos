@@ -18,6 +18,7 @@ import {
   registerSchema,
   twoFactorCodeSchema,
   twoFactorDisableSchema,
+  type ClientSession,
   type SessionUser,
 } from '@nventra/types';
 import { Throttle } from '@nestjs/throttler';
@@ -33,6 +34,7 @@ import {
   SESSION_COOKIE,
   clearLegacySessionCookie,
   sessionCookieOptions,
+  clientSessionConfig,
   sessionIdleSeconds,
 } from './session';
 
@@ -40,6 +42,7 @@ import {
 @Controller('v1/auth')
 export class AuthController {
   private readonly cookieMaxAgeMs: number;
+  private readonly clientSession: ClientSession;
 
   constructor(
     private readonly authService: AuthService,
@@ -48,6 +51,7 @@ export class AuthController {
     config: ConfigService,
   ) {
     this.cookieMaxAgeMs = sessionIdleSeconds(config) * 1000;
+    this.clientSession = clientSessionConfig(config);
   }
 
   // Tighter than the app-wide default — unauthenticated and creates a full
@@ -206,7 +210,7 @@ export class AuthController {
   ) {
     // Only the legacy cookie: the current session stays as it is.
     clearLegacySessionCookie(req, res);
-    return { user };
+    return { user, session: this.clientSession };
   }
 
   // Public and unauthenticated — the marketing/login page needs this before

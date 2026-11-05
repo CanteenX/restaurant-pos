@@ -109,6 +109,8 @@ describe('Session cookie (e2e)', () => {
       .expect(201);
     const me = await agent.get('/api/v1/auth/me').expect(200);
     expect(me.body.user.restaurantId).toBe(restaurantId);
+    // #18: the browser's idle sign-out follows the server's window.
+    expect(me.body.session).toEqual({ idleMinutes: 60, idleSignOut: true });
   });
 
   it('logout clears the nventra_session cookie', async () => {

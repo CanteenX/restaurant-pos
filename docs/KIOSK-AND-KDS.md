@@ -85,6 +85,9 @@ Install nothing special.
    Developer options → Stay awake while charging).
 5. New kiosk tickets appear live over the socket connection with a sound; the card shows
    `#<order number>`, `KIOSK · <station>`.
+6. Leave it on **Kitchen Display**: that screen is exempt from the idle sign-out, so the tablet
+   stays signed in untouched (up to `SESSION_MAX_HOURS`). On any other screen it is signed out
+   after `SESSION_IDLE_MINUTES` without a tap.
 
 ## 5. Printer and scanner — what is and is not verified
 

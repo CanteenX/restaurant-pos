@@ -60,6 +60,9 @@ describe('AccountingService expense approvals', () => {
         groupBy: jest.fn().mockResolvedValue([]),
       },
       cashClosing: { findUnique: jest.fn().mockResolvedValue(null) },
+      pettyCashEntry: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
+      },
       payment: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
       },

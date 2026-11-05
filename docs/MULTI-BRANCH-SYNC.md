@@ -138,6 +138,7 @@ its parent's branch.
 | `reservations`, `waitlist_entries`, `table_requests` (B) | LWW | Front-of-house state of that branch. |
 | `attendance`, `shifts`, `leave_requests` (B) | LWW | Clock-in happens at the branch (advisory-locked locally). |
 | `expenses`, `cash_closings`, `bank_transactions` (B) | LWW | Branch till and day-end; `cash_closings` unique per business date. |
+| `petty_cash_entries` (B), `petty_cash_floats` (B) | Append / LWW, `balance` **Derived** | Petty-cash ledger (#72); the float balance is recomputed from its entries. |
 | `equipment`, `service_logs` (B) | LWW | Branch assets. |
 | `audit_logs` | Append | HQ keeps the full trail; branches don't receive others'. |
 

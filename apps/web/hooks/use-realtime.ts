@@ -38,7 +38,14 @@ export function useRealtime(branchId: string | null) {
       wasDown = true;
       setRealtimeState("offline");
     };
-    socket.on("disconnect", down);
+    socket.on("disconnect", (reason) => {
+      down();
+      // The server drops a revoked session's sockets ("Log out of all
+      // devices", #17): re-check the session so this tab leaves at once.
+      if (reason === "io server disconnect") {
+        void queryClient.invalidateQueries({ queryKey: ["auth", "me"] });
+      }
+    });
     socket.on("connect_error", down);
 
     for (const event of REALTIME_EVENTS) {
