@@ -143,3 +143,39 @@ test("an open gateway QR survives a reload and still holds manual payment", asyn
   await api.post(`${MOCK}/__mock/qr_codes/${before[0].id}/pay`, { data: {} });
   await expect(page.getByText(/Payment received · ₹280\.00|already paid/)).toBeVisible({ timeout: 15_000 });
 });
+
+test("a bill with an open QR can still be closed after Razorpay is switched off", async ({ page }) => {
+  const up = await page.request.get(`${MOCK}/__mock/qr_codes`).catch(() => null);
+  test.skip(!up?.ok(), `Razorpay mock not running at ${MOCK} (start it via scripts/agent/qa-native.sh)`);
+
+  const api = page.request;
+  await api.put("/api/v1/integration-hub/razorpay", { data: { credentials: KEYS } });
+  await api.post("/api/v1/integration-hub/razorpay/test");
+
+  await openDashboard(page);
+  await page.goto("/pos");
+  // Table 2 is free again: the first test in this file paid its bill.
+  await page.getByRole("button", { name: "Table 2" }).click();
+  await page.getByRole("button", { name: /Paneer\s*Tikka/ }).first().click();
+  await page.getByRole("button", { name: /send to kitchen/i }).click();
+  await page.getByRole("radio", { name: "UPI" }).click();
+  await page.getByRole("button", { name: /Show Razorpay UPI QR · ₹280\.00/ }).click();
+  await expect(page.getByTestId("gateway-qr")).toBeVisible();
+
+  // An admin switches Razorpay off while the guest still has the QR.
+  await api.post("/api/v1/integration-hub/razorpay/enabled", { data: { enabled: false } });
+  await page.reload();
+  await page.getByRole("button", { name: "Table 2" }).click();
+  await page.getByRole("button", { name: "View & pay" }).click();
+
+  // The till still holds the bill, and offers the override instead of a dead end.
+  const complete = page.getByRole("button", { name: /Complete payment · ₹280\.00/ });
+  await expect(complete).toBeDisabled();
+  await expect(page.getByText(/A Razorpay QR is open on this bill/)).toBeVisible();
+  await page.screenshot({ path: "test-results/upi-qr-razorpay-disabled-hold.png" });
+  await page.getByRole("button", { name: "Guest is paying another way" }).click();
+  await expect(complete).toBeEnabled();
+  await complete.click();
+  await expect(page.getByRole("button", { name: "New order" })).toBeVisible({ timeout: 15_000 });
+  await page.screenshot({ path: "test-results/upi-qr-razorpay-disabled-closed.png" });
+});

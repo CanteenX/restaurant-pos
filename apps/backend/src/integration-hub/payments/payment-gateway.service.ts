@@ -17,6 +17,7 @@ import { getProvider } from '../providers/registry';
 import { decryptSecret } from '../secret-box';
 import {
   GatewayError,
+  gatewayQrPastClose,
   isPaymentGateway,
   mapGatewayError,
   nextAttemptStatus,
@@ -194,7 +195,10 @@ export class PaymentGatewayService {
   /**
    * Attempts on the order that can still be paid at the gateway, after asking
    * the gateway about each (so a paid one settles, an expired one drops out).
-   * If the gateway cannot be reached the attempt is kept: it may be payable.
+   * If the gateway cannot be asked the attempt is kept while it may still be
+   * payable, but never past its close time: a closed QR cannot collect, and
+   * it must not hold the bill while the gateway is switched off. The row is
+   * left as it is, so a late success report is still taken (and flagged).
    */
   private async refreshOpen(
     restaurantId: string,
@@ -217,7 +221,8 @@ export class PaymentGatewayService {
       const after = await this.tryRefresh(restaurantId, row);
       if (
         (after.status === 'CREATED' || after.status === 'PENDING') &&
-        !after.settlementError
+        !after.settlementError &&
+        !gatewayQrPastClose(after.createdAt)
       ) {
         live.push(after);
       }

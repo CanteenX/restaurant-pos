@@ -11,6 +11,7 @@
 //   then every webhook is unproven and refunds are refused.
 
 import {
+  GATEWAY_QR_LIFETIME_MS,
   GatewayError,
   type CreatePaymentInput,
   type CreatedPayment,
@@ -71,7 +72,7 @@ export function razorpayBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /** How long a guest has to scan before the QR closes. */
-const QR_LIFETIME_MS = 15 * 60_000;
+const QR_LIFETIME_MS = GATEWAY_QR_LIFETIME_MS;
 const QR_ID = /^qr_[A-Za-z0-9]{1,40}$/;
 
 interface RazorpayQr {

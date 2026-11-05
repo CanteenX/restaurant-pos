@@ -310,4 +310,108 @@ describe('Razorpay UPI QR (e2e, mock server)', () => {
       process.env.RAZORPAY_API_BASE = mock.url;
     }
   });
+
+  // A QR that can no longer be checked (Razorpay switched off, or its keys
+  // stopped working) must not hold the bill forever: once its close time has
+  // passed it cannot collect money, so checkout goes ahead.
+  describe('gateway unavailable with a QR open', () => {
+    const open = (orderId: string) =>
+      owner.get(`${P}/orders/${orderId}/attempts/open${q}`).expect(200);
+    const cash = (orderId: string, amount: number, extra = {}) =>
+      owner
+        .post(`/api/v1/orders/${orderId}/checkout${q}`)
+        .send({ payments: [{ method: 'CASH', amount }], ...extra });
+    const setEnabled = (enabled: boolean) =>
+      owner.post(`${HUB}/razorpay/enabled`).send({ enabled }).expect(201);
+    // Moves the attempt's creation back past the QR's close time.
+    const pastClose = (id: string) =>
+      prisma.gatewayPayment.update({
+        where: { id },
+        data: { createdAt: new Date(Date.now() - 18 * 60_000) },
+      });
+    const overrides = (orderId: string) =>
+      prisma.auditLog.count({
+        where: { entityId: orderId, action: 'payment.gateway_qr_overridden' },
+      });
+
+    afterEach(async () => {
+      await connect(MOCK_KEY_SECRET);
+      await setEnabled(true);
+      await owner.post(`${HUB}/razorpay/test`).expect(201);
+    });
+
+    it('still reports the open QR to the till and takes an override', async () => {
+      const orderId = await newOrder(90);
+      const a = (await attempt(orderId).expect(201)).body;
+      await setEnabled(false);
+      expect((await owner.get(`${P}/available`).expect(200)).body).toEqual([]);
+
+      // The till learns about the QR from the server, not from `available`.
+      expect((await open(orderId)).body.attempt).toMatchObject({
+        id: a.id,
+        provider: 'razorpay',
+        status: 'PENDING',
+      });
+      await cash(orderId, 90).expect(409);
+      await cash(orderId, 90, { overrideOpenGatewayQr: true }).expect(201);
+      expect(await prisma.payment.count({ where: { orderId } })).toBe(1);
+      expect(await overrides(orderId)).toBe(1);
+    });
+
+    it('stops holding the bill once the QR is past its close time', async () => {
+      const orderId = await newOrder(95);
+      const a = (await attempt(orderId).expect(201)).body;
+      await setEnabled(false);
+      await pastClose(a.id);
+
+      expect((await open(orderId)).body).toEqual({ attempt: null });
+      await cash(orderId, 95).expect(201);
+      expect(await overrides(orderId)).toBe(0);
+      const order = await prisma.order.findUniqueOrThrow({
+        where: { id: orderId },
+      });
+      expect(order.status).toBe('PAID');
+    });
+
+    it('stops holding the bill when the keys stopped working and the QR is past close', async () => {
+      const orderId = await newOrder(96);
+      const a = (await attempt(orderId).expect(201)).body;
+      // Rotated or revoked key: Razorpay can no longer be asked.
+      await connect('rotated-secret-rotated-secret');
+      expect((await open(orderId)).body.attempt).toMatchObject({ id: a.id });
+      await cash(orderId, 96).expect(409);
+
+      await pastClose(a.id);
+      expect((await open(orderId)).body).toEqual({ attempt: null });
+      await cash(orderId, 96).expect(201);
+    });
+
+    it('takes a late success report after the bill was closed another way, and flags it', async () => {
+      const orderId = await newOrder(97);
+      const a = (await attempt(orderId).expect(201)).body;
+      await setEnabled(false);
+      await pastClose(a.id);
+      await cash(orderId, 97).expect(201);
+
+      // The guest had paid just before the QR closed; Razorpay comes back.
+      await request(mock.url)
+        .post(`/__mock/qr_codes/${a.externalId}/pay`)
+        .send({})
+        .expect(200);
+      await setEnabled(true);
+      const r = await owner.post(`${P}/attempts/${a.id}/refresh`).expect(201);
+      expect(r.body).toMatchObject({ status: 'SUCCEEDED', settled: false });
+      expect(r.body.settlementError).toBeTruthy();
+      expect(await prisma.payment.count({ where: { orderId } })).toBe(1);
+    });
+
+    it('writes no override audit row when the checkout itself fails', async () => {
+      const orderId = await newOrder(98);
+      await attempt(orderId).expect(201);
+      // Short of the bill without allowPartial: refused after the QR check.
+      await cash(orderId, 10, { overrideOpenGatewayQr: true }).expect(400);
+      expect(await overrides(orderId)).toBe(0);
+      expect(await prisma.payment.count({ where: { orderId } })).toBe(0);
+    });
+  });
 });

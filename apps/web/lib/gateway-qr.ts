@@ -68,3 +68,43 @@ export function gatewayQrIsLive(
   if (gatewayQrBlocksManualUpi(localPhase)) return true;
   return !!serverOpen && gatewayQrBlocksManualUpi(gatewayQrPhase(serverOpen));
 }
+
+const GATEWAY_NAMES: Record<string, string> = { razorpay: "Razorpay" };
+
+/** A display name for a gateway key, also when it is no longer "available". */
+export function gatewayDisplayName(provider: string): string {
+  return GATEWAY_NAMES[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1);
+}
+
+export interface GatewayHold {
+  /** A gateway QR on this bill can still be paid. */
+  live: boolean;
+  /** Manual payment is refused until the QR is paid, expires or is overridden. */
+  held: boolean;
+  /** Offer "Guest is paying another way". */
+  showOverride: boolean;
+  /** Who the open QR is with, for the hold message. */
+  gatewayName: string | null;
+}
+
+/**
+ * What the checkout panel holds while a gateway QR is open. The server's open
+ * attempt decides, whether or not the gateway is still offered: if Razorpay is
+ * switched off or its keys stopped working with a QR open, the bill must stay
+ * closable through the override (the server refuses it otherwise).
+ */
+export function gatewayHold(o: {
+  gateway: { key: string; name: string } | null;
+  localPhase: GatewayQrPhase | null;
+  serverOpen: GatewayAttemptView | null | undefined;
+  overridden: boolean;
+  method: string;
+}): GatewayHold {
+  // The on-screen QR only exists while a gateway is offered.
+  const live = gatewayQrIsLive(o.gateway ? o.localPhase : null, o.serverOpen);
+  const held = live && !o.overridden;
+  // With a gateway, UPI shows its QR; without one there is nothing to wait on here.
+  const showOverride = held && (o.method !== "UPI" || !o.gateway);
+  const gatewayName = !live ? null : (o.gateway?.name ?? (o.serverOpen ? gatewayDisplayName(o.serverOpen.provider) : null));
+  return { live, held, showOverride, gatewayName };
+}

@@ -150,12 +150,25 @@ logged). Use test-mode keys (`rzp_test_…`) to try it without moving money.
   `overrideOpenGatewayQr: true` (the cashier confirmed the guest pays another
   way; audited as `payment.gateway_qr_overridden`). If that QR is paid
   anyway, settlement fails on the closed bill and it is flagged for review.
+  The override audit row is written inside the checkout transaction, so a
+  checkout that fails leaves none.
+- **Gateway switched off or keys broken with a QR open:** the attempt is
+  still reported open (it may be payable) and holds checkout, but only until
+  its close time: 15 min QR lifetime + 2 min grace from the attempt's
+  `createdAt` (`gatewayQrPastClose` in `payment-gateway.ts`). After that a
+  single-use QR cannot collect, so neither `attempts/open` nor
+  `orders.checkout` treats it as live, even if the gateway cannot be asked.
+  The row is not rewritten: if the gateway later reports it paid, the
+  success is still taken and flagged on the closed bill.
 - **Till:** when a gateway is available, choosing UPI at checkout offers
   "Show Razorpay UPI QR"; the QR shows the server-locked amount and the bill
   closes by itself once paid. On load the till asks for the bill's open
   QR and resumes it, so a reload, table switch or method switch never loses
   it; manual payment stays held (with a "Guest is paying another way"
-  override) until it is paid or expires. With no connected gateway the till keeps the
+  override) until it is paid or expires. The till asks for the open QR
+  whether or not a gateway is still available, so the hold and the override
+  also show when Razorpay was switched off with a QR open (the static UPI QR
+  is hidden while that hold stands). With no connected gateway the till keeps the
   static UPI QR from Settings → Restaurant.
 - **Mock server:** `apps/backend/test/razorpay-mock-server.ts`
   (`pnpm exec ts-node test/razorpay-mock-server.ts`, port 4010) implements

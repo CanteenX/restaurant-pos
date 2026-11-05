@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { gatewayQrBlocksManualUpi, gatewayQrIsLive, gatewayQrPhase, gatewayQrUri, type GatewayAttemptView } from "./gateway-qr.ts";
+import { gatewayHold, gatewayQrBlocksManualUpi, gatewayQrIsLive, gatewayQrPhase, gatewayQrUri, type GatewayAttemptView } from "./gateway-qr.ts";
 
 const attempt = (over: Partial<GatewayAttemptView> = {}): GatewayAttemptView => ({
   id: "att_1",
@@ -81,4 +81,43 @@ test("a QR the server still holds open blocks manual payment with nothing on scr
   // The QR on screen counts until the server catches up.
   assert.equal(gatewayQrIsLive("waiting", null), true);
   assert.equal(gatewayQrIsLive("paid", null), false);
+});
+
+const rzp = { key: "razorpay", name: "Razorpay" };
+
+test("an open server QR holds the bill even when no gateway is available any more", () => {
+  // Razorpay switched off (or its keys stopped working) while a QR is open.
+  const h = gatewayHold({ gateway: null, localPhase: null, serverOpen: attempt(), overridden: false, method: "CASH" });
+  assert.deepEqual(h, { live: true, held: true, showOverride: true, gatewayName: "Razorpay" });
+  // On UPI there is no gateway QR to show, so the override is offered there too.
+  assert.equal(gatewayHold({ gateway: null, localPhase: null, serverOpen: attempt(), overridden: false, method: "UPI" }).showOverride, true);
+});
+
+test("the override releases the hold", () => {
+  const h = gatewayHold({ gateway: null, localPhase: null, serverOpen: attempt(), overridden: true, method: "CASH" });
+  assert.equal(h.live, true);
+  assert.equal(h.held, false);
+  assert.equal(h.showOverride, false);
+});
+
+test("nothing is held once the server reports no open QR", () => {
+  const h = gatewayHold({ gateway: null, localPhase: null, serverOpen: null, overridden: false, method: "CASH" });
+  assert.deepEqual(h, { live: false, held: false, showOverride: false, gatewayName: null });
+});
+
+test("a stale on-screen phase does not hold the bill once the gateway is gone", () => {
+  const h = gatewayHold({ gateway: null, localPhase: "waiting", serverOpen: null, overridden: false, method: "CASH" });
+  assert.equal(h.held, false);
+});
+
+test("with a gateway, the on-screen QR holds and the override is offered off UPI only", () => {
+  const onUpi = gatewayHold({ gateway: rzp, localPhase: "waiting", serverOpen: null, overridden: false, method: "UPI" });
+  assert.deepEqual(onUpi, { live: true, held: true, showOverride: false, gatewayName: "Razorpay" });
+  const onCash = gatewayHold({ gateway: rzp, localPhase: "waiting", serverOpen: null, overridden: false, method: "CASH" });
+  assert.equal(onCash.showOverride, true);
+});
+
+test("an unknown provider key is still named", () => {
+  const h = gatewayHold({ gateway: null, localPhase: null, serverOpen: attempt({ provider: "cashfree" }), overridden: false, method: "CASH" });
+  assert.equal(h.gatewayName, "Cashfree");
 });
