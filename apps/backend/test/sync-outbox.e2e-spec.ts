@@ -41,6 +41,7 @@ describe('Sync outbox (e2e)', () => {
   let ownerId: string;
   let deviceId: string;
   let previousSignup: string | undefined;
+  let previousDbUrl: string | undefined;
   const realFetch = global.fetch;
 
   const outbox = (ids: string[]) =>
@@ -53,6 +54,17 @@ describe('Sync outbox (e2e)', () => {
 
   beforeAll(async () => {
     previousSignup = process.env.ALLOW_PUBLIC_SIGNUP;
+    // The race tests hold up to three transactions open at once while
+    // polling pg_stat_activity on a fourth connection. Prisma's default pool
+    // (num_cpus * 2 + 1) is 3 on a 2-core CI runner, so give this suite's
+    // app a pool that fits; jest runs each file in its own process.
+    previousDbUrl = process.env.DATABASE_URL;
+    if (previousDbUrl) {
+      const u = new URL(previousDbUrl);
+      const cur = Number(u.searchParams.get('connection_limit') ?? 0);
+      if (cur < 10) u.searchParams.set('connection_limit', '10');
+      process.env.DATABASE_URL = u.toString();
+    }
     process.env.ALLOW_PUBLIC_SIGNUP = 'true';
     const mod = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(ThrottlerStorage)
@@ -111,6 +123,7 @@ describe('Sync outbox (e2e)', () => {
     await prisma.$executeRawUnsafe('DELETE FROM sync_rejected');
     await prisma.permission.deleteMany({ where: { key: `sync.test.${tag}` } });
     process.env.ALLOW_PUBLIC_SIGNUP = previousSignup;
+    process.env.DATABASE_URL = previousDbUrl;
     await app.close();
   });
 
