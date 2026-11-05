@@ -21,15 +21,17 @@ import { useI18n, type TranslationKey } from "@/lib/i18n/context";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ApprovalThreshold, ExpenseStatusBadge, PendingExpenses } from "@/components/accounting/expense-approvals";
+import { PettyCashTab } from "@/components/accounting/petty-cash-tab";
 import { TallyTab } from "@/components/accounting/tally-tab";
 import { BalanceSheetTab, BankTab, BudgetsTab } from "@/components/accounting/finance-tabs";
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
-const TABS = ["expenses", "cashClose", "profitLoss", "balanceSheet", "budgets", "bank", "gst", "tally", "branches"] as const;
+const TABS = ["expenses", "cashClose", "pettyCash", "profitLoss", "balanceSheet", "budgets", "bank", "gst", "tally", "branches"] as const;
 type Tab = (typeof TABS)[number];
 const TAB_LABEL: Record<Tab, TranslationKey> = {
   expenses: "acct.tab.expenses",
   cashClose: "acct.tab.cashClose",
+  pettyCash: "acct.tab.pettyCash",
   profitLoss: "acct.tab.profitLoss",
   balanceSheet: "acct.tab.balanceSheet",
   budgets: "acct.tab.budgets",
@@ -342,6 +344,7 @@ export default function AccountingPage() {
       </div>
       {tab === "expenses" && <Expenses branchId={branchId} />}
       {tab === "cashClose" && <CashClose branchId={branchId} />}
+      {tab === "pettyCash" && <PettyCashTab branchId={branchId} />}
       {tab === "profitLoss" && <ProfitLossTab branchId={branchId} />}
       {tab === "balanceSheet" && <BalanceSheetTab branchId={branchId} />}
       {tab === "budgets" && <BudgetsTab branchId={branchId} />}
