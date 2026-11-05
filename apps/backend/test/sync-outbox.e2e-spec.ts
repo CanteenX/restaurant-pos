@@ -15,6 +15,7 @@ import { PrismaService } from './../src/prisma/prisma.service';
 import { SyncChange } from './../src/sync/outbox';
 import { SyncService } from './../src/sync/sync.service';
 import { LOCAL_TABLES, SYNC_TABLES } from './../src/sync/tables';
+import { lockSyncState } from './sync-e2e-lock';
 
 const tag = randomUUID().slice(0, 6);
 const BOOT_TIMEOUT_MS = 60_000;
@@ -43,6 +44,7 @@ describe('Sync outbox (e2e)', () => {
   let previousSignup: string | undefined;
   let previousDbUrl: string | undefined;
   const realFetch = global.fetch;
+  let unlock: () => Promise<void> = () => Promise.resolve();
 
   const outbox = (ids: string[]) =>
     prisma.$queryRawUnsafe<OutboxRow[]>(
@@ -51,8 +53,20 @@ describe('Sync outbox (e2e)', () => {
       ids,
     );
   const key = (id: string) => JSON.stringify({ id }).replace(':', ': ');
+  // #82: these cases exercise LWW apply mechanics on HQ-owned test rows, so
+  // they apply as a branch receiving from HQ; push ownership has its own
+  // suite (sync-apply.e2e-spec.ts).
+  const hqApply = (device: string, changes: SyncChange[]) =>
+    sync.applyChanges(changes, {
+      origin: device,
+      tieWins: false,
+      receiver: 'branch',
+      branches: [branchId],
+    });
+  const peer = (id: string) => ({ id, branchIds: [branchId] });
 
   beforeAll(async () => {
+    unlock = await lockSyncState();
     previousSignup = process.env.ALLOW_PUBLIC_SIGNUP;
     // The race tests hold up to three transactions open at once while
     // polling pg_stat_activity on a fourth connection. Prisma's default pool
@@ -105,8 +119,10 @@ describe('Sync outbox (e2e)', () => {
     // A branch install whose HQ is unreachable: writes must queue up.
     await prisma.$executeRawUnsafe(
       `UPDATE sync_state SET enabled = true, role = 'client', "serverUrl" = 'http://127.0.0.1:9',
-         "apiKey" = 'offline-test-key-0000', "lastPushSeq" = 0, "lastPullSeq" = 0, "lastError" = NULL
+         "apiKey" = 'offline-test-key-0000', "peerKey" = 'offline-peer-key-0000', "branchIds" = ARRAY[$1],
+         "lastPushSeq" = 0, "lastPullSeq" = 0, "lastError" = NULL, failures = 0, "nextAttemptAt" = NULL
        WHERE id = 1`,
+      branchId,
     );
     deviceId = (await sync.state()).deviceId;
   }, BOOT_TIMEOUT_MS);
@@ -114,7 +130,8 @@ describe('Sync outbox (e2e)', () => {
   afterAll(async () => {
     global.fetch = realFetch;
     await prisma.$executeRawUnsafe(
-      `UPDATE sync_state SET enabled = false, "serverUrl" = NULL, "apiKey" = NULL,
+      `UPDATE sync_state SET enabled = false, "serverUrl" = NULL, "apiKey" = NULL, "peerKey" = NULL,
+         "branchIds" = '{}', failures = 0, "nextAttemptAt" = NULL, "pausedReason" = NULL,
          "lastPushSeq" = 0, "lastPullSeq" = 0, "lastError" = NULL, conflicts = '[]' WHERE id = 1`,
     );
     await prisma.$executeRawUnsafe('DELETE FROM sync_changes');
@@ -125,6 +142,7 @@ describe('Sync outbox (e2e)', () => {
     process.env.ALLOW_PUBLIC_SIGNUP = previousSignup;
     process.env.DATABASE_URL = previousDbUrl;
     await app.close();
+    await unlock();
   });
 
   it('installs the capture trigger on exactly the synced tables', async () => {
@@ -245,6 +263,16 @@ describe('Sync outbox (e2e)', () => {
     });
     const mine = (await outbox(created.map((f) => f.id))).map((r) => r.seq);
     expect(mine).toHaveLength(450);
+    // Other suites write while sync is on here; their still-open
+    // transactions hold the safe bound below these rows. Wait them out.
+    const top = BigInt(mine[mine.length - 1]);
+    for (let i = 0; i < 300; i++) {
+      const [{ s: bound }] = await prisma.$queryRawUnsafe<{ s: bigint }[]>(
+        'SELECT sync_safe_seq() AS s',
+      );
+      if (BigInt(bound) >= top) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
 
     const received: string[] = [];
     let pushes = 0;
@@ -308,20 +336,20 @@ describe('Sync outbox (e2e)', () => {
       (await prisma.floor.findUnique({ where: { id: floor.id } }))?.name;
 
     const edit = change('U', 1000n, `Remote-${tag}`);
-    expect((await sync.push('branch-z', [edit])).applied).toBe(1);
-    const again = await sync.push('branch-z', [edit]);
+    expect((await hqApply('branch-z', [edit])).applied).toBe(1);
+    const again = await hqApply('branch-z', [edit]);
     expect([again.applied, again.skipped]).toEqual([0, 1]);
     expect(await name()).toBe(`Remote-${tag}`);
 
-    expect(
-      (await sync.push('branch-z', [change('D', 2000n, '')])).applied,
-    ).toBe(1);
+    expect((await hqApply('branch-z', [change('D', 2000n, '')])).applied).toBe(
+      1,
+    );
     expect(await name()).toBeUndefined();
-    const stale = await sync.push('branch-z', [change('U', 1500n, 'stale')]);
+    const stale = await hqApply('branch-z', [change('U', 1500n, 'stale')]);
     expect([stale.applied, stale.skipped]).toEqual([0, 1]);
     expect(await name()).toBeUndefined();
 
-    await sync.push('branch-z', [change('U', 3000n, `Back-${tag}`)]);
+    await hqApply('branch-z', [change('U', 3000n, `Back-${tag}`)]);
     expect(await name()).toBe(`Back-${tag}`);
   });
 
@@ -338,11 +366,11 @@ describe('Sync outbox (e2e)', () => {
     const top = (await outbox([floor.id])).pop()!.seq;
 
     // A client still behind holds compaction back.
-    await sync.pull(0n, `lagging-${tag}`, 1);
+    await sync.pull(0n, peer(`lagging-${tag}`), 1);
     await sync.compactOutbox();
     expect(await outbox([floor.id])).toHaveLength(4);
 
-    await sync.pull(BigInt(top), `lagging-${tag}`, 1);
+    await sync.pull(BigInt(top), peer(`lagging-${tag}`), 1);
     await sync.compactOutbox();
     const kept = await outbox([floor.id]);
     expect(kept.map((r) => r.row?.name)).toEqual([`C3-${tag}`]);
@@ -438,7 +466,14 @@ describe('Sync outbox (e2e)', () => {
         first.pkKey,
         String(BigInt(ms - 60_000) * 65536n),
       );
-      const r = await sync.push('legacy-client', changes);
+      // Only this test's rows: the outbox also holds writes of suites
+      // running alongside, and applying those here locked their rows
+      // (purchase-returns deadlock, #82 review).
+      const ours = new Set([floor.id, relayed]);
+      const r = await hqApply(
+        'legacy-client',
+        changes.filter((c) => ours.has(String(c.pk.id))),
+      );
       results.push(r);
       return r;
     });
@@ -490,7 +525,9 @@ describe('Sync outbox (e2e)', () => {
       }),
     );
     const r = await sync.runOnce();
-    expect(r?.conflicts).toBe(2);
+    // Writes of suites running alongside are captured too and rejected by
+    // this fake HQ as well; this test's own two are checked row by row below.
+    expect(r?.conflicts).toBeGreaterThanOrEqual(2);
     expect(await outbox([floor.id])).toHaveLength(0);
 
     const kept = await prisma.$queryRawUnsafe<
@@ -571,12 +608,12 @@ describe('Sync outbox (e2e)', () => {
     const seen: string[] = [];
     let page: Awaited<ReturnType<SyncService['pull']>>;
     try {
-      page = await sync.pull(since, `other-${tag}`);
+      page = await sync.pull(since, peer(`other-${tag}`));
       for (const c of page.changes) seen.push(String(c.pk.id));
     } finally {
       await slow.commit();
     }
-    page = await sync.pull(BigInt(page.nextSeq), `other-${tag}`);
+    page = await sync.pull(BigInt(page.nextSeq), peer(`other-${tag}`));
     for (const c of page.changes) seen.push(String(c.pk.id));
     expect(seen).toContain(slow.id);
     expect(seen).toContain(fast.id);
@@ -650,7 +687,7 @@ describe('Sync outbox (e2e)', () => {
     });
     try {
       expect(await outbox([s.id])).toHaveLength(0);
-      const r = await sync.push('branch-z', [
+      const r = await hqApply('branch-z', [
         {
           tbl: 'verifactu_settings',
           pk: { id: s.id },
@@ -691,7 +728,7 @@ describe('Sync outbox (e2e)', () => {
       hlc: String(BigInt(ca.hlc) + 1000n),
       peer: 'branch-z',
     };
-    const r = await sync.push('branch-z', [
+    const r = await hqApply('branch-z', [
       { ...base, pkKey: key(b.id) },
       {
         ...base,
@@ -762,11 +799,11 @@ describe('Sync outbox (e2e)', () => {
       { timeout: 30_000 },
     );
     await isLocked;
-    const newer = sync.push('branch-new', [
+    const newer = hqApply('branch-new', [
       at(2000n, `New-${tag}`, 'branch-new'),
     ]);
     await waiting(1);
-    const older = sync.push('branch-old', [
+    const older = hqApply('branch-old', [
       at(1000n, `Old-${tag}`, 'branch-old'),
     ]);
     await waiting(2);
@@ -803,7 +840,9 @@ describe('Sync outbox (e2e)', () => {
       throw new Error('expected the apply to wait for the local write');
     };
     const openLocal = async (
-      write: (tx: Parameters<Parameters<PrismaService['$transaction']>[0]>[0]) => Promise<unknown>,
+      write: (
+        tx: Parameters<Parameters<PrismaService['$transaction']>[0]>[0],
+      ) => Promise<unknown>,
     ) => {
       let release!: () => void;
       const gate = new Promise<void>((r) => (release = r));
@@ -853,7 +892,7 @@ describe('Sync outbox (e2e)', () => {
         hlc: String(BigInt(cap.hlc) + 1n),
         peer: 'branch-race',
       };
-      const pushed = sync.push('branch-race', [remote]);
+      const pushed = hqApply('branch-race', [remote]);
       try {
         await blockedApplies();
       } finally {
@@ -890,7 +929,7 @@ describe('Sync outbox (e2e)', () => {
       const commit = await openLocal((tx) =>
         tx.floor.create({ data: { id, branchId, name: `LocalNew-${tag}` } }),
       );
-      const pushed = sync.push('branch-race', [remote]);
+      const pushed = hqApply('branch-race', [remote]);
       try {
         await blockedApplies();
       } finally {
@@ -927,7 +966,7 @@ describe('Sync outbox (e2e)', () => {
         hlc: String(hlcOf(BigInt(cap.hlc))),
         peer: 'branch-race',
       };
-      const pushed = sync.push('branch-race', [remote]);
+      const pushed = hqApply('branch-race', [remote]);
       try {
         await blockedApplies();
       } finally {

@@ -1,8 +1,8 @@
 # Multi-branch sync — audit and design
 
-Status: design (issue #80); capture and outbox implemented in #81 (see §8).
-Still to come: #82 (apply, conflict rules, agent loop) and #83 (two-instance
-convergence test).
+Status: design (issue #80); capture and outbox implemented in #81, apply,
+conflict rules and the agent loop in #82 (see §8). Still to come: #83
+(two-instance convergence test).
 
 ## 1. Goal
 
@@ -128,7 +128,7 @@ its parent's branch.
 |---|---|---|
 | `orders` (B), `order_items`, `order_item_modifiers`, `kots`, `kot_items` →order | LWW per row, numbering rule §4.5 | Sales happen at the branch; HQ reports on them. An order is edited only at its branch. |
 | `payments`, `refunds`, `gateway_payments` (RB), `order_item_stock_returns` →order | Append (+ LWW for status fields) | Money records; idempotent by id / `clientRequestId`. Totals stay server-authoritative at the branch that took the payment. |
-| `customers` (B), `customer_addresses` →customer, `customer_memberships` →customer | LWW, balances **Derived** | Customers are branch-scoped in the schema today (G15). `loyaltyPoints` derived from `points_ledger`, `walletBalance` from its ledger (#82). |
+| `customers` (B), `customer_addresses` →customer, `customer_memberships` →customer, `customer_wallet_entries` →customer (Append) | LWW, balances **Derived** | Customers are branch-scoped in the schema today (G15). `loyaltyPoints` derived from `points_ledger`, `walletBalance` from its ledger (#82). |
 | `points_ledger` (B), `referrals` (B) | Append | Ledger; `idempotencyKey` already unique. |
 | `gift_cards` (B), `gift_card_redemptions` →card | LWW / Append, `balance` **Derived** | Balance recomputed from redemptions. |
 | `ingredients` (B) | LWW, `currentStock` **Derived** | Ingredient definitions are created at the branch (stock is per branch). `currentStock` is recomputed from `stock_movements`. |
@@ -345,8 +345,14 @@ the table list if answered differently:
   match pk`), so LWW and tombstones always key the row the DML writes. It
   then takes a transaction advisory lock on (`sync_row`, table + key), held
   until commit, so two concurrent pushes of one row are serialised and the
-  older HLC is skipped instead of overwriting the newer one. A deadlock
-  between two such pushes is retried in the next pass.
+  older HLC is skipped instead of overwriting the newer one.
+- **Apply yields to the till** (#82 review): a slice of up to 200 changes
+  is one transaction that locks many rows in arbitrary order while the POS
+  keeps writing, so a deadlock with a local write is possible. Each slice
+  sets `lock_timeout = 500ms`; on that timeout, a deadlock (40P01) or a
+  serialization failure the whole slice rolls back, freeing every row it
+  locked, and is re-tried up to 5 times with jittered backoff (100 ms
+  doubling), then in a later pass. The applier, not the cashier, backs off.
 - **An apply never beats an open local write**: local POS writes don't take
   that advisory lock, so apply also locks the target row (`FOR UPDATE`)
   before the LWW check. A local edit still open on the row commits first,
@@ -397,8 +403,82 @@ the table list if answered differently:
 - Fixed: outbox pages were ordered by `seq::text` (the output alias), so
   `1000` sorted before `999` and a page boundary could skip changes.
 
-Not yet: ownership enforcement, branch-filtered pull, HLC-advance on
-receive across rows, derived-column recompute, per-peer keys (#82).
+### #82 — apply, conflict rules, agent loop (done)
+
+- **Peers and keys (G12, G13)**: `sync_peers` at HQ. A branch registers once
+  with the bootstrap `SYNC_API_KEY` (`POST /sync-peer/register`, device id +
+  branch ids) and gets a random key, stored at HQ only as its SHA-256 hash
+  (`peers.service.ts`). Pull and push need `x-sync-peer` + that key
+  (`SyncPeerGuard`); the device id used for routing and echo filtering comes
+  from the peer record, never from the request. One install per branch
+  (§4.5): a branch already held by an active peer is refused. A peer is
+  revoked on its own (`POST /v1/sync/peers/:id/revoke`, `settings.manage`);
+  a revoked id can't re-register, and an *active* id re-registers only with
+  its current key (`currentKey`, sent when an install re-enables sync):
+  device ids are not secret, so the bootstrap key alone can't take over a
+  branch. After registering, the client drops the bootstrap key, so a lost
+  branch PC only holds its revocable key. HQ stamps every pushed change's
+  `peer` with the authenticated peer id, never the wire's claim.
+- **Ownership (rule 1, G1)**: `apply-rules.ts ownership()` runs before any
+  write, on facts read on the receiver: the incoming row's branch through
+  *its* parent rows (`sync_branch_of` on this install, not the sender's
+  `branchId` claim) and the branch of the row as the receiver has it, so a
+  row can't be moved between branches. HQ rejects HQ-owned tables and other
+  branches' rows (`not-owner: …`). A child whose parent hasn't arrived is
+  retried in later passes (`waiting for parent row`). A branch accepts
+  HQ-owned rows, its own rows back (restore) and transfers routed to it
+  (`routeTo: 'toBranchId'` on `stock_transfers`), nothing else.
+  Restaurant-wide branch rows (`audit_logs`) are insert-only.
+- **Branch-filtered pull (G2)**: in SQL. A peer gets HQ-owned rows that are
+  restaurant-wide or of its branches, its own branch rows, and rows routed to
+  it; never other branches' rows or its own echo. A page that ends below the
+  limit moves the cursor to the safe bound, past filtered entries.
+- **Derived balances (rule 5, G3)**: `derived.ts`. `customers.walletBalance`
+  (new `customer_wallet_entries` ledger, audit note 1) and `gift_cards.balance`
+  (`initialValue - redemptions`) are set from their ledger after every applied
+  slice, with an `UPDATE … SET col = <ledger sum>` under the row lock (a
+  read-modify-write `set`, never `increment`). The recompute re-stamps the
+  row's existing HLC and peer and writes no outbox entry, so it never
+  outranks a later edit from the owner. `ingredients.currentStock`,
+  `stock_batches.quantityRemaining` and `customers.loyaltyPoints` are
+  `ownerTotals` instead: their services clamp or set them without a matching
+  ledger row (GRN clamps negative stock to 0, CSV import sets opening stock,
+  order earn/redeem doesn't write `points_ledger`), so a ledger sum would
+  differ from the branch's value. Only the owning branch writes those rows
+  (rule 1), so its value is the authoritative one. Recomputing them needs
+  those ledgers completed first (follow-up).
+- **Store-credit ledger**: migration `20261105100000_sync_apply` adds
+  `customer_wallet_entries`. Its additive changes are reversed by `down.sql`.
+  It opens the ledger per customer with a deterministic id, so HQ and the
+  branch create the same opening row. A syncing branch queues its own
+  opening rows once at boot, so they supersede HQ's copy. STORE_CREDIT
+  refunds go through `addWalletEntry` (row lock, entry, rounded set; replaces
+  the old `increment`).
+- **Settled orders (rule 7 audit, note 2)**: HQ does not reprice, but after
+  each applied slice it checks every touched PAID order: lines add up to the
+  subtotal, total = subtotal - discount - loyalty + tip + delivery
+  (settlement.ts), payments add up to the total, refunds don't exceed
+  payments, all in whole paise (`orderProblems`). Mismatches go to the local
+  `sync_order_flags` table (count in `/sync/status`, list at `/sync/flags`)
+  and clear once a later change reconciles the order.
+- **Schema skew (G9, §4.6)**: an upsert writes only the columns the change
+  carries (`columnsToWrite`), so a change captured on an older version never
+  writes NULL into a newer column. A change from a newer version than the
+  receiver is refused. When versions differ, the client pauses transfer
+  (`pausedReason: 'schema'`, likewise `'clock'` for clock skew) and keeps
+  capturing.
+- **Agent loop**: a 30 s tick; after a failed cycle the next try waits
+  30 s doubling to 10 min (`backoffMs`), shown as `failures` /
+  `nextAttemptAt` in `/sync/status`. Settings > Sync > Sync now ignores the
+  backoff. Each cycle re-tries kept rejections that were parked for a
+  missing parent (pulled a page before its parent's newest entry after server
+  compaction); `POST /v1/sync/rejected/retry` re-tries all of them. Replay is
+  safe because apply is LWW.
+
+Not yet: HLC advance on receive across rows (per-row versions already order
+every local write after the version it replaced), recomputing the
+`ownerTotals` from completed ledgers, and branch-selection UI in Settings >
+Sync (the API takes `branchIds`).
 
 Known limits, to address in #82:
 - A stale `sync_cursors` row (decommissioned or reset device) pins the

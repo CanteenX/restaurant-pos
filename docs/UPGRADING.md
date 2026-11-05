@@ -2,6 +2,39 @@
 
 Release notes for changes that affect existing installs. Newest first.
 
+## Multi-branch sync: per-branch keys, ownership, store-credit ledger (#82)
+
+**Upgrade HQ first, then each branch.** A branch whose app version differs
+from HQ's pauses transfer (Settings > Sync shows "App versions differ … Update
+this branch") and keeps queuing its changes until both match. Nothing is lost
+or rejected while paused.
+
+**Branches register once.** A branch that was syncing with the shared
+`SYNC_API_KEY` registers itself at HQ on its first cycle after the update and
+from then on uses its own key. HQ stores that key only as a hash, and
+the branch forgets the shared key. If HQ has more than one branch, that first
+cycle asks which branch this install runs ("Choose which branch …"). Enable
+sync again from Settings > Sync and pick the branch. HQ allows one install per
+branch. A lost or replaced branch PC is cut off at HQ with
+`POST /api/v1/sync/peers/:id/revoke`, without changing anyone else's key.
+
+**HQ only takes what a branch owns.** A branch can no longer change the menu,
+prices, roles, staff or another branch's data through sync. Such changes are
+reported as `not-owner` conflicts and kept on the branch in `sync_rejected`.
+
+**Store credit has a ledger.** The migration `20261105100000_sync_apply` adds
+`customer_wallet_entries` and opens it with one `OPENING` entry for each
+customer with a non-zero `walletBalance`, so the balance equals the ledger
+from day one. Store-credit refunds now add an entry and set the balance to
+the rounded sum, under the customer row lock. The migration only adds tables
+and columns. `prisma/migrations/20261105100000_sync_apply/down.sql` reverses
+it, and `walletBalance` keeps its value either way.
+
+**HQ checks settled orders.** HQ does not reprice a branch's orders. A PAID
+order whose lines, total and payments don't add up is flagged. Flagged orders
+are counted in `GET /api/v1/sync/status` (`flaggedOrders`) and listed in
+`GET /api/v1/sync/flags`.
+
 ## Nventra rename: Postgres user and database (#4, #143)
 
 **What changed.** The compose files (`docker-compose.yml`,
