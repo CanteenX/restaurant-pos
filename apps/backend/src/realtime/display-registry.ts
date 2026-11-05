@@ -22,6 +22,7 @@ interface Owner {
 export class DisplayRegistry {
   private readonly owners = new Map<string, Owner>(); // room -> owner
   private readonly claims = new Map<string, string>(); // socket id -> room
+  private readonly states = new Map<string, unknown>(); // room -> last state
   private readonly windows = new Map<
     string,
     { start: number; count: number }
@@ -40,6 +41,15 @@ export class DisplayRegistry {
 
   isIssued(room: string): boolean {
     return this.owners.has(room);
+  }
+
+  /** Latest validated state of an issued code, for a display that joins late. */
+  remember(room: string, state: unknown) {
+    if (this.owners.has(room)) this.states.set(room, state);
+  }
+
+  lastState(room: string): unknown {
+    return this.states.get(room);
   }
 
   /** Fixed-window limit per socket, with separate publish and join budgets. */
@@ -71,6 +81,8 @@ export class DisplayRegistry {
     const owner = this.owners.get(room);
     if (!owner) return;
     owner.sockets.delete(socketId);
-    if (owner.sockets.size === 0) this.owners.delete(room);
+    if (owner.sockets.size > 0) return;
+    this.owners.delete(room);
+    this.states.delete(room);
   }
 }

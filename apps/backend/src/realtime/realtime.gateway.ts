@@ -63,6 +63,13 @@ export class RealtimeGateway
 
   private readonly displays = new DisplayRegistry();
 
+  // Nest subscribes @SubscribeMessage handlers and socket.io sends CONNECT
+  // before the async handleConnection finishes, so an event sent from the
+  // client's `connect` handler can arrive while the session is still being
+  // checked. Each socket's pending auth is kept here and awaited by every
+  // handler that reads client.data, so it never sees a half-filled socket.
+  private readonly authenticating = new Map<string, Promise<void>>();
+
   constructor(
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
@@ -80,7 +87,19 @@ export class RealtimeGateway
   // requested branch against the authenticated user's own restaurant via
   // the same BranchAccessService REST controllers use — a socket that
   // fails either check is disconnected before joining any room.
-  async handleConnection(client: Socket) {
+  handleConnection(client: Socket): Promise<void> {
+    const ready = this.authenticate(client).finally(() =>
+      this.authenticating.delete(client.id),
+    );
+    this.authenticating.set(client.id, ready);
+    return ready;
+  }
+
+  private async whenAuthenticated(client: Pick<Socket, 'id'>) {
+    await this.authenticating.get(client.id);
+  }
+
+  private async authenticate(client: Socket) {
     try {
       const token = this.extractSessionCookie(client);
       if (!token) throw new Error('No session cookie');
@@ -131,7 +150,9 @@ export class RealtimeGateway
   handleDisconnect(client?: Pick<Socket, 'id'>) {
     // socket.io removes room membership automatically on disconnect; the
     // display codes this socket issued are freed here.
-    if (client) this.displays.release(client.id);
+    if (!client) return;
+    this.authenticating.delete(client.id);
+    this.displays.release(client.id);
   }
 
   emitToBranch(branchId: string, event: string, payload: unknown) {
@@ -151,12 +172,14 @@ export class RealtimeGateway
   // Customer display pairing: a till (orders.create) issues a code by
   // publishing under it; the code stays with that user while any of their
   // sockets holds it (so a reconnecting till reclaims it); a display (any
-  // device logged in to the same branch) may join only an issued code.
+  // device logged in to the same branch) may join only an issued code, and
+  // gets the till's latest state at once instead of waiting for a change.
   @SubscribeMessage('display.join')
   async onDisplayJoin(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: unknown,
   ) {
+    await this.whenAuthenticated(client);
     const parsed = displayJoinSchema.safeParse(body);
     const branchId = (client.data as SocketData | undefined)?.branchId;
     if (!parsed.success || !branchId) return { ok: false };
@@ -164,14 +187,17 @@ export class RealtimeGateway
     const room = this.displayRoom(branchId, parsed.data.code);
     if (!this.displays.isIssued(room)) return { ok: false };
     await client.join(room);
+    const last = this.displays.lastState(room);
+    if (last !== undefined) client.emit('display.state', last);
     return { ok: true };
   }
 
   @SubscribeMessage('display.publish')
-  onDisplayPublish(
+  async onDisplayPublish(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: unknown,
-  ): { ok: boolean; error?: string } {
+  ): Promise<{ ok: boolean; error?: string }> {
+    await this.whenAuthenticated(client);
     const data = client.data as SocketData | undefined;
     if (!data?.permissions?.includes(DISPLAY_PUBLISH_PERMISSION))
       return { ok: false, error: 'forbidden' };
@@ -182,6 +208,7 @@ export class RealtimeGateway
     const room = this.displayRoom(data.branchId, parsed.data.code);
     if (this.displays.claim(room, client.id, data.userId) !== 'ok')
       return { ok: false, error: 'code-in-use' };
+    this.displays.remember(room, parsed.data.state);
     this.server.to(room).emit('display.state', parsed.data.state);
     return { ok: true };
   }

@@ -1,4 +1,5 @@
 import { displayStateSchema } from '@nventra/types';
+import { DisplayRegistry } from './display-registry';
 import { RealtimeGateway } from './realtime.gateway';
 
 // Customer display relay: a paired display only ever receives what a till in
@@ -28,12 +29,15 @@ function makeClient(
   userId = `user-${nextId + 1}`,
 ) {
   const joined: string[] = [];
+  const received: { event: string; payload: unknown }[] = [];
   const client = {
     id: `sock-${++nextId}`,
     data: { branchId, permissions, userId },
     join: (r: string) => Promise.resolve(void joined.push(r)),
+    emit: (event: string, payload: unknown) =>
+      void received.push({ event, payload }),
   };
-  return { client: client as never, joined, id: client.id };
+  return { client: client as never, joined, received, id: client.id };
 }
 
 const idle = { kind: 'idle' as const };
@@ -42,7 +46,7 @@ describe('customer display relay', () => {
   it('joins a room scoped to the socket branch and an issued code', async () => {
     const { gw } = makeGateway();
     const till = makeClient('branch-a');
-    gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle });
+    await gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle });
     const display = makeClient('branch-a', []);
     expect(await gw.onDisplayJoin(display.client, { code: 'abc234' })).toEqual({
       ok: true,
@@ -53,7 +57,7 @@ describe('customer display relay', () => {
   it('rejects joining a code no till in this branch has issued', async () => {
     const { gw } = makeGateway();
     const till = makeClient('branch-b');
-    gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle });
+    await gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle });
     const display = makeClient('branch-a', []);
     expect(await gw.onDisplayJoin(display.client, { code: 'ABC234' })).toEqual({
       ok: false,
@@ -77,11 +81,11 @@ describe('customer display relay', () => {
     expect(a.joined).toEqual([]);
   });
 
-  it('publishes only to the sender branch room, never another branch', () => {
+  it('publishes only to the sender branch room, never another branch', async () => {
     const { gw, emitted } = makeGateway();
     const till = makeClient('branch-a');
     expect(
-      gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle }),
+      await gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle }),
     ).toEqual({ ok: true });
     expect(emitted).toEqual([
       {
@@ -92,24 +96,24 @@ describe('customer display relay', () => {
     ]);
   });
 
-  it('denies publishing without orders.create (e.g. a kitchen account)', () => {
+  it('denies publishing without orders.create (e.g. a kitchen account)', async () => {
     const { gw, emitted } = makeGateway();
     const kitchen = makeClient('branch-a', ['kds.manage', 'orders.accept']);
     const paid = { kind: 'paid' as const, total: 100 };
     expect(
-      gw.onDisplayPublish(kitchen.client, { code: 'ABC234', state: paid }),
+      await gw.onDisplayPublish(kitchen.client, { code: 'ABC234', state: paid }),
     ).toEqual({ ok: false, error: 'forbidden' });
     expect(emitted).toEqual([]);
   });
 
-  it("denies publishing into another till's code", () => {
+  it("denies publishing into another till's code", async () => {
     const { gw, emitted } = makeGateway();
     const till = makeClient('branch-a');
     const rogue = makeClient('branch-a');
-    gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle });
+    await gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle });
     const paid = { kind: 'paid' as const, total: 100 };
     expect(
-      gw.onDisplayPublish(rogue.client, { code: 'ABC234', state: paid }),
+      await gw.onDisplayPublish(rogue.client, { code: 'ABC234', state: paid }),
     ).toEqual({ ok: false, error: 'code-in-use' });
     expect(emitted).toHaveLength(1);
   });
@@ -117,7 +121,7 @@ describe('customer display relay', () => {
   it('frees a code when its till disconnects so a reconnect can reclaim it', async () => {
     const { gw } = makeGateway();
     const till = makeClient('branch-a');
-    gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle });
+    await gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle });
     gw.handleDisconnect(till.client);
     const display = makeClient('branch-a', []);
     expect(await gw.onDisplayJoin(display.client, { code: 'ABC234' })).toEqual({
@@ -125,26 +129,28 @@ describe('customer display relay', () => {
     });
     const again = makeClient('branch-a');
     expect(
-      gw.onDisplayPublish(again.client, { code: 'ABC234', state: idle }),
+      await gw.onDisplayPublish(again.client, { code: 'ABC234', state: idle }),
     ).toEqual({ ok: true });
   });
 
-  it('rate-limits display events per socket', () => {
+  it('rate-limits display events per socket', async () => {
     const { gw, emitted } = makeGateway();
     const till = makeClient('branch-a');
-    const results = Array.from({ length: 60 }, () =>
-      gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle }),
-    );
+    const results: { ok: boolean; error?: string }[] = [];
+    for (let i = 0; i < 60; i++)
+      results.push(
+        await gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle }),
+      );
     expect(results.filter((r) => r.ok)).toHaveLength(40);
     expect(results.at(-1)).toEqual({ ok: false, error: 'rate-limited' });
     expect(emitted).toHaveLength(40);
   });
 
-  it('drops invalid states', () => {
+  it('drops invalid states', async () => {
     const { gw, emitted } = makeGateway();
     const till = makeClient('branch-a');
     expect(
-      gw.onDisplayPublish(till.client, {
+      await gw.onDisplayPublish(till.client, {
         code: 'ABC234',
         state: { kind: 'nope' },
       }),
@@ -152,7 +158,7 @@ describe('customer display relay', () => {
     expect(emitted).toEqual([]);
   });
 
-  it('rejects a UPI state whose uri is not a upi://pay link', () => {
+  it('rejects a UPI state whose uri is not a upi://pay link', async () => {
     const { gw, emitted } = makeGateway();
     const till = makeClient('branch-a');
     for (const uri of [
@@ -163,7 +169,7 @@ describe('customer display relay', () => {
     ]) {
       const state = { kind: 'upi', total: 10, uri, payee: 'X' };
       expect(
-        gw.onDisplayPublish(till.client, { code: 'ABC234', state }),
+        await gw.onDisplayPublish(till.client, { code: 'ABC234', state }),
       ).toEqual({ ok: false });
     }
     expect(emitted).toEqual([]);
@@ -171,10 +177,10 @@ describe('customer display relay', () => {
 });
 
 describe('customer display relay: reconnects and budgets', () => {
-  it('lets the same till user reclaim its code from a new socket before the old one is reaped', () => {
+  it('lets the same till user reclaim its code from a new socket before the old one is reaped', async () => {
     const { gw, emitted } = makeGateway();
     const till = makeClient('branch-a', ['orders.create'], 'cashier-1');
-    gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle });
+    await gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle });
     // Wi-Fi blip: new socket id, old socket's disconnect not seen yet.
     const reconnected = makeClient('branch-a', ['orders.create'], 'cashier-1');
     const upi = {
@@ -184,7 +190,7 @@ describe('customer display relay: reconnects and budgets', () => {
       payee: 'A',
     };
     expect(
-      gw.onDisplayPublish(reconnected.client, { code: 'ABC234', state: upi }),
+      await gw.onDisplayPublish(reconnected.client, { code: 'ABC234', state: upi }),
     ).toEqual({ ok: true });
     expect(emitted.at(-1)).toEqual({
       rooms: ['display:branch-a:ABC234'],
@@ -195,7 +201,7 @@ describe('customer display relay: reconnects and budgets', () => {
     gw.handleDisconnect(till.client);
     const rogue = makeClient('branch-a', ['orders.create'], 'cashier-2');
     expect(
-      gw.onDisplayPublish(rogue.client, { code: 'ABC234', state: idle }),
+      await gw.onDisplayPublish(rogue.client, { code: 'ABC234', state: idle }),
     ).toEqual({ ok: false, error: 'code-in-use' });
   });
 
@@ -203,12 +209,38 @@ describe('customer display relay: reconnects and budgets', () => {
     const { gw } = makeGateway();
     const till = makeClient('branch-a');
     for (let i = 0; i < 39; i++)
-      gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle });
+      await gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle });
     for (let i = 0; i < 5; i++)
       await gw.onDisplayJoin(till.client, { code: 'ABC234' });
     expect(
-      gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle }),
+      await gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle }),
     ).toEqual({ ok: true });
+  });
+});
+
+describe('customer display relay: late joins', () => {
+  it('sends the till\'s latest state to a display that joins after it', async () => {
+    const { gw } = makeGateway();
+    const till = makeClient('branch-a');
+    const paid = { kind: 'paid' as const, total: 100 };
+    await gw.onDisplayPublish(till.client, { code: 'ABC234', state: idle });
+    await gw.onDisplayPublish(till.client, { code: 'ABC234', state: paid });
+    const display = makeClient('branch-a', []);
+    await gw.onDisplayJoin(display.client, { code: 'ABC234' });
+    expect(display.received).toEqual([
+      { event: 'display.state', payload: paid },
+    ]);
+  });
+
+  it('forgets the state once the code is released', () => {
+    const reg = new DisplayRegistry();
+    reg.claim('room-1', 'sock-x', 'user-x');
+    reg.remember('room-1', idle);
+    expect(reg.lastState('room-1')).toEqual(idle);
+    reg.release('sock-x');
+    expect(reg.lastState('room-1')).toBeUndefined();
+    reg.remember('room-1', idle); // not issued any more: not stored
+    expect(reg.lastState('room-1')).toBeUndefined();
   });
 });
 
