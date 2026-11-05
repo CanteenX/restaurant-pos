@@ -1,9 +1,11 @@
 // Self-hosted web fonts (#187). The Google next/font loader fetches from
 // fonts.googleapis.com at build time, which fails offline and in cloud VMs,
 // so every face is loaded from an npm package with next/font/local instead.
-// Both packages ship their SIL OFL 1.1 licence next to the font files:
-//   geist                                     -> node_modules/geist/LICENSE.txt
-//   @fontsource-variable/noto-sans-devanagari -> .../noto-sans-devanagari/LICENSE
+// Both fonts are SIL OFL 1.1. The built image ships only .next/ and public/,
+// so the licence texts are committed (and served) from public/licenses/:
+//   geist                                     -> public/licenses/geist-OFL.txt
+//   @fontsource-variable/noto-sans-devanagari -> public/licenses/noto-sans-devanagari-OFL.txt
+// They are listed in NOTICE; the test below keeps them in sync with the packages.
 // lib/self-hosted-fonts.test.ts fails if the Google font loader comes back or a
 // src path below stops resolving.
 import localFont from "next/font/local";

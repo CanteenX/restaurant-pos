@@ -45,3 +45,24 @@ test("every local font src in app/fonts.ts exists on disk", () => {
     assert.ok(existsSync(abs), `font file missing: ${rel} (run pnpm install)`);
   }
 });
+
+// OFL-1.1 §2: every redistributed copy must carry the licence. The Docker image
+// ships public/ but not node_modules, so the texts are committed under
+// public/licenses/ and must stay identical to the installed packages' copies.
+const FONT_LICENCES: Array<[string, string]> = [
+  ["public/licenses/geist-OFL.txt", "node_modules/geist/LICENSE.txt"],
+  [
+    "public/licenses/noto-sans-devanagari-OFL.txt",
+    "node_modules/@fontsource-variable/noto-sans-devanagari/LICENSE",
+  ],
+];
+
+test("font OFL licence texts ship in public/licenses and match the packages", () => {
+  for (const [shipped, upstream] of FONT_LICENCES) {
+    const shippedPath = join(WEB_ROOT, shipped);
+    assert.ok(existsSync(shippedPath), `missing ${shipped}`);
+    const text = readFileSync(shippedPath, "utf8");
+    assert.match(text, /SIL OPEN FONT LICENSE Version 1\.1/);
+    assert.equal(text, readFileSync(join(WEB_ROOT, upstream), "utf8"), `${shipped} differs from ${upstream}`);
+  }
+});
