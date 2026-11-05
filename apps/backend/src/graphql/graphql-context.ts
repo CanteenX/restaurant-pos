@@ -1,10 +1,10 @@
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import {
-  permissionSatisfied,
   type IntegrationScope,
   type PermissionKey,
   type SessionUser,
 } from '@nventra/types';
+import { hasAccess } from './graphql-access';
 
 type IntegrationKeyPrincipal = {
   id: string;
@@ -97,11 +97,7 @@ export function requireAccess(
   rule: { scope?: IntegrationScope; permission?: PermissionKey },
 ): void {
   const p = ctx.principal;
-  const ok =
-    p.kind === 'integration'
-      ? !!rule.scope && p.scopes.includes(rule.scope)
-      : !!rule.permission &&
-        permissionSatisfied(p.permissions, rule.permission);
+  const ok = hasAccess(ctx, rule);
   if (!ok) {
     throw new ForbiddenException(
       p.kind === 'integration'

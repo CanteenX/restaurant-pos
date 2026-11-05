@@ -3,7 +3,8 @@
 `POST /api/v1/graphql` offers a GraphQL endpoint for integrators alongside
 the REST [Integration API](integrations-api.md), with the same credentials
 and the same tenant isolation. This page covers the transport, auth and
-limits; the menu/orders/customers fields arrive in follow-up releases.
+limits, and the read fields for menu, orders and customers. Mutations
+arrive in a follow-up release.
 
 ## Decision: schema-first on plain `graphql-js`
 
@@ -44,6 +45,59 @@ curl -X POST https://your-domain/api/v1/graphql \
   -H "Authorization: Bearer ordr_ext_..." \
   -H "Content-Type: application/json" \
   -d '{"query":"{ viewer { kind restaurantId branchId grants } }"}'
+```
+
+## Read fields
+
+The schema source of truth is `apps/backend/src/graphql/graphql.schema.ts`.
+
+| Query field | Integration key scope | Staff permission | Notes |
+|---|---|---|---|
+| `menuCategories(branchId, first = 50, after)` | `menu:read` | `menu.view` | by `sortOrder`; keys see only active, shown-on-website categories |
+| `menuItems(branchId, categoryId, first = 50, after)` | `menu:read` | `menu.view` | keys see active items in visible categories, at the **website price** (Settings online price change applied, as REST) |
+| `orders(branchId, status, first = 10, after)` / `order(id)` | `orders:read` | `orders.create` | newest first; a key sees **only the orders it placed** |
+| `customers(branchId, search, first = 20, after)` / `customer(id)` | `customers:read` | `customers.manage` | newest first; `search` matches name, mobile, email |
+
+Restricted fields (the rest of the object still loads; the field is `null`
+and `errors[]` carries `extensions.code: "FORBIDDEN"`):
+
+| Field | Key needs | Staff needs |
+|---|---|---|
+| `Order.customer` (name, phone, email) | `orders:read_customer` | `customers.manage` |
+| `MenuItem.costPrice` | never available to keys | `menu.manage` |
+
+`branchId` is optional: leave it out for every branch of your restaurant.
+A location-locked key always reads its own location, and asking for another
+is `FORBIDDEN`; so is a branch of another restaurant. Asking for an id that
+does not exist or is not yours returns `null`. Customer rows are an explicit
+allow-list (`id branchId name phone email loyaltyPoints createdAt`): notes,
+allergies, birthdays and wallet balances are never exposed.
+
+**Pagination** is cursor-based. Every list returns
+`{ nodes, pageInfo { hasNextPage endCursor } }`; pass `endCursor` back as
+`after` for the next page. Cursors are opaque; a malformed one is
+`BAD_USER_INPUT`. Page sizes are clamped server-side (menu 200, orders and
+customers 100; `Order.items` default 10, `OrderItem.modifiers` default 5).
+Nested pages multiply in the cost rule below, so ask for small pages when
+you nest (`orders(first: 10) { nodes { items(first: 5) { name } } }`).
+
+Related rows (`MenuItem.category`, `Order.items`, `Order.customer`) are
+batched per request, so a page costs one database query per field, not one
+per row.
+
+```graphql
+query RecentOrders($after: String) {
+  orders(first: 10, after: $after, status: PAID) {
+    nodes {
+      id
+      orderNumber
+      createdAt
+      totals { subtotal tax discount deliveryFee total }
+      items(first: 5) { name quantity lineTotal }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}
 ```
 
 ## Limits

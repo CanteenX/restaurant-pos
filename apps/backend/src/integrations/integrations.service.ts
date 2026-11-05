@@ -18,6 +18,34 @@ import { OrdersService } from '../modules/orders/orders.service';
 import { ReferralsService } from '../modules/referrals/referrals.service';
 import { ReservationsService } from '../modules/reservations/reservations.service';
 
+type OrderMoney = Pick<
+  Prisma.OrderGetPayload<object>,
+  | 'subtotal'
+  | 'taxAmount'
+  | 'discountAmount'
+  | 'loyaltyDiscountAmount'
+  | 'deliveryFee'
+>;
+
+/**
+ * What an external caller is told an order costs (REST and GraphQL), from
+ * the server-computed stored amounts. Prices are tax-inclusive, so tax is
+ * informational and not added again.
+ */
+export function orderTotals(order: OrderMoney) {
+  const num = (v: Prisma.Decimal | null) => (v ? Number(v) : 0);
+  const subtotal = num(order.subtotal);
+  const discount = num(order.discountAmount) + num(order.loyaltyDiscountAmount);
+  const deliveryFee = num(order.deliveryFee);
+  return {
+    subtotal,
+    tax: num(order.taxAmount),
+    discount,
+    deliveryFee,
+    total: Math.round((subtotal - discount + deliveryFee) * 100) / 100,
+  };
+}
+
 /** Extra scope that unlocks customer contact and delivery address on reads. */
 export const PERSONAL_DATA_SCOPE = 'orders:read_customer';
 
@@ -467,11 +495,6 @@ export class IntegrationsService {
     order: OwnOrder,
     includeCustomer = false,
   ) {
-    const num = (v: Prisma.Decimal | null) => (v ? Number(v) : 0);
-    const subtotal = num(order.subtotal);
-    const discount =
-      num(order.discountAmount) + num(order.loyaltyDiscountAmount);
-    const deliveryFee = num(order.deliveryFee);
     const wantsCustomer =
       includeCustomer && ctx.scopes.includes(PERSONAL_DATA_SCOPE);
     return {
@@ -497,11 +520,7 @@ export class IntegrationsService {
         })),
       })),
       totals: {
-        subtotal,
-        tax: num(order.taxAmount),
-        discount,
-        deliveryFee,
-        total: Math.round((subtotal - discount + deliveryFee) * 100) / 100,
+        ...orderTotals(order),
         paid: order.payments.reduce((sum, p) => sum + Number(p.amount), 0),
       },
       fulfillment:

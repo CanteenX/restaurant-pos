@@ -22,6 +22,12 @@ export const INTEGRATION_SCOPES = [
       "Also read the customer's name, mobile number, email and delivery address on orders this key placed. Grant only to a backend that needs it to fulfil orders.",
   },
   {
+    key: "customers:read",
+    label: "View customers",
+    description:
+      "Read customer profiles (name, mobile number, email, loyalty points) through the GraphQL API. Grant only to a backend you trust with personal data.",
+  },
+  {
     key: "reservations:write",
     label: "Book tables",
     description: "Create a new table reservation for a location.",

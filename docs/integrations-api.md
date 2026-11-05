@@ -119,6 +119,8 @@ token, so treat it like any other API secret. Give it only the scopes it
 needs: for a typical website `locations:read`, `menu:read`, `orders:write`,
 `orders:read` and, only if the site must show or forward the customer's mobile
 and address, `orders:read_customer`.
+`customers:read` is only used by the [GraphQL API](graphql-api.md) and
+exposes customer profiles (personal data); a website does not need it.
 
 To expose the API on the internet, and a complete Next.js example, see
 [website-integration.md](website-integration.md).
