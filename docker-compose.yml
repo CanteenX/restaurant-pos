@@ -46,6 +46,7 @@ services:
       DATABASE_URL: "postgresql://nventra:${POSTGRES_PASSWORD:-nventra_dev_pw}@postgres:5432/nventra_pos"
       JWT_SECRET: ${JWT_SECRET:?set a real JWT_SECRET in .env for anything beyond local dev}
       SESSION_IDLE_MINUTES: "${SESSION_IDLE_MINUTES:-60}"
+      SESSION_IDLE_SIGNOUT: "${SESSION_IDLE_SIGNOUT:-true}"
       SESSION_MAX_HOURS: "${SESSION_MAX_HOURS:-12}"
       PORT: "4000"
       CORS_ORIGIN: "${FRONTEND_ORIGIN:-http://localhost:1995}"

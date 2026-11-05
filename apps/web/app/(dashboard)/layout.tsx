@@ -8,6 +8,7 @@ import { BranchProvider, useBranch } from "@/hooks/use-branch";
 import { useRealtime } from "@/hooks/use-realtime";
 import { NativeBridge } from "@/components/native/native-bridge";
 import { BtPrinterDialog } from "@/components/native/bt-printer-dialog";
+import { IdleLogoutDialog } from "@/components/layout/idle-logout-dialog";
 import { NAV_ITEMS } from "@/components/layout/nav-items";
 import { canOpen, firstAllowedHref } from "@/lib/route-access";
 
@@ -66,6 +67,7 @@ export default function DashboardGroupLayout({ children }: { children: React.Rea
       <RealtimeBridge />
       <NativeBridge />
       <BtPrinterDialog />
+      <IdleLogoutDialog />
       <AppShell user={data.user}>{children}</AppShell>
     </BranchProvider>
   );

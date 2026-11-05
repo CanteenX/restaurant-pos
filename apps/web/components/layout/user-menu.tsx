@@ -1,7 +1,7 @@
 "use client";
 
 import type { SessionUser } from "@nventra/types";
-import { LogOut, Moon, Server, Sun, Trash2, UserRoundCog } from "lucide-react";
+import { LogOut, MonitorX, Moon, Server, Sun, Trash2, UserRoundCog } from "lucide-react";
 import { useState } from "react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
@@ -15,7 +15,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { DeleteAccountDialog } from "@/components/layout/delete-account-dialog";
-import { useLogout } from "@/hooks/use-auth";
+import { useLogout, useRevokeMySessions } from "@/hooks/use-auth";
+import { ApiError } from "@/lib/api";
+import { toast } from "@/lib/toast";
+import { useI18n } from "@/lib/i18n/context";
 import { forgetBranchChoice } from "@/hooks/use-branch";
 import { changeServer, isNativeApp } from "@/lib/native";
 
@@ -32,6 +35,8 @@ function initials(name?: string) {
 export function UserMenu({ user }: { user?: SessionUser }) {
   const { theme, setTheme } = useTheme();
   const logout = useLogout();
+  const revokeAll = useRevokeMySessions();
+  const { t } = useI18n();
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
 
@@ -82,6 +87,18 @@ export function UserMenu({ user }: { user?: SessionUser }) {
           >
             <LogOut className="h-4 w-4" />
             Sign out
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={() => {
+              if (!confirm(t("session.revokeAllConfirm"))) return;
+              revokeAll.mutateAsync().then(
+                () => router.push("/login"),
+                (e) => toast.error(e instanceof ApiError ? e.message : t("session.revokeAllFailed")),
+              );
+            }}
+          >
+            <MonitorX className="h-4 w-4" />
+            {t("session.revokeAll")}
           </DropdownMenuItem>
           {isNativeApp() && (
             <DropdownMenuItem

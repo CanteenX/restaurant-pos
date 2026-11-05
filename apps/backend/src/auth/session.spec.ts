@@ -2,6 +2,7 @@ import {
   LEGACY_SESSION_COOKIE,
   SESSION_COOKIE,
   clearLegacySessionCookie,
+  clientSessionConfig,
   isPastMaxLifetime,
   needsRefresh,
   sessionIdleSeconds,
@@ -98,5 +99,29 @@ describe('clearLegacySessionCookie (#147)', () => {
     clearLegacySessionCookie({ cookies: { [SESSION_COOKIE]: 'cur' } }, res);
     clearLegacySessionCookie({}, res);
     expect(res.clearCookie).not.toHaveBeenCalled();
+  });
+});
+
+describe('clientSessionConfig', () => {
+  const env = (vars: Record<string, string>) =>
+    ({ get: (k: string) => vars[k] }) as never;
+  it('tells the browser the server idle window, signing out by default', () => {
+    expect(clientSessionConfig(env({}))).toEqual({
+      idleMinutes: 60,
+      idleSignOut: true,
+    });
+    expect(
+      clientSessionConfig(env({ SESSION_IDLE_MINUTES: '240' })).idleMinutes,
+    ).toBe(240);
+  });
+  it('lets the operator turn the browser idle sign-out off', () => {
+    for (const v of ['false', 'off', '0', 'NO']) {
+      expect(
+        clientSessionConfig(env({ SESSION_IDLE_SIGNOUT: v })).idleSignOut,
+      ).toBe(false);
+    }
+    expect(
+      clientSessionConfig(env({ SESSION_IDLE_SIGNOUT: 'true' })).idleSignOut,
+    ).toBe(true);
   });
 });
