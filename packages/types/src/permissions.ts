@@ -39,6 +39,7 @@ export const PERMISSIONS = [
   { key: "staff.manage", label: "Manage Staff Schedules, Leave & Payroll", category: "Staff" },
   { key: "accounting.manage", label: "Manage Accounting", category: "Accounting" },
   { key: "expenses.approve", label: "Approve Expenses Above the Threshold", category: "Accounting" },
+  { key: "petty_cash.manage", label: "Manage Petty Cash", category: "Accounting" },
   { key: "marketing.manage", label: "Manage Coupons, Promotions & Campaigns", category: "Marketing" },
   { key: "operations.manage", label: "Manage Equipment & Documents", category: "Operations" },
   { key: "system.update", label: "Manage App Updates", category: "Admin" },
@@ -94,7 +95,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<StaffRole, PermissionKey[]> = {
     "discounts.apply", "discounts.unlimited", "bills.print", "tables.manage", "tables.view", "menu.manage", "menu.view",
     "inventory.manage", "reports.access", "kds.manage",
     "reservations.manage", "customers.manage", "memberships.manage", "refunds.process",
-    "attendance.manage", "delivery.manage", "staff.manage", "accounting.manage", "expenses.approve", "marketing.manage", "operations.manage",
+    "attendance.manage", "delivery.manage", "staff.manage", "accounting.manage", "expenses.approve", "petty_cash.manage", "marketing.manage", "operations.manage",
   ],
   CASHIER: [
     "orders.create", "orders.edit", "orders.accept", "bills.print", "discounts.apply",
@@ -108,6 +109,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<StaffRole, PermissionKey[]> = {
   CHEF: ["kds.manage", "orders.accept", "menu.manage", "menu.view"],
   BARTENDER: ["orders.create", "orders.accept", "kds.manage", "menu.view", "tables.view"],
   DELIVERY_STAFF: ["orders.edit", "delivery.manage", "delivery.rider"],
-  ACCOUNTANT: ["sales.view", "dashboard.sales.view", "reports.access", "reports.financial.view", "data.export", "accounting.manage"],
+  ACCOUNTANT: ["sales.view", "dashboard.sales.view", "reports.access", "reports.financial.view", "data.export", "accounting.manage", "petty_cash.manage"],
   INVENTORY_MANAGER: ["inventory.manage", "reports.access"],
 };
