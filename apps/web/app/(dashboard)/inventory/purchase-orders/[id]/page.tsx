@@ -5,6 +5,7 @@ import Link from "next/link";
 import { use } from "react";
 import { toast } from "@/lib/toast";
 import { ReceivePoDialog } from "@/components/inventory/receive-po-dialog";
+import { ReturnItemsDialog } from "@/components/inventory/return-items-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -20,6 +21,7 @@ import {
 import { useBranch } from "@/hooks/use-branch";
 import {
   usePurchaseOrder,
+  usePurchaseReturns,
   useUpdatePurchaseOrderStatus,
   type PurchaseOrderDetail,
 } from "@/hooks/use-inventory";
@@ -33,10 +35,14 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
   const { branchId } = useBranch();
   const { data: po, isLoading } = usePurchaseOrder(branchId, id);
   const updateStatus = useUpdatePurchaseOrderStatus(branchId);
+  const { data: returns = [] } = usePurchaseReturns(branchId, po?.supplierId);
 
   if (isLoading || !po) {
     return <Skeleton className="h-96 rounded-2xl" />;
   }
+
+  const grnIds = new Set(po.goodsReceipts.map((g) => g.id));
+  const poReturns = returns.filter((r) => grnIds.has(r.goodsReceiptId));
 
   const send = () =>
     updateStatus.mutate(
@@ -140,7 +146,38 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
                     {t("inv.po.receivedBy", { name: grn.receivedBy.name, date: new Date(grn.receivedAt).toLocaleDateString() })}
                   </span>
                 </div>
-                <span className="text-muted-foreground">{plural("inv.po.lineItems", grn.items.length)}</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-muted-foreground">{plural("inv.po.lineItems", grn.items.length)}</span>
+                  <ReturnItemsDialog
+                    branchId={branchId}
+                    po={po}
+                    grn={grn}
+                    priorReturns={returns.filter((r) => r.goodsReceiptId === grn.id)}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {poReturns.length > 0 && (
+        <Card className="flex flex-col gap-3 p-5" data-testid="po-returns">
+          <h2 className="text-[18px] font-medium text-foreground">{t("inv.return.list")}</h2>
+          <div className="flex flex-col divide-y divide-border">
+            {poReturns.map((r) => (
+              <div key={r.id} className="flex items-center justify-between py-2.5 text-sm">
+                <div className="flex flex-col">
+                  <span className="font-medium text-foreground">
+                    {r.returnNumber} · {r.goodsReceipt.grnNumber} · {t(`inv.return.reason.${r.reason}`)}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {t("inv.return.by", { name: r.createdBy.name, date: new Date(r.createdAt).toLocaleDateString() })}
+                  </span>
+                </div>
+                <span className="font-medium tabular-nums">
+                  {t("inv.return.total", { amount: formatCurrency(r.totalAmount) })}
+                </span>
               </div>
             ))}
           </div>
