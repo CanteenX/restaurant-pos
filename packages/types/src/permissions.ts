@@ -28,6 +28,7 @@ export const PERMISSIONS = [
   { key: "kds.manage", label: "Manage Kitchen Display", category: "Kitchen" },
   { key: "reservations.manage", label: "Manage Reservations", category: "Reservations" },
   { key: "settings.manage", label: "Manage Settings", category: "Admin" },
+  { key: "settings.emailTemplates", label: "Manage Email Templates & Branding", category: "Admin" },
   { key: "customers.manage", label: "Manage Customers & Loyalty", category: "CRM" },
   { key: "memberships.manage", label: "Manage Membership Tiers & Enrolments", category: "CRM" },
   { key: "audit_log.view", label: "View Audit Log", category: "Admin" },

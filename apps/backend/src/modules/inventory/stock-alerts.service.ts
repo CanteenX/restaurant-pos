@@ -4,6 +4,7 @@ import { BranchTimeService } from '../../common/services/branch-time.service';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
+import { EmailTemplatesService } from '../email/templates/email-templates.service';
 
 const EXPIRY_TYPE = 'stock.expiring';
 const LOW_TYPE = 'stock.low';
@@ -56,6 +57,7 @@ export class StockAlertsService {
     private readonly notifications: NotificationsService,
     private readonly email: EmailService,
     private readonly time: BranchTimeService,
+    private readonly emailTemplates: EmailTemplatesService,
   ) {}
 
   @Cron(CronExpression.EVERY_DAY_AT_7AM)
@@ -134,6 +136,7 @@ export class StockAlertsService {
     if (!digest) return;
 
     const sent: string[] = [];
+    const summary: string[] = [];
     if (
       expiring.length > 0 &&
       (await this.notifyOnce(
@@ -145,6 +148,7 @@ export class StockAlertsService {
       ))
     ) {
       sent.push(`Expiring soon:\n${digest.expiryBody}`);
+      summary.push(`${expiring.length} stock batch(es) expiring soon`);
     }
     if (
       low.length > 0 &&
@@ -157,8 +161,14 @@ export class StockAlertsService {
       ))
     ) {
       sent.push(`Low stock:\n${digest.lowBody}`);
+      summary.push(`${low.length} ingredient(s) low on stock`);
     }
-    if (sent.length > 0) await this.emailDigest(branchId, sent.join('\n\n'));
+    if (sent.length > 0)
+      await this.emailDigest(
+        branchId,
+        `${summary.join(' and ')}.`,
+        sent.join('\n\n'),
+      );
   }
 
   /** Creates the notification unless this branch already got one today. */
@@ -183,8 +193,21 @@ export class StockAlertsService {
     return true;
   }
 
-  private async emailDigest(branchId: string, text: string) {
+  private async emailDigest(
+    branchId: string,
+    summary: string,
+    details: string,
+  ) {
     if (!this.email.isConfigured()) return;
+    const compose = await this.emailTemplates.forBranch(
+      branchId,
+      'STOCK_ALERT',
+    );
+    if (!compose) return; // turned off in Settings > Email templates
+    const message = compose({
+      'alert.summary': summary,
+      'alert.details': details,
+    });
     const users = await this.prisma.user.findMany({
       where: {
         isActive: true,
@@ -200,8 +223,7 @@ export class StockAlertsService {
         .flatMap((u) => (u.email ? [u.email] : []))
         .map((to) => ({
           to,
-          subject: 'Stock alert: expiring or low items',
-          text,
+          ...message,
         })),
     );
   }

@@ -5,7 +5,10 @@ import { createTransport, type Transporter } from 'nodemailer';
 export interface OutgoingEmail {
   to: string;
   subject: string;
+  /** Plain-text part; always sent, also as the fallback for `html`. */
   text: string;
+  html?: string;
+  replyTo?: string;
   headers?: Record<string, string>;
   attachments?: { filename: string; content: Buffer; contentType?: string }[];
 }
@@ -58,8 +61,9 @@ export class EmailService {
         sent++;
       } catch (err) {
         failed++;
+        // No address or SMTP message in the log: both can carry personal data.
         this.logger.warn(
-          `Email to ${mail.to} failed: ${err instanceof Error ? err.message : String(err)}`,
+          `Email "${mail.subject.slice(0, 60)}" to recipient ${sent + failed} of ${mails.length} failed: ${err instanceof Error ? err.name : 'unknown error'}`,
         );
       }
     }
