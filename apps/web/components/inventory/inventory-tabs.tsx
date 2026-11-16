@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useI18n, type TranslationKey } from "@/lib/i18n/context";
+import { scrollActiveTabIntoView } from "@/lib/scroll-active-tab";
 import { cn } from "@/lib/utils";
 
 const TABS: { key: TranslationKey; href: string }[] = [
@@ -27,8 +28,10 @@ export function InventoryTabs() {
           <Link
             key={tab.href}
             href={tab.href}
+            aria-current={isActive ? "page" : undefined}
+            ref={isActive ? scrollActiveTabIntoView : undefined}
             className={cn(
-              "shrink-0 whitespace-nowrap border-b-2 px-3 pb-3 text-sm font-medium transition-colors",
+              "shrink-0 whitespace-nowrap rounded-t-md border-b-2 px-3 pb-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               isActive
                 ? "border-primary text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground",

@@ -264,7 +264,7 @@ function PosPageInner() {
     <div className="flex h-[calc(100dvh-10rem)] flex-col gap-4 lg:h-[calc(100dvh-8rem)]">
       <StatusNote note={note} onClear={clearNote} />
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-full flex-1 sm:min-w-0">
+        <div className="min-w-full flex-1 empty:hidden sm:min-w-0">
           <KitchenProgressWidget branchId={branchId} />
         </div>
         <button
