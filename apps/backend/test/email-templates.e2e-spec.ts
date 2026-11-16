@@ -6,6 +6,7 @@
 //   DATABASE_URL=... JWT_SECRET=x pnpm test:e2e -- email-templates
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { ThrottlerStorage } from '@nestjs/throttler';
 import * as bcrypt from 'bcrypt';
 import cookieParser from 'cookie-parser';
 import { randomUUID } from 'crypto';
@@ -16,6 +17,7 @@ import {
   EmailService,
   type OutgoingEmail,
 } from './../src/modules/email/email.service';
+import { EmailTemplatesService } from './../src/modules/email/templates/email-templates.service';
 import { MarketingService } from './../src/modules/marketing/marketing.service';
 import { ReportSchedulesService } from './../src/modules/reports/report-schedules.service';
 import { PrismaService } from './../src/prisma/prisma.service';
@@ -109,7 +111,19 @@ describe('Email templates (e2e)', () => {
   };
 
   beforeAll(async () => {
+    // The per-IP throttler is stubbed (as in session-revoke) so the 429 below
+    // comes deterministically from the per-restaurant send-test limit.
     const mod = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(ThrottlerStorage)
+      .useValue({
+        increment: () =>
+          Promise.resolve({
+            totalHits: 1,
+            timeToExpire: 60,
+            isBlocked: false,
+            timeToBlockExpire: 0,
+          }),
+      })
       .overrideProvider(EmailService)
       .useValue({
         isConfigured: () => true,
@@ -293,32 +307,53 @@ describe('Email templates (e2e)', () => {
     expect(preview.body.html).toContain('Open daily 9-11');
   });
 
-  it('sends a test email through the transport, then rate-limits', async () => {
+  it('refuses to send a test email to an address outside the restaurant', async () => {
     const res = await adminA
       .post(`${BASE}/PASSWORD_RESET/test`)
-      .send({ to: 'Owner@Example.com' })
+      .send({ to: 'victim@elsewhere.example' })
+      .expect(400);
+    expect(JSON.stringify(res.body)).toMatch(/your own email/i);
+    await adminA
+      .post(`${BASE}/PASSWORD_RESET/test`)
+      .send({ to: 'not-an-email' })
+      .expect(400);
+    // Another restaurant's admin address is not allowed either.
+    await adminA
+      .post(`${BASE}/PASSWORD_RESET/test`)
+      .send({ to: `admin-beta-${tag}@example.com` })
+      .expect(400);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("sends to the restaurant's own Reply-To address", async () => {
+    await adminA
+      .post(`${BASE}/PASSWORD_RESET/test`)
+      .send({ to: 'hello@alpha.example.com' })
+      .expect(200);
+    expect(sent.map((m) => m.to)).toEqual(['hello@alpha.example.com']);
+  });
+
+  it("sends a test email to the user's own address, then rate-limits", async () => {
+    const own = `admin-alpha-${tag}@example.com`;
+    const res = await adminA
+      .post(`${BASE}/PASSWORD_RESET/test`)
+      .send({ to: own.toUpperCase() })
       .expect(200);
     expect(res.body).toEqual({ sent: true });
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({
-      to: 'owner@example.com',
+      to: own,
       subject: '[Test] Reset for Ravi Kumar',
       replyTo: 'hello@alpha.example.com',
     });
     expect(sent[0].html).toMatch(/^<!DOCTYPE html>/);
     expect(sent[0].text).toContain('Hello Ravi Kumar');
-    await adminA
-      .post(`${BASE}/PASSWORD_RESET/test`)
-      .send({ to: 'not-an-email' })
-      .expect(400);
+    // 5 sends per 10 minutes per restaurant (2 used above): then 429.
     const statuses: number[] = [];
     for (let i = 0; i < 6; i++)
       statuses.push(
-        (
-          await adminA
-            .post(`${BASE}/PASSWORD_RESET/test`)
-            .send({ to: 'owner@example.com' })
-        ).status,
+        (await adminA.post(`${BASE}/PASSWORD_RESET/test`).send({ to: own }))
+          .status,
       );
     expect(statuses).toContain(429);
   });
@@ -416,6 +451,38 @@ describe('Email templates (e2e)', () => {
       expect(sent[0].attachments?.[0].filename).toBe(
         'sales-daily_2026-11-15_2026-11-15.csv',
       );
+    });
+
+    it('a turned-off report template marks the run handled so it does not retry all day', async () => {
+      const branchId = branchIds[1];
+      await adminB
+        .put(`${BASE}/REPORT_SCHEDULED`)
+        .send({ subject: '{{report.title}}', enabled: false })
+        .expect(200);
+      const schedule = await prisma.reportSchedule.create({
+        data: {
+          branchId,
+          reportKey: 'sales-daily',
+          frequency: 'DAILY',
+          format: 'csv',
+          recipients: [`boss2-${tag}@example.com`],
+        },
+      });
+      await expect(
+        app.get(ReportSchedulesService).deliver(schedule, '2026-11-16'),
+      ).rejects.toThrow(/turned off/);
+      const after = await prisma.reportSchedule.findUniqueOrThrow({
+        where: { id: schedule.id },
+      });
+      expect(after.lastSentAt).not.toBeNull();
+      expect(after.lastError).toMatch(/Skipped/);
+      expect(sent).toHaveLength(0);
+    });
+
+    it('a missing branch is reported as such, not as a turned-off template', async () => {
+      await expect(
+        app.get(EmailTemplatesService).forBranch('no-such-branch', 'RECEIPT'),
+      ).rejects.toThrow(/Branch not found/);
     });
   });
 });

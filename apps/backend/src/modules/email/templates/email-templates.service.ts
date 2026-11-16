@@ -2,6 +2,7 @@ import {
   BadRequestException,
   HttpException,
   HttpStatus,
+  NotFoundException,
   Injectable,
   Logger,
 } from '@nestjs/common';
@@ -31,7 +32,10 @@ import {
 import type { TemplateValues } from './markdown';
 import { renderEmail, type RenderedEmail } from './renderer';
 
-/** Renders one kind of email for one restaurant; null when it is turned off. */
+/**
+ * Renders one kind of email for one restaurant. (The factories that build
+ * it, such as forBranch, return null instead when that email is turned off.)
+ */
 export type EmailComposer = (
   values: TemplateValues,
 ) => RenderedEmail & { replyTo?: string };
@@ -290,14 +294,16 @@ export class EmailTemplatesService {
 
   /**
    * Composer for a branch's restaurant (used by the senders). Returns null
-   * when the restaurant turned this email off or the branch is gone.
+   * only when the restaurant turned this email off; a missing branch is a
+   * 404, so callers never mistake one for the other.
    */
   async forBranch(
     branchId: string,
     key: EmailTemplateKey,
   ): Promise<EmailComposer | null> {
     const ctx = await this.branchContext(branchId);
-    return ctx ? this.composerFor(ctx, key) : null;
+    if (!ctx) throw new NotFoundException('Branch not found');
+    return this.composerFor(ctx, key);
   }
 
   private async previewComposer(
@@ -331,9 +337,35 @@ export class EmailTemplatesService {
     return { subject, html, text };
   }
 
-  /** Sends the preview to one address. Limited per restaurant. */
+  /**
+   * A test email may only go to the acting user's own address or the
+   * restaurant's own Reply-To address, so the editor cannot be used to mail
+   * custom content to arbitrary people from the operator's SMTP sender.
+   */
+  private async assertTestRecipient(
+    restaurantId: string,
+    userId: string,
+    to: string,
+    branding: EmailBrandingView,
+  ) {
+    const target = to.trim().toLowerCase();
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, restaurantId },
+      select: { email: true },
+    });
+    const allowed = [user?.email, branding.replyTo]
+      .filter((e): e is string => !!e)
+      .map((e) => e.trim().toLowerCase());
+    if (!allowed.includes(target))
+      throw new BadRequestException(
+        "Test emails can only be sent to your own email address or the restaurant's Reply-To address (Settings > Email branding).",
+      );
+  }
+
+  /** Sends the preview to the user's own (or the restaurant's) address. Rate-limited. */
   async sendTest(
     restaurantId: string,
+    userId: string,
     key: EmailTemplateKey,
     to: string,
     draft?: EmailTemplateUpdateDto,
@@ -342,6 +374,8 @@ export class EmailTemplatesService {
       throw new BadRequestException(
         'Email is not set up on this server (SMTP_URL / SMTP_FROM)',
       );
+    const branding = await this.getBranding(restaurantId);
+    await this.assertTestRecipient(restaurantId, userId, to, branding);
     const wait = this.testLimiter.hit(restaurantId, TEST_SENDS_PER_WINDOW);
     if (wait > 0)
       throw new HttpException(
@@ -349,7 +383,6 @@ export class EmailTemplatesService {
         HttpStatus.TOO_MANY_REQUESTS,
       );
     const p = await this.preview(restaurantId, key, draft);
-    const branding = await this.getBranding(restaurantId);
     try {
       await this.email.send({
         to,

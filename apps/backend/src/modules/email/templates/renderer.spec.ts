@@ -260,6 +260,36 @@ describe('placeholder whitelist and link filter (shared helpers)', () => {
     expect(isAllowedTemplateLink('javascript:{{app.url}}')).toBe(false);
   });
 
+  it('only lets URL placeholders (*.url) start a link', () => {
+    expect(isAllowedTemplateLink('{{customer.name}}')).toBe(false);
+    expect(isAllowedTemplateLink('{{campaign.message}}/x')).toBe(false);
+    expect(isAllowedTemplateLink('{{ unsubscribe.url }}')).toBe(true);
+    expect(
+      emailTemplateUpdateSchema.safeParse({
+        ...EMAIL_TEMPLATE_DEFAULTS.RECEIPT,
+        body: '[Open]({{customer.name}})',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('never turns a non-URL placeholder value into a link at render time', () => {
+    const out = renderEmail(
+      base({
+        template: {
+          ...EMAIL_TEMPLATE_DEFAULTS.PASSWORD_RESET,
+          body: '[Open]({{user.name}})',
+          buttonUrl: '{{user.name}}',
+        },
+        values: {
+          ...EMAIL_SAMPLE_DATA.PASSWORD_RESET,
+          'user.name': 'https://evil.example',
+        },
+      }),
+    );
+    expect(out.html).not.toContain('href="https://evil.example"');
+    expect(out.text).not.toContain('Open (https://evil.example)');
+  });
+
   it('rejects unsafe links in body and button on save', () => {
     const t = EMAIL_TEMPLATE_DEFAULTS.RECEIPT;
     expect(

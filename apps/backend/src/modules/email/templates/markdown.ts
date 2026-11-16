@@ -11,7 +11,11 @@
 // Placeholders are swapped in only AFTER the Markdown is processed, and their
 // values are always escaped, so a customer name like "**x** [y](...)" is
 // shown as typed and can never create markup or links.
-import { EMAIL_PLACEHOLDER_PATTERN, isSafeEmailLink } from '@nventra/types';
+import {
+  EMAIL_PLACEHOLDER_PATTERN,
+  isAllowedTemplateLink,
+  isSafeEmailLink,
+} from '@nventra/types';
 import { escapeHtml } from './escape';
 
 export type TemplateValues = Readonly<Record<string, string>>;
@@ -55,6 +59,9 @@ export function resolveSafeLink(
   url: string,
   values: TemplateValues,
 ): string | null {
+  // Same rule as on save (re-checked here for rows saved before it existed):
+  // a link may only start with a URL placeholder, never e.g. a customer name.
+  if (!isAllowedTemplateLink(url)) return null;
   const resolved = fillPlaceholders(url, values).trim();
   return isSafeEmailLink(resolved) ? resolved : null;
 }

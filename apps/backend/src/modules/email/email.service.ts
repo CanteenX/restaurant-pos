@@ -61,9 +61,10 @@ export class EmailService {
         sent++;
       } catch (err) {
         failed++;
-        // No address or SMTP message in the log: both can carry personal data.
+        // Only a position and the error kind: the address, the subject (it can
+        // hold {{customer.name}}) and the SMTP message can all carry personal data.
         this.logger.warn(
-          `Email "${mail.subject.slice(0, 60)}" to recipient ${sent + failed} of ${mails.length} failed: ${err instanceof Error ? err.name : 'unknown error'}`,
+          `Email ${sent + failed} of ${mails.length} failed: ${err instanceof Error ? err.name : 'unknown error'}`,
         );
       }
     }

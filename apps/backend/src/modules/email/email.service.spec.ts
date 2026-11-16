@@ -1,5 +1,26 @@
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EmailService } from './email.service';
+
+describe('EmailService.sendEach logging', () => {
+  it('logs only a count and error kind, never the address, subject or SMTP text', async () => {
+    const service = makeService({});
+    jest
+      .spyOn(service, 'send')
+      .mockRejectedValue(new Error('550 mailbox asha@example.com unknown'));
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+    const out = await service.sendEach([
+      { to: 'asha@example.com', subject: 'Hi Asha Rao', text: 'x' },
+    ]);
+    expect(out).toEqual({ sent: 0, failed: 1 });
+    const logged = warn.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).not.toMatch(/asha|550/i);
+    expect(logged).toContain('1 of 1');
+    warn.mockRestore();
+  });
+});
 
 function makeService(env: Record<string, string | undefined>): EmailService {
   const config = {

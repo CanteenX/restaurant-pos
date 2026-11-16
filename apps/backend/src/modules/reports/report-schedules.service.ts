@@ -126,10 +126,17 @@ export class ReportSchedulesService {
       s.branchId,
       'REPORT_SCHEDULED',
     );
-    if (!compose)
-      throw new BadRequestException(
-        'Scheduled report emails are turned off in Settings > Email templates',
-      );
+    if (!compose) {
+      // Count this run as handled so the 10-minute tick does not retry (and
+      // log) it again for the rest of the day.
+      const message =
+        'Scheduled report emails are turned off in Settings > Email templates';
+      await this.prisma.reportSchedule.update({
+        where: { id: s.id },
+        data: { lastSentAt: new Date(), lastError: `Skipped: ${message}` },
+      });
+      throw new BadRequestException(message);
+    }
     const { from, to } = periodFor(s.frequency, today);
     const result = await this.reports.run(s.reportKey, s.branchId, from, to);
     const format = isExportFormat(s.format) ? s.format : 'xlsx';

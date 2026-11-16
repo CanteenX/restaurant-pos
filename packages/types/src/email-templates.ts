@@ -64,14 +64,25 @@ export function isSafeEmailLink(url: string): boolean {
   return /^https?:\/\/[^/?#]+/i.test(value) || /^mailto:[^@]+@[^@]+$/i.test(value);
 }
 
+/** Matches a link that starts with a placeholder; group 1 is its name. */
+const LEADING_PLACEHOLDER = /^\{\{\s*([a-zA-Z][\w.]*)\s*\}\}/;
+
+/** URL-type placeholders (`reset.url`, `app.url`, ...) are the only ones that may start a link. */
+export function isUrlPlaceholder(name: string): boolean {
+  return name.endsWith(".url");
+}
+
 /**
  * A link as typed into a template: either a safe literal URL, or one that
- * starts with a placeholder (`{{reset.url}}`, `{{app.url}}/inventory`). The
- * placeholder's value is checked again when the email is rendered.
+ * starts with a URL placeholder (`{{reset.url}}`, `{{app.url}}/inventory`).
+ * The filled-in value is checked again when the email is rendered, so a
+ * customer-supplied value (a name, a message) can never become a link target.
  */
 export function isAllowedTemplateLink(url: string): boolean {
   const value = url.trim();
-  if (/^\{\{\s*[a-zA-Z][\w.]*\s*\}\}/.test(value)) return !/\s/.test(value.replace(EMAIL_PLACEHOLDER_PATTERN, ""));
+  const leading = LEADING_PLACEHOLDER.exec(value);
+  if (leading)
+    return isUrlPlaceholder(leading[1]) && !/\s/.test(value.replace(EMAIL_PLACEHOLDER_PATTERN, ""));
   return isSafeEmailLink(value);
 }
 
@@ -100,7 +111,7 @@ export const emailTemplateUpdateSchema = z
     buttonText: optionalText(EMAIL_BUTTON_TEXT_MAX),
     buttonUrl: optionalText(EMAIL_URL_MAX).refine(
       (url) => !url || isAllowedTemplateLink(url),
-      "Button links must start with http://, https://, mailto: or a placeholder",
+      "Button links must start with http://, https://, mailto: or a link placeholder such as {{reset.url}}",
     ),
     footer: optionalText(EMAIL_FOOTER_MAX),
     enabled: z.boolean().default(true),
@@ -119,7 +130,7 @@ export const emailTemplateUpdateSchema = z
         ctx.addIssue({
           code: "custom",
           path: [field],
-          message: "Links must start with http://, https://, mailto: or a placeholder",
+          message: "Links must start with http://, https://, mailto: or a link placeholder such as {{reset.url}}",
         });
     }
   });
