@@ -43,6 +43,8 @@ export type EmailComposer = (
 const COMMON_NAMES = new Set<string>(COMMON_EMAIL_PLACEHOLDERS);
 const TEST_SENDS_PER_WINDOW = 5;
 const TEST_WINDOW_MS = 10 * 60_000;
+const TEST_SENDS_PER_USER_PER_DAY = 20;
+const DAY_MS = 24 * 60 * 60_000;
 
 interface RestaurantContext {
   restaurantId: string;
@@ -78,6 +80,7 @@ const blankToNull = (v: string | null | undefined) => (v?.trim() ? v : null);
 export class EmailTemplatesService {
   private readonly logger = new Logger(EmailTemplatesService.name);
   private readonly testLimiter = new KeyRateLimiter(TEST_WINDOW_MS);
+  private readonly testDailyLimiter = new KeyRateLimiter(DAY_MS);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -338,50 +341,55 @@ export class EmailTemplatesService {
   }
 
   /**
-   * A test email may only go to the acting user's own address or the
-   * restaurant's own Reply-To address, so the editor cannot be used to mail
-   * custom content to arbitrary people from the operator's SMTP sender.
+   * The test email's only possible recipient: the acting user's own account
+   * email. No address comes from the request and the unverified branding
+   * Reply-To is not used, so the editor cannot mail custom content to other
+   * people from the operator's SMTP sender.
    */
-  private async assertTestRecipient(
-    restaurantId: string,
-    userId: string,
-    to: string,
-    branding: EmailBrandingView,
-  ) {
-    const target = to.trim().toLowerCase();
+  private async ownEmail(restaurantId: string, userId: string) {
     const user = await this.prisma.user.findFirst({
       where: { id: userId, restaurantId },
       select: { email: true },
     });
-    const allowed = [user?.email, branding.replyTo]
-      .filter((e): e is string => !!e)
-      .map((e) => e.trim().toLowerCase());
-    if (!allowed.includes(target))
+    const email = user?.email?.trim().toLowerCase();
+    if (!email)
       throw new BadRequestException(
-        "Test emails can only be sent to your own email address or the restaurant's Reply-To address (Settings > Email branding).",
+        'Your account has no email address. Add one to your profile to receive test emails.',
+      );
+    return email;
+  }
+
+  /**
+   * Account emails can be edited by users.manage without verification, so the
+   * real guard is volume: a daily cap per user, a short window per restaurant
+   * and @Throttle per IP on the route.
+   */
+  private assertTestBudget(restaurantId: string, userId: string) {
+    const wait = Math.max(
+      this.testDailyLimiter.hit(userId, TEST_SENDS_PER_USER_PER_DAY),
+      this.testLimiter.hit(restaurantId, TEST_SENDS_PER_WINDOW),
+    );
+    if (wait > 0)
+      throw new HttpException(
+        `Too many test emails. Try again in ${Math.ceil(wait / 60)} minute(s).`,
+        HttpStatus.TOO_MANY_REQUESTS,
       );
   }
 
-  /** Sends the preview to the user's own (or the restaurant's) address. Rate-limited. */
+  /** Sends the preview to the acting user's own account email. Rate-limited. */
   async sendTest(
     restaurantId: string,
     userId: string,
     key: EmailTemplateKey,
-    to: string,
     draft?: EmailTemplateUpdateDto,
   ): Promise<{ sent: true }> {
     if (!this.email.isConfigured())
       throw new BadRequestException(
         'Email is not set up on this server (SMTP_URL / SMTP_FROM)',
       );
+    const to = await this.ownEmail(restaurantId, userId);
+    this.assertTestBudget(restaurantId, userId);
     const branding = await this.getBranding(restaurantId);
-    await this.assertTestRecipient(restaurantId, userId, to, branding);
-    const wait = this.testLimiter.hit(restaurantId, TEST_SENDS_PER_WINDOW);
-    if (wait > 0)
-      throw new HttpException(
-        `Too many test emails. Try again in ${Math.ceil(wait / 60)} minute(s).`,
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
     const p = await this.preview(restaurantId, key, draft);
     try {
       await this.email.send({

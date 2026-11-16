@@ -120,12 +120,7 @@ export class EmailTemplatesController {
     @Body(new ZodValidationPipe(emailTemplateTestSchema))
     body: EmailTemplateTestDto,
   ) {
-    return this.templates.sendTest(
-      user.restaurantId,
-      user.id,
-      key,
-      body.to,
-      body.draft,
-    );
+    // No recipient in the request: it always goes to the user's own email.
+    return this.templates.sendTest(user.restaurantId, user.id, key, body.draft);
   }
 }

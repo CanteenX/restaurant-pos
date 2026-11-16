@@ -75,15 +75,24 @@ export function isUrlPlaceholder(name: string): boolean {
 /**
  * A link as typed into a template: either a safe literal URL, or one that
  * starts with a URL placeholder (`{{reset.url}}`, `{{app.url}}/inventory`).
- * The filled-in value is checked again when the email is rendered, so a
- * customer-supplied value (a name, a message) can never become a link target.
+ * Other placeholders may only appear in the path, query or fragment, never in
+ * the scheme or host, so a customer-supplied value (a name, a message) can
+ * never decide where a link goes. The filled-in value is checked again when
+ * the email is rendered.
  */
 export function isAllowedTemplateLink(url: string): boolean {
   const value = url.trim();
+  if (/\s/.test(value.replace(EMAIL_PLACEHOLDER_PATTERN, ""))) return false;
   const leading = LEADING_PLACEHOLDER.exec(value);
-  if (leading)
-    return isUrlPlaceholder(leading[1]) && !/\s/.test(value.replace(EMAIL_PLACEHOLDER_PATTERN, ""));
-  return isSafeEmailLink(value);
+  if (leading) {
+    // `{{app.url}}{{x}}` or `{{app.url}}@evil` would extend the host.
+    const rest = value.slice(leading[0].length);
+    return isUrlPlaceholder(leading[1]) && (rest === "" || /^[/?#]/.test(rest));
+  }
+  if (!isSafeEmailLink(value)) return false;
+  if (/^mailto:/i.test(value)) return !value.includes("{{");
+  const authority = value.replace(/^https?:\/\//i, "").split(/[/?#]/)[0];
+  return !authority.includes("{{");
 }
 
 /** Markdown link targets `[text](url)` found in `text`. */
@@ -142,11 +151,13 @@ export const emailTemplatePreviewSchema = z
   .strict();
 export type EmailTemplatePreviewDto = z.infer<typeof emailTemplatePreviewSchema>;
 
+/**
+ * Send a test email. There is deliberately no recipient field: the test always
+ * goes to the signed-in user's own account email, so the editor can't be used
+ * to mail custom content to other people.
+ */
 export const emailTemplateTestSchema = z
-  .object({
-    to: z.string().trim().toLowerCase().max(254).pipe(z.email("Enter a valid email address")),
-    draft: emailTemplateUpdateSchema.optional(),
-  })
+  .object({ draft: emailTemplateUpdateSchema.optional() })
   .strict();
 export type EmailTemplateTestDto = z.infer<typeof emailTemplateTestSchema>;
 

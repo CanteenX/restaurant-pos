@@ -272,6 +272,24 @@ describe('placeholder whitelist and link filter (shared helpers)', () => {
     ).toBe(false);
   });
 
+  it('keeps non-URL placeholders out of the scheme and host of a link', () => {
+    for (const bad of [
+      'https://{{customer.name}}',
+      'https://{{customer.name}}.example.com/x',
+      '{{app.url}}{{customer.name}}',
+      '{{app.url}}@evil.example',
+      'mailto:{{customer.name}}',
+    ])
+      expect([bad, isAllowedTemplateLink(bad)]).toEqual([bad, false]);
+    for (const ok of [
+      '{{app.url}}/inventory',
+      '{{app.url}}',
+      'https://shop.example.com/order?ref={{order.number}}',
+      'https://shop.example.com/{{order.number}}',
+    ])
+      expect([ok, isAllowedTemplateLink(ok)]).toEqual([ok, true]);
+  });
+
   it('never turns a non-URL placeholder value into a link at render time', () => {
     const out = renderEmail(
       base({

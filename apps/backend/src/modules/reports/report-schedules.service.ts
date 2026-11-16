@@ -126,17 +126,9 @@ export class ReportSchedulesService {
       s.branchId,
       'REPORT_SCHEDULED',
     );
-    if (!compose) {
-      // Count this run as handled so the 10-minute tick does not retry (and
-      // log) it again for the rest of the day.
-      const message =
-        'Scheduled report emails are turned off in Settings > Email templates';
-      await this.prisma.reportSchedule.update({
-        where: { id: s.id },
-        data: { lastSentAt: new Date(), lastError: `Skipped: ${message}` },
-      });
-      throw new BadRequestException(message);
-    }
+    // Turned off: nothing is recorded, so turning it back on later the same
+    // day still sends. The tick skips this quietly; "Send now" explains it.
+    if (!compose) return { sent: 0, failed: 0, skipped: true as const };
     const { from, to } = periodFor(s.frequency, today);
     const result = await this.reports.run(s.reportKey, s.branchId, from, to);
     const format = isExportFormat(s.format) ? s.format : 'xlsx';
@@ -175,7 +167,12 @@ export class ReportSchedulesService {
   async sendNow(branchId: string, id: string) {
     const s = await this.get(branchId, id);
     const tz = await this.time.tzForBranch(branchId);
-    return this.deliver(s, this.localToday(tz).date);
+    const out = await this.deliver(s, this.localToday(tz).date);
+    if ('skipped' in out)
+      throw new BadRequestException(
+        'Scheduled report emails are turned off in Settings > Email templates',
+      );
+    return out;
   }
 
   private localToday(tz: string) {
@@ -211,7 +208,8 @@ export class ReportSchedulesService {
           : null;
         if (!isDue(s, now.date, now.hour, lastLocal)) continue;
         try {
-          await this.deliver(s, now.date);
+          const out = await this.deliver(s, now.date);
+          if ('skipped' in out) continue; // template turned off: no log, no write
           this.logger.log(`Sent scheduled report ${s.reportKey} (${s.id})`);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);

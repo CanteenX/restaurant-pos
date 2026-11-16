@@ -168,10 +168,7 @@ describe('Email templates (e2e)', () => {
     await staffA.get(BASE).expect(403);
     await staffA.put(`${BASE}/PASSWORD_RESET`).send(customReset).expect(403);
     await staffA.post(`${BASE}/PASSWORD_RESET/preview`).send({}).expect(403);
-    await staffA
-      .post(`${BASE}/PASSWORD_RESET/test`)
-      .send({ to: 'x@example.com' })
-      .expect(403);
+    await staffA.post(`${BASE}/PASSWORD_RESET/test`).send({}).expect(403);
     await staffA.get(`${BASE}/branding`).expect(403);
   });
 
@@ -307,37 +304,46 @@ describe('Email templates (e2e)', () => {
     expect(preview.body.html).toContain('Open daily 9-11');
   });
 
-  it('refuses to send a test email to an address outside the restaurant', async () => {
-    const res = await adminA
-      .post(`${BASE}/PASSWORD_RESET/test`)
-      .send({ to: 'victim@elsewhere.example' })
-      .expect(400);
-    expect(JSON.stringify(res.body)).toMatch(/your own email/i);
+  it('takes no recipient from the client: the Reply-To bypass is closed', async () => {
+    // The re-review's exploit: point Reply-To at a victim, then send to it.
+    await adminA
+      .put(`${BASE}/branding`)
+      .send({ primaryColor: '#0F766E', replyTo: 'victim@elsewhere.example' })
+      .expect(200);
     await adminA
       .post(`${BASE}/PASSWORD_RESET/test`)
-      .send({ to: 'not-an-email' })
+      .send({
+        to: 'victim@elsewhere.example',
+        draft: { subject: 'Reset', body: '[Verify](https://phish.example)' },
+      })
       .expect(400);
-    // Another restaurant's admin address is not allowed either.
     await adminA
       .post(`${BASE}/PASSWORD_RESET/test`)
-      .send({ to: `admin-beta-${tag}@example.com` })
+      .send({ to: `admin-alpha-${tag}@example.com` })
       .expect(400);
     expect(sent).toHaveLength(0);
-  });
-
-  it("sends to the restaurant's own Reply-To address", async () => {
+    // Without `to`, the email goes to the actor's own account, never the victim.
     await adminA
       .post(`${BASE}/PASSWORD_RESET/test`)
-      .send({ to: 'hello@alpha.example.com' })
+      .send({ draft: { subject: 'Reset', body: 'Hi' } })
       .expect(200);
-    expect(sent.map((m) => m.to)).toEqual(['hello@alpha.example.com']);
+    expect(sent.map((m) => m.to)).toEqual([`admin-alpha-${tag}@example.com`]);
+    await adminA
+      .put(`${BASE}/branding`)
+      .send({
+        primaryColor: '#0F766E',
+        headerText: 'Alpha Kitchen',
+        footerText: 'Open daily 9-11',
+        replyTo: 'hello@alpha.example.com',
+      })
+      .expect(200);
   });
 
   it("sends a test email to the user's own address, then rate-limits", async () => {
     const own = `admin-alpha-${tag}@example.com`;
     const res = await adminA
       .post(`${BASE}/PASSWORD_RESET/test`)
-      .send({ to: own.toUpperCase() })
+      .send({})
       .expect(200);
     expect(res.body).toEqual({ sent: true });
     expect(sent).toHaveLength(1);
@@ -352,8 +358,7 @@ describe('Email templates (e2e)', () => {
     const statuses: number[] = [];
     for (let i = 0; i < 6; i++)
       statuses.push(
-        (await adminA.post(`${BASE}/PASSWORD_RESET/test`).send({ to: own }))
-          .status,
+        (await adminA.post(`${BASE}/PASSWORD_RESET/test`).send({})).status,
       );
     expect(statuses).toContain(429);
   });
@@ -453,7 +458,7 @@ describe('Email templates (e2e)', () => {
       );
     });
 
-    it('a turned-off report template marks the run handled so it does not retry all day', async () => {
+    it('a turned-off report template skips quietly without blocking a later send that day', async () => {
       const branchId = branchIds[1];
       await adminB
         .put(`${BASE}/REPORT_SCHEDULED`)
@@ -468,15 +473,28 @@ describe('Email templates (e2e)', () => {
           recipients: [`boss2-${tag}@example.com`],
         },
       });
-      await expect(
-        app.get(ReportSchedulesService).deliver(schedule, '2026-11-16'),
-      ).rejects.toThrow(/turned off/);
+      const schedules = app.get(ReportSchedulesService);
+      // The cron path: a skipped result, no error, nothing recorded.
+      await expect(schedules.deliver(schedule, '2026-11-16')).resolves.toEqual({
+        sent: 0,
+        failed: 0,
+        skipped: true,
+      });
+      // The "Send now" button explains why nothing went out.
+      await expect(schedules.sendNow(branchId, schedule.id)).rejects.toThrow(
+        /turned off/,
+      );
       const after = await prisma.reportSchedule.findUniqueOrThrow({
         where: { id: schedule.id },
       });
-      expect(after.lastSentAt).not.toBeNull();
-      expect(after.lastError).toMatch(/Skipped/);
+      expect(after.lastSentAt).toBeNull();
+      expect(after.lastError).toBeNull();
       expect(sent).toHaveLength(0);
+
+      // Turned back on the same day: the next send still goes out.
+      await adminB.post(`${BASE}/REPORT_SCHEDULED/reset`).expect(200);
+      await schedules.deliver(after, '2026-11-16');
+      expect(sent).toHaveLength(1);
     });
 
     it('a missing branch is reported as such, not as a turned-off template', async () => {
