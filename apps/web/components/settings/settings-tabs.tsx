@@ -7,6 +7,7 @@ import { useNavBadges } from "@/hooks/use-nav-badges";
 import { useBranch } from "@/hooks/use-branch";
 import { useSettings } from "@/hooks/use-settings";
 import { useI18n, type TranslationKey } from "@/lib/i18n/context";
+import { scrollActiveTabIntoView } from "@/lib/scroll-active-tab";
 import { cn } from "@/lib/utils";
 import { NavDot } from "@/components/layout/nav-dot";
 
@@ -53,7 +54,7 @@ export function SettingsTabs() {
   );
 
   return (
-    <nav className="flex gap-1 border-b border-border">
+    <nav className="flex min-w-0 max-w-full gap-1 overflow-x-auto border-b border-border">
       {visibleTabs.map((tab) => {
         const isActive =
           tab.href === "/settings" ? pathname === "/settings" : pathname?.startsWith(tab.href);
@@ -61,8 +62,10 @@ export function SettingsTabs() {
           <Link
             key={tab.href}
             href={tab.href}
+            aria-current={isActive ? "page" : undefined}
+            ref={isActive ? scrollActiveTabIntoView : undefined}
             className={cn(
-              "flex items-center gap-2 border-b-2 px-3 pb-3 text-sm font-medium transition-colors",
+              "flex shrink-0 items-center gap-2 whitespace-nowrap rounded-t-md border-b-2 px-3 pb-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               isActive
                 ? "border-primary text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground",
