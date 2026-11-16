@@ -23,7 +23,70 @@ const V4_BLOCKED: [string, number][] = [
   ['240.0.0.0', 4], // reserved + broadcast
 ];
 
-export function isPrivateAddress(ip: string): boolean {
+/** Parses any valid IPv6 text form into 16 bytes, or null if malformed. */
+function ipv6ToBytes(text: string): number[] | null {
+  let addr = text.split('%')[0]; // drop zone id
+  const groups: number[] = [];
+  const lastColon = addr.lastIndexOf(':');
+  const tail = addr.slice(lastColon + 1);
+  if (tail.includes('.')) {
+    if (isIP(tail) !== 4) return null;
+    const [a, b, c, d] = tail.split('.').map(Number);
+    addr = `${addr.slice(0, lastColon + 1)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const halves = addr.split('::');
+  if (halves.length > 2) return null;
+  const parse = (part: string): number[] | null => {
+    if (part === '') return [];
+    const out: number[] = [];
+    for (const g of part.split(':')) {
+      if (!/^[0-9a-f]{1,4}$/.test(g)) return null;
+      out.push(parseInt(g, 16));
+    }
+    return out;
+  };
+  const head = parse(halves[0]);
+  const rest = halves.length === 2 ? parse(halves[1]) : [];
+  if (!head || !rest) return null;
+  if (halves.length === 1) groups.push(...head);
+  else {
+    const fill = 8 - head.length - rest.length;
+    if (fill < 1) return null;
+    groups.push(...head, ...new Array<number>(fill).fill(0), ...rest);
+  }
+  if (groups.length !== 8) return null;
+  return groups.flatMap((g) => [g >> 8, g & 0xff]);
+}
+
+/**
+ * Returns the dotted IPv4 embedded in ::ffff:0:0/96 (mapped), ::/96
+ * (compatible) or 64:ff9b::/96 (NAT64), or null when there is none.
+ * "::" and "::1" are not treated as embedded; they are blocked separately.
+ */
+function embeddedIpv4(b: number[]): string | null {
+  const zero = (from: number, to: number) =>
+    b.slice(from, to).every((x) => x === 0);
+  const v4 = b.slice(12).join('.');
+  if (zero(0, 10) && b[10] === 0xff && b[11] === 0xff) return v4;
+  if (
+    zero(0, 12) &&
+    b.slice(12).some((x) => x !== 0) &&
+    !(zero(12, 15) && b[15] === 1)
+  )
+    return v4;
+  if (
+    b[0] === 0 &&
+    b[1] === 0x64 &&
+    b[2] === 0xff &&
+    b[3] === 0x9b &&
+    zero(4, 12)
+  )
+    return v4;
+  return null;
+}
+
+export function isPrivateAddress(raw: string): boolean {
+  const ip = raw.replace(/^\[|\]$/g, ''); // tolerate URL-style [v6] literals
   const kind = isIP(ip);
   if (kind === 4) {
     const n = ipv4ToInt(ip);
@@ -34,9 +97,12 @@ export function isPrivateAddress(ip: string): boolean {
   }
   if (kind === 6) {
     const lower = ip.toLowerCase();
-    // IPv4-mapped (::ffff:a.b.c.d) takes the IPv4 rules.
-    const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return isPrivateAddress(mapped[1]);
+    // IPv4 embedded in IPv6 (mapped, compatible, NAT64) takes the IPv4 rules,
+    // whatever textual form (dotted, hex, compressed or expanded) it uses.
+    const bytes = ipv6ToBytes(lower);
+    if (!bytes) return true; // unparseable: refuse
+    const embedded = embeddedIpv4(bytes);
+    if (embedded) return isPrivateAddress(embedded);
     if (lower === '::' || lower === '::1') return true;
     if (/^f[cd]/.test(lower)) return true; // fc00::/7 unique-local
     if (/^fe[89ab]/.test(lower)) return true; // fe80::/10 link-local

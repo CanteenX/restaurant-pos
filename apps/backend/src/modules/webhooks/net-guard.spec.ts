@@ -110,3 +110,69 @@ describe('resolveWebhookTarget', () => {
     ).resolves.toMatchObject({ address: '192.168.1.50' });
   });
 });
+
+describe('isPrivateAddress: IPv4-mapped and embedded IPv4 in IPv6', () => {
+  const targets = {
+    '127.0.0.1': ['7f00:1', '7f00:0001'],
+    '10.0.0.1': ['a00:1', '0a00:0001'],
+    '192.168.1.1': ['c0a8:101', 'c0a8:0101'],
+    '169.254.169.254': ['a9fe:a9fe'],
+    '0.0.0.0': ['0:0', '0000:0000'],
+  };
+  const forms: string[] = [];
+  for (const [dotted, hexes] of Object.entries(targets)) {
+    forms.push(`::ffff:${dotted}`, `0:0:0:0:0:ffff:${dotted}`);
+    for (const h of hexes) {
+      forms.push(
+        `::ffff:${h}`,
+        `::FFFF:${h.toUpperCase()}`,
+        `[::ffff:${h}]`,
+        `0:0:0:0:0:ffff:${h}`,
+        `0000:0000:0000:0000:0000:ffff:${h}`,
+        `::0:ffff:${h}`,
+      );
+    }
+  }
+  it.each(forms)('blocks mapped form %s', (ip) =>
+    expect(isPrivateAddress(ip)).toBe(true),
+  );
+
+  it.each([
+    '::7f00:1',
+    '::a00:1',
+    '::c0a8:101',
+    '::127.0.0.1',
+    '64:ff9b::7f00:1',
+  ])('blocks IPv4-compatible / NAT64 form of a private address %s', (ip) =>
+    expect(isPrivateAddress(ip)).toBe(true),
+  );
+
+  it.each([
+    '::ffff:8.8.8.8',
+    '::ffff:808:808',
+    '[::ffff:808:808]',
+    '0:0:0:0:0:ffff:0808:0808',
+    '::ffff:101:101',
+  ])('allows public mapped form %s', (ip) =>
+    expect(isPrivateAddress(ip)).toBe(false),
+  );
+
+  it('still allows an ordinary public IPv6 address', () =>
+    expect(isPrivateAddress('2001:4860:4860::8888')).toBe(false));
+
+  it('blocks a URL host that uses a hex mapped loopback', async () => {
+    await expect(
+      resolveWebhookTarget('https://[::ffff:7f00:1]/hook', strict, () =>
+        Promise.resolve([{ address: '1.1.1.1', family: 4 }]),
+      ),
+    ).rejects.toThrow(/private/);
+  });
+
+  it('blocks a DNS answer that is a hex mapped metadata address', async () => {
+    await expect(
+      resolveWebhookTarget('https://hook.example.com/', strict, () =>
+        Promise.resolve([{ address: '::ffff:a9fe:a9fe', family: 6 }]),
+      ),
+    ).rejects.toThrow(/private/);
+  });
+});
