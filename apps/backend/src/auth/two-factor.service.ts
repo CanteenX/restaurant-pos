@@ -9,6 +9,11 @@ import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SessionService } from './session.service';
 import {
+  assertCanManage,
+  ceilingUserInclude,
+  type CeilingActor,
+} from '../common/privilege-ceiling';
+import {
   generateRecoveryCode,
   generateSecret,
   openSecret,
@@ -232,20 +237,23 @@ export class TwoFactorService {
 
   /** Lets an owner/admin unlock a staff member who lost their device. */
   async adminReset(
-    actorId: string,
+    actor: CeilingActor,
     restaurantId: string,
     targetUserId: string,
   ) {
     const target = await this.prisma.user.findFirst({
       where: { id: targetUserId, restaurantId },
-      select: { id: true },
+      include: ceilingUserInclude,
     });
     if (!target) throw new BadRequestException('Staff member not found');
+    // #229: clearing 2FA is a step toward account takeover, so it is capped
+    // at the actor's own access (and an OWNER only by an OWNER).
+    assertCanManage(actor, target);
     await this.clear(targetUserId);
     // Whoever holds the lost device may still be signed in: end those sessions.
     await this.sessions.revokeAll(targetUserId);
     await this.audit.record({
-      userId: actorId,
+      userId: actor.id,
       action: '2fa.reset',
       entity: 'User',
       entityId: targetUserId,

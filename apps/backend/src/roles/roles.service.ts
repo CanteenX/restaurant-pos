@@ -4,9 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { CreateRoleDto, UpdateRoleDto } from '@nventra/types';
+import type { CreateRoleDto, SessionUser, UpdateRoleDto } from '@nventra/types';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  assertCanGrant,
+  assertCanManageRole,
+} from '../common/privilege-ceiling';
 
 const SELECT = {
   id: true,
@@ -42,7 +46,9 @@ export class RolesService {
     });
   }
 
-  async create(restaurantId: string, actorId: string, dto: CreateRoleDto) {
+  async create(restaurantId: string, actor: SessionUser, dto: CreateRoleDto) {
+    // #229: a new role can only carry permissions the creator holds.
+    assertCanGrant(actor, dto.permissionKeys);
     const permissions = await this.assertPermissionKeysValid(
       dto.permissionKeys,
     );
@@ -61,7 +67,7 @@ export class RolesService {
     });
 
     await this.audit.record({
-      userId: actorId,
+      userId: actor.id,
       action: 'role.created',
       entity: 'Role',
       entityId: role.id,
@@ -77,11 +83,15 @@ export class RolesService {
 
   async update(
     restaurantId: string,
-    actorId: string,
+    actor: SessionUser,
     id: string,
     dto: UpdateRoleDto,
   ) {
     const existing = await this.getForRestaurant(restaurantId, id);
+    // #229: no editing a role above your own access (OWNER included), and no
+    // adding permissions you do not hold.
+    assertCanManageRole(actor, existing);
+    if (dto.permissionKeys) assertCanGrant(actor, dto.permissionKeys);
 
     const nextPermissions = dto.permissionKeys
       ? await this.assertPermissionKeysValid(dto.permissionKeys)
@@ -119,7 +129,7 @@ export class RolesService {
     });
 
     await this.audit.record({
-      userId: actorId,
+      userId: actor.id,
       action: 'role.updated',
       entity: 'Role',
       entityId: id,
@@ -129,8 +139,9 @@ export class RolesService {
     return updated;
   }
 
-  async remove(restaurantId: string, actorId: string, id: string) {
+  async remove(restaurantId: string, actor: SessionUser, id: string) {
     const existing = await this.getForRestaurant(restaurantId, id);
+    assertCanManageRole(actor, existing);
     if (existing.isSystem) {
       throw new BadRequestException(
         'Seeded system roles cannot be deleted — create a custom role instead',
@@ -149,7 +160,7 @@ export class RolesService {
     await this.prisma.role.delete({ where: { id } });
 
     await this.audit.record({
-      userId: actorId,
+      userId: actor.id,
       action: 'role.deleted',
       entity: 'Role',
       entityId: id,

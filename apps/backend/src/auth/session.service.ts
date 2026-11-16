@@ -2,6 +2,11 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import {
+  assertCanManage,
+  ceilingUserInclude,
+  type CeilingActor,
+} from '../common/privilege-ceiling';
 
 /** "Log out of all devices": invalidates every JWT a user holds. */
 @Injectable()
@@ -29,18 +34,20 @@ export class SessionService {
 
   /** An admin signs a staff member of their own restaurant out everywhere. */
   async revokeForStaff(
-    actorId: string,
+    actor: CeilingActor,
     restaurantId: string,
     targetUserId: string,
   ) {
     const target = await this.prisma.user.findFirst({
       where: { id: targetUserId, restaurantId },
-      select: { id: true },
+      include: ceilingUserInclude,
     });
     if (!target) throw new NotFoundException('Staff member not found');
+    // #229: no signing out someone with more access than you (or the owner).
+    assertCanManage(actor, target);
     await this.revokeAll(targetUserId);
     await this.audit.record({
-      userId: actorId,
+      userId: actor.id,
       action: 'sessions.revoked',
       entity: 'User',
       entityId: targetUserId,

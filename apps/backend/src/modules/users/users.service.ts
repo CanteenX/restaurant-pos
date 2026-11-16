@@ -7,6 +7,7 @@ import {
 import type {
   CreateStaffDto,
   DepartmentDto,
+  SessionUser,
   SetPermissionOverridesDto,
   UpdateStaffDto,
 } from '@nventra/types';
@@ -15,6 +16,14 @@ import * as bcrypt from 'bcrypt';
 import { AuditService } from '../../audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SessionService } from '../../auth/session.service';
+import {
+  assertCanAssignRole,
+  assertCanManage,
+  assertCanManageRole,
+  canManageRole,
+  ceilingRoleInclude,
+  ceilingUserInclude,
+} from '../../common/privilege-ceiling';
 
 const SELECT = {
   id: true,
@@ -54,15 +63,32 @@ export class UsersService {
     });
   }
 
-  listRoles(restaurantId: string) {
-    return this.prisma.role.findMany({
+  /**
+   * Roles for the staff-create picker: only the ones the actor may assign
+   * (#229), so a manager never sees OWNER or a role above their own access.
+   */
+  async listRoles(restaurantId: string, actor: SessionUser) {
+    const roles = await this.prisma.role.findMany({
       where: { restaurantId },
       orderBy: { label: 'asc' },
+      include: ceilingRoleInclude,
     });
+    return roles
+      .filter((role) => canManageRole(actor, role))
+      .map(({ id, restaurantId: rid, name, label, isSystem, createdAt }) => ({
+        id,
+        restaurantId: rid,
+        name,
+        label,
+        isSystem,
+        createdAt,
+      }));
   }
 
-  async create(restaurantId: string, actorId: string, dto: CreateStaffDto) {
-    await this.assertRoleInRestaurant(restaurantId, dto.roleId);
+  async create(restaurantId: string, actor: SessionUser, dto: CreateStaffDto) {
+    const role = await this.assertRoleInRestaurant(restaurantId, dto.roleId);
+    // #229: you can only create an account at or below your own access.
+    assertCanManageRole(actor, role);
     await this.assertBranchesInRestaurant(restaurantId, dto.branchIds);
     await this.assertDepartmentInRestaurant(restaurantId, dto.departmentId);
 
@@ -95,7 +121,7 @@ export class UsersService {
     });
 
     await this.audit.record({
-      userId: actorId,
+      userId: actor.id,
       action: 'staff.created',
       entity: 'User',
       entityId: user.id,
@@ -107,16 +133,27 @@ export class UsersService {
 
   async update(
     restaurantId: string,
-    actorId: string,
+    actor: SessionUser,
     id: string,
     dto: UpdateStaffDto,
   ) {
     const existing = await this.prisma.user.findFirst({
       where: { id, restaurantId },
-      include: { role: true },
+      include: ceilingUserInclude,
     });
     if (!existing) {
       throw new NotFoundException('Staff account not found');
+    }
+    // #229: editing (incl. password reset, disabling) needs at least the
+    // target's access; changing a role also needs the new role's access.
+    assertCanManage(actor, existing);
+    const roleChanged = Boolean(dto.roleId) && dto.roleId !== existing.roleId;
+    if (roleChanged) {
+      const nextRole = await this.assertRoleInRestaurant(
+        restaurantId,
+        dto.roleId!,
+      );
+      assertCanAssignRole(actor, id, nextRole);
     }
 
     if (
@@ -138,9 +175,6 @@ export class UsersService {
       }
     }
 
-    if (dto.roleId) {
-      await this.assertRoleInRestaurant(restaurantId, dto.roleId);
-    }
     if (dto.branchIds) {
       await this.assertBranchesInRestaurant(restaurantId, dto.branchIds);
     }
@@ -182,7 +216,7 @@ export class UsersService {
     // flag, not the value, so a password rotation is still visible in the
     // trail without the audit log becoming a secondary place secrets leak.
     await this.audit.record({
-      userId: actorId,
+      userId: actor.id,
       action: 'staff.updated',
       entity: 'User',
       entityId: id,
@@ -200,18 +234,19 @@ export class UsersService {
     return updated;
   }
 
-  async remove(restaurantId: string, actorId: string, id: string) {
-    if (id === actorId) {
+  async remove(restaurantId: string, actor: SessionUser, id: string) {
+    if (id === actor.id) {
       throw new BadRequestException('You cannot delete your own account');
     }
 
     const existing = await this.prisma.user.findFirst({
       where: { id, restaurantId },
-      include: { role: true },
+      include: ceilingUserInclude,
     });
     if (!existing) {
       throw new NotFoundException('Staff account not found');
     }
+    assertCanManage(actor, existing);
 
     if (existing.role.name === 'OWNER') {
       const otherActiveOwners = await this.prisma.user.count({
@@ -246,7 +281,7 @@ export class UsersService {
     }
 
     await this.audit.record({
-      userId: actorId,
+      userId: actor.id,
       action: 'staff.deleted',
       entity: 'User',
       entityId: id,
@@ -356,11 +391,12 @@ export class UsersService {
    *  - you can't change your own overrides (no self-escalation or self-lockout),
    *  - the OWNER role is never overridable (can't strand the account),
    *  - you can only GRANT a permission you hold yourself (no escalation),
+   *  - you can't touch a user with more access than you (#229),
    *  - unknown keys and duplicate keys are rejected, past expiries too.
    */
   async setPermissionOverrides(
     restaurantId: string,
-    actor: { id: string; permissions: string[] },
+    actor: SessionUser,
     targetId: string,
     dto: SetPermissionOverridesDto,
   ) {
@@ -371,7 +407,7 @@ export class UsersService {
     }
     const target = await this.prisma.user.findFirst({
       where: { id: targetId, restaurantId },
-      include: { role: true },
+      include: ceilingUserInclude,
     });
     if (!target) throw new NotFoundException('Staff account not found');
     if (target.role.name === 'OWNER') {
@@ -379,6 +415,7 @@ export class UsersService {
         'The owner role cannot have permission overrides',
       );
     }
+    assertCanManage(actor, target);
 
     const keys = dto.overrides.map((o) => o.permissionKey);
     if (new Set(keys).size !== keys.length) {
@@ -456,10 +493,12 @@ export class UsersService {
   private async assertRoleInRestaurant(restaurantId: string, roleId: string) {
     const role = await this.prisma.role.findFirst({
       where: { id: roleId, restaurantId },
+      include: ceilingRoleInclude,
     });
     if (!role) {
       throw new BadRequestException('Role not found for this restaurant');
     }
+    return role;
   }
 
   private async assertBranchesInRestaurant(

@@ -1,11 +1,35 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
-import { UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { base32Decode, generateSecret, hotp, sealSecret, stepAt } from './totp';
 import { TwoFactorService } from './two-factor.service';
 
 const KEY = 'unit-test-key';
 
-function setup(lastStep: number | null = null, updateCount = 1) {
+const ceilingRole = (name: string, keys: string[]) => ({
+  name,
+  permissions: keys.map((key) => ({ permission: { key } })),
+});
+const staffTarget = (name: string, keys: string[]) => ({
+  id: 'u2',
+  role: ceilingRole(name, keys),
+  permissionOverrides: [],
+});
+const OWNER_ACTOR = {
+  id: 'owner',
+  roleName: 'OWNER',
+  permissions: ['users.manage'],
+};
+const STAFF_MGR_ACTOR = {
+  id: 'mgr',
+  roleName: 'STAFF_MGR',
+  permissions: ['users.manage'],
+};
+
+function setup(
+  lastStep: number | null = null,
+  updateCount = 1,
+  target: unknown = staffTarget('WAITER', []),
+) {
   const secret = generateSecret();
   const user = {
     id: 'u1',
@@ -18,7 +42,7 @@ function setup(lastStep: number | null = null, updateCount = 1) {
     user: {
       updateMany: jest.fn().mockResolvedValue({ count: updateCount }),
       update: jest.fn().mockResolvedValue({}),
-      findFirst: jest.fn().mockResolvedValue({ id: 'u2' }),
+      findFirst: jest.fn().mockResolvedValue(target),
     },
   };
   const sessions = { revokeAll: jest.fn().mockResolvedValue(1) };
@@ -81,7 +105,42 @@ describe('TwoFactorService.verifyLogin', () => {
 describe('TwoFactorService.adminReset', () => {
   it('ends every session of the staff member being reset', async () => {
     const { svc, sessions } = setup();
-    await svc.adminReset('owner', 'r1', 'u2');
+    await svc.adminReset(OWNER_ACTOR, 'r1', 'u2');
+    expect(sessions.revokeAll).toHaveBeenCalledWith('u2');
+  });
+
+  it("a staff manager cannot reset the owner's 2FA (#229)", async () => {
+    const { svc, prisma, sessions } = setup(
+      null,
+      1,
+      staffTarget('OWNER', ['users.manage']),
+    );
+    await expect(
+      svc.adminReset(STAFF_MGR_ACTOR, 'r1', 'u2'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(sessions.revokeAll).not.toHaveBeenCalled();
+  });
+
+  it("a staff manager cannot reset a higher user's 2FA (#229)", async () => {
+    const { svc, prisma } = setup(
+      null,
+      1,
+      staffTarget('HIGH', ['users.manage', 'reports.access']),
+    );
+    await expect(
+      svc.adminReset(STAFF_MGR_ACTOR, 'r1', 'u2'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('a staff manager can reset a same-level user', async () => {
+    const { svc, sessions } = setup(
+      null,
+      1,
+      staffTarget('STAFF_MGR', ['users.manage']),
+    );
+    await svc.adminReset(STAFF_MGR_ACTOR, 'r1', 'u2');
     expect(sessions.revokeAll).toHaveBeenCalledWith('u2');
   });
 });
