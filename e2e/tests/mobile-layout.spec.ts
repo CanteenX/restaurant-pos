@@ -99,3 +99,19 @@ test.describe("POS kitchen pill", () => {
     expect(w!.y - row!.y).toBeLessThanOrEqual(2);
   });
 });
+
+test.describe("POS toolbar on desktop", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test("buttons stay right-aligned when the kitchen has no active tickets", async ({ page }) => {
+    await page.route("**/kds/progress**", (r) => r.fulfill({ json: [] }));
+    await page.goto("/pos");
+    const weigh = page.getByRole("button", { name: "Weigh item" });
+    await expect(weigh).toBeVisible();
+    const [w, row] = await Promise.all([weigh.boundingBox(), weigh.locator("..").boundingBox()]);
+    expect(w).toBeTruthy();
+    expect(row).toBeTruthy();
+    // The empty flex-1 wrapper is the spacer that pushes the buttons right.
+    expect(w!.x - row!.x).toBeGreaterThan(row!.width / 2);
+  });
+});
