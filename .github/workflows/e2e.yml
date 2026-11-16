@@ -45,9 +45,24 @@ jobs:
           ref: staging
       - name: Start demo stack
         run: ./install.sh --demo
+      - name: Wait for the app to be healthy
+        # The backend can take a few seconds after install.sh returns before the
+        # web proxy reaches it (ECONNREFUSED backend:4000 on early requests).
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:1995/api/health >/dev/null && echo "healthy after ${i}x2s" && exit 0
+            sleep 2
+          done
+          echo "app did not become healthy in 120s" >&2
+          docker compose logs --tail=80
+          exit 1
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          # This job runs Playwright with npm; without this, setup-node@v5
+          # auto-enables a pnpm cache (root packageManager field) before pnpm
+          # exists and fails with "Unable to locate executable file: pnpm".
+          package-manager-cache: false
       - name: Playwright
         working-directory: e2e
         run: |
