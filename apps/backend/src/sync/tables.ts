@@ -91,6 +91,9 @@ export const SYNC_TABLES: Readonly<Record<string, SyncTable>> = {
   payroll_lines: hq(via('payroll_runs', 'runId')),
   documents: hq(col()),
   document_files: hq(via('documents', 'documentId')),
+  // Email templates and branding (#220) are restaurant-wide settings.
+  email_templates: hq(null),
+  email_branding: hq(null),
 
   // ---- Branch-owned: branch -> HQ ----------------------------------------
   orders: br(col()),

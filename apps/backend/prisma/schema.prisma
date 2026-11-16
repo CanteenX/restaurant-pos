@@ -102,6 +102,8 @@ model Restaurant {
   integrationApiKeys     IntegrationApiKey[]
   webhookEndpoints       WebhookEndpoint[]
   integrationConnections IntegrationConnection[]
+  emailTemplates         EmailTemplate[]
+  emailBranding          EmailBranding?
 
   @@map("restaurants")
 }
@@ -2984,4 +2986,48 @@ model DeviceToken {
 
   @@index([userId])
   @@map("device_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Email templates (#220). A row exists only once a restaurant customises an
+// email; otherwise the code default in modules/email/templates/defaults.ts is
+// used. `key` is one of EMAIL_TEMPLATE_KEYS in packages/types (validated by
+// the API, kept as text so adding a key needs no migration).
+// ---------------------------------------------------------------------------
+model EmailTemplate {
+  id           String     @id @default(cuid())
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  key          String
+  subject      String
+  heading      String     @default("")
+  body         String     @default("")
+  buttonText   String?
+  buttonUrl    String?
+  footer       String?
+  enabled      Boolean    @default(true)
+  createdAt    DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime   @updatedAt @db.Timestamptz(3)
+  updatedBy    String?
+
+  @@unique([restaurantId, key])
+  @@map("email_templates")
+}
+
+// Restaurant-wide look of every email: header band colour and text, footer
+// line, optional logo and Reply-To address.
+model EmailBranding {
+  id           String     @id @default(cuid())
+  restaurantId String     @unique
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  primaryColor String     @default("#9F1239")
+  headerText   String?
+  footerText   String?
+  logoUrl      String?
+  replyTo      String?
+  createdAt    DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime   @updatedAt @db.Timestamptz(3)
+  updatedBy    String?
+
+  @@map("email_branding")
 }

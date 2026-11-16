@@ -27,3 +27,4 @@ export * from "./customer-display";
 export * from "./labels";
 export * from "./graphql";
 export * from "./sync";
+export * from "./email-templates";

@@ -9,6 +9,7 @@ import type { ReportFrequency, ReportSchedule } from '@prisma/client';
 import { BranchTimeService } from '../../common/services/branch-time.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
+import { EmailTemplatesService } from '../email/templates/email-templates.service';
 import { EXPORT_TYPES, isExportFormat, renderReport } from './export';
 import { REPORT_CATALOG, ReportsService } from './reports.service';
 
@@ -60,6 +61,7 @@ export class ReportSchedulesService {
     private readonly reports: ReportsService,
     private readonly email: EmailService,
     private readonly time: BranchTimeService,
+    private readonly emailTemplates: EmailTemplatesService,
   ) {}
 
   list(branchId: string) {
@@ -120,17 +122,28 @@ export class ReportSchedulesService {
       throw new BadRequestException(
         'Email is not set up: set SMTP_URL and SMTP_FROM on the server',
       );
+    const compose = await this.emailTemplates.forBranch(
+      s.branchId,
+      'REPORT_SCHEDULED',
+    );
+    // Turned off: nothing is recorded, so turning it back on later the same
+    // day still sends. The tick skips this quietly; "Send now" explains it.
+    if (!compose) return { sent: 0, failed: 0, skipped: true as const };
     const { from, to } = periodFor(s.frequency, today);
     const result = await this.reports.run(s.reportKey, s.branchId, from, to);
     const format = isExportFormat(s.format) ? s.format : 'xlsx';
     const body = await renderReport(result, format, `${from} to ${to}`);
     const t = EXPORT_TYPES[format];
-    const subject = `${result.title} · ${from === to ? from : `${from} to ${to}`}`;
+    const message = compose({
+      'report.title': result.title,
+      'report.period': from === to ? from : `${from} to ${to}`,
+      'report.from': from,
+      'report.to': to,
+    });
     const out = await this.email.sendEach(
       s.recipients.map((to_) => ({
         to: to_,
-        subject,
-        text: `Your scheduled ${result.title} report for ${from} to ${to} is attached.\n\nSent by Nventra POS.`,
+        ...message,
         attachments: [
           {
             filename: `${s.reportKey}_${from}_${to}.${t.ext}`,
@@ -154,7 +167,12 @@ export class ReportSchedulesService {
   async sendNow(branchId: string, id: string) {
     const s = await this.get(branchId, id);
     const tz = await this.time.tzForBranch(branchId);
-    return this.deliver(s, this.localToday(tz).date);
+    const out = await this.deliver(s, this.localToday(tz).date);
+    if ('skipped' in out)
+      throw new BadRequestException(
+        'Scheduled report emails are turned off in Settings > Email templates',
+      );
+    return out;
   }
 
   private localToday(tz: string) {
@@ -190,7 +208,8 @@ export class ReportSchedulesService {
           : null;
         if (!isDue(s, now.date, now.hour, lastLocal)) continue;
         try {
-          await this.deliver(s, now.date);
+          const out = await this.deliver(s, now.date);
+          if ('skipped' in out) continue; // template turned off: no log, no write
           this.logger.log(`Sent scheduled report ${s.reportKey} (${s.id})`);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);

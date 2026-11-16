@@ -11,6 +11,7 @@ import { BranchTimeService } from '../../common/services/branch-time.service';
 import { localMinuteAndDay } from '../../common/time';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
+import { EmailTemplatesService } from '../email/templates/email-templates.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import {
   buildUnsubscribeHeaders,
@@ -43,6 +44,7 @@ export class MarketingService {
     private readonly email: EmailService,
     private readonly webhooks: WebhooksService,
     private readonly config: ConfigService,
+    private readonly emailTemplates: EmailTemplatesService,
   ) {}
 
   private get secret() {
@@ -355,18 +357,26 @@ export class MarketingService {
           campaign.id,
           'Email is not set up on this server (SMTP_URL / SMTP_FROM)',
         );
-      const restaurant = await this.prisma.branch.findUnique({
-        where: { id: branchId },
-        select: { restaurant: { select: { name: true } } },
-      });
-      const name = restaurant?.restaurant.name ?? 'our restaurant';
+      const compose = await this.emailTemplates.forBranch(
+        branchId,
+        'MARKETING_CAMPAIGN',
+      );
+      if (!compose)
+        throw await this.releaseAndFail(
+          campaign.id,
+          'Marketing emails are turned off in Settings > Email templates',
+        );
       result = await this.email.sendEach(
         recipients.map((r) => {
           const url = this.unsubscribeUrl(r.id);
           return {
             to: r.contact,
-            subject: campaign.name,
-            text: `${campaign.message}\n\n—\nYou are receiving this because you are a customer of ${name}. Unsubscribe: ${url}`,
+            ...compose({
+              'customer.name': r.name,
+              'campaign.name': campaign.name,
+              'campaign.message': campaign.message,
+              'unsubscribe.url': url,
+            }),
             headers: buildUnsubscribeHeaders(url),
           };
         }),

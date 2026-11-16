@@ -1,3 +1,7 @@
+import { DEFAULT_EMAIL_PRIMARY_COLOR } from '@nventra/types';
+import { EMAIL_TEMPLATE_DEFAULTS } from '../email/templates/defaults';
+import type { TemplateValues } from '../email/templates/markdown';
+import { renderEmail } from '../email/templates/renderer';
 import {
   StockAlertsService,
   expiryCutoff,
@@ -72,11 +76,28 @@ function makeService(opts: { smtp: boolean; existing: boolean }) {
     sendEach: jest.fn().mockResolvedValue({ sent: 1, failed: 0 }),
   };
   const time = { tzForBranch: jest.fn().mockResolvedValue('UTC') };
+  const emailTemplates = {
+    forBranch: jest.fn().mockResolvedValue((values: TemplateValues) =>
+      renderEmail({
+        key: 'STOCK_ALERT',
+        template: EMAIL_TEMPLATE_DEFAULTS.STOCK_ALERT,
+        branding: {
+          primaryColor: DEFAULT_EMAIL_PRIMARY_COLOR,
+          headerText: null,
+          footerText: null,
+          logoUrl: null,
+          replyTo: null,
+        },
+        values: { 'restaurant.name': 'Cafe', ...values },
+      }),
+    ),
+  };
   const svc = new StockAlertsService(
     prisma as never,
     notifications as never,
     email as never,
     time as never,
+    emailTemplates as never,
   );
   return { svc, notifications, email, created };
 }
@@ -110,5 +131,20 @@ describe('StockAlertsService.run', () => {
     const { svc, email } = makeService({ smtp: true, existing: false });
     await svc.run(now);
     expect(email.sendEach).toHaveBeenCalledTimes(1);
+  });
+  it('sends the digest as branded HTML with a plain-text alternative', async () => {
+    const { svc, email } = makeService({ smtp: true, existing: false });
+    await svc.run(now);
+    const [mails] = email.sendEach.mock.calls[0] as [
+      { to: string; subject: string; html: string; text: string }[],
+    ];
+    expect(mails[0].to).toBe('o@x.com');
+    expect(mails[0].subject).toBe('Stock alert: expiring or low items');
+    expect(mails[0].html).toMatch(/^<!DOCTYPE html>/);
+    expect(mails[0].html).toContain('Milk (batch B1, 4 left)');
+    expect(mails[0].text).toContain(
+      '1 stock batch(es) expiring soon and 1 ingredient(s) low on stock.',
+    );
+    expect(mails[0].text).toContain('Low stock:\nFlour: 1 left');
   });
 });
