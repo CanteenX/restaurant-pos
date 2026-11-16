@@ -18,7 +18,10 @@ const V4_BLOCKED: [string, number][] = [
   ['172.16.0.0', 12],
   ['192.0.0.0', 24],
   ['192.168.0.0', 16],
-  ['198.18.0.0', 15],
+  ['192.0.2.0', 24], // TEST-NET-1
+  ['198.18.0.0', 15], // benchmarking
+  ['198.51.100.0', 24], // TEST-NET-2
+  ['203.0.113.0', 24], // TEST-NET-3
   ['224.0.0.0', 4], // multicast
   ['240.0.0.0', 4], // reserved + broadcast
 ];
@@ -58,22 +61,24 @@ function ipv6ToBytes(text: string): number[] | null {
   return groups.flatMap((g) => [g >> 8, g & 0xff]);
 }
 
+const dotted = (b: number[], i: number[]) => i.map((x) => b[x]).join('.');
+
 /**
- * Returns the dotted IPv4 embedded in ::ffff:0:0/96 (mapped), ::/96
- * (compatible) or 64:ff9b::/96 (NAT64), or null when there is none.
- * "::" and "::1" are not treated as embedded; they are blocked separately.
+ * Returns the dotted IPv4 embedded in an IPv6 address for the translation
+ * and tunnelling formats that carry one, or null when there is none:
+ * ::ffff:0:0/96 (mapped), ::/96 (compatible), ::ffff:0:0:0/96 (SIIT),
+ * 64:ff9b::/96 (NAT64) and 2002::/16 (6to4). All-zero and ::1 are not
+ * treated as embedded; they are classified separately.
  */
 function embeddedIpv4(b: number[]): string | null {
   const zero = (from: number, to: number) =>
     b.slice(from, to).every((x) => x === 0);
-  const v4 = b.slice(12).join('.');
-  if (zero(0, 10) && b[10] === 0xff && b[11] === 0xff) return v4;
-  if (
-    zero(0, 12) &&
-    b.slice(12).some((x) => x !== 0) &&
-    !(zero(12, 15) && b[15] === 1)
-  )
-    return v4;
+  const last4 = dotted(b, [12, 13, 14, 15]);
+  if (zero(0, 10) && b[10] === 0xff && b[11] === 0xff) return last4;
+  if (zero(0, 8) && b[8] === 0xff && b[9] === 0xff && zero(10, 12))
+    return last4; // SIIT
+  if (zero(0, 12) && !zero(12, 16) && !(zero(12, 15) && b[15] === 1))
+    return last4;
   if (
     b[0] === 0 &&
     b[1] === 0x64 &&
@@ -81,8 +86,47 @@ function embeddedIpv4(b: number[]): string | null {
     b[3] === 0x9b &&
     zero(4, 12)
   )
-    return v4;
+    return last4;
+  if (b[0] === 0x20 && b[1] === 0x02) return dotted(b, [2, 3, 4, 5]); // 6to4
   return null;
+}
+
+/** NAT64 local-use 64:ff9b:1::/48: IPv4 sits at bytes 6-7 and 9-10 (RFC 6052). */
+function nat64LocalIpv4(b: number[]): string | null {
+  const isLocal =
+    b[0] === 0 &&
+    b[1] === 0x64 &&
+    b[2] === 0xff &&
+    b[3] === 0x9b &&
+    b[4] === 0 &&
+    b[5] === 1;
+  return isLocal ? dotted(b, [6, 7, 9, 10]) : null;
+}
+
+function isPrivateIpv6(bytes: number[]): boolean {
+  const zero = (from: number, to: number) =>
+    bytes.slice(from, to).every((x) => x === 0);
+  if (zero(0, 16)) return true; // :: unspecified
+  if (zero(0, 15) && bytes[15] === 1) return true; // ::1 loopback
+  const embedded = embeddedIpv4(bytes);
+  if (embedded) return isPrivateAddress(embedded);
+  const local = nat64LocalIpv4(bytes);
+  if (local)
+    return (
+      isPrivateAddress(local) ||
+      isPrivateAddress(dotted(bytes, [12, 13, 14, 15]))
+    );
+  if (
+    bytes[0] === 0x20 &&
+    bytes[1] === 0x01 &&
+    bytes[2] === 0 &&
+    bytes[3] === 0
+  )
+    return true; // Teredo 2001::/32
+  if ((bytes[0] & 0xfe) === 0xfc) return true; // fc00::/7 unique-local
+  if (bytes[0] === 0xfe && bytes[1] >= 0x80) return true; // fe80::/9 link + site-local
+  if (bytes[0] === 0xff) return true; // multicast
+  return false;
 }
 
 export function isPrivateAddress(raw: string): boolean {
@@ -96,18 +140,9 @@ export function isPrivateAddress(raw: string): boolean {
     });
   }
   if (kind === 6) {
-    const lower = ip.toLowerCase();
-    // IPv4 embedded in IPv6 (mapped, compatible, NAT64) takes the IPv4 rules,
-    // whatever textual form (dotted, hex, compressed or expanded) it uses.
-    const bytes = ipv6ToBytes(lower);
+    const bytes = ipv6ToBytes(ip.toLowerCase());
     if (!bytes) return true; // unparseable: refuse
-    const embedded = embeddedIpv4(bytes);
-    if (embedded) return isPrivateAddress(embedded);
-    if (lower === '::' || lower === '::1') return true;
-    if (/^f[cd]/.test(lower)) return true; // fc00::/7 unique-local
-    if (/^fe[89ab]/.test(lower)) return true; // fe80::/10 link-local
-    if (/^ff/.test(lower)) return true; // multicast
-    return false;
+    return isPrivateIpv6(bytes);
   }
   return true; // not an IP at all: refuse
 }
