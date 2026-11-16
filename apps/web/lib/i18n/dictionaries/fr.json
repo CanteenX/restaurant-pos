@@ -1798,6 +1798,7 @@
   "session.idle.signOutNow": "Se déconnecter maintenant",
   "session.idle.stay": "Rester connecté",
   "session.revokeAll": "Se déconnecter de tous les appareils",
+  "theme.toggle": "Changer de thème",
   "session.revokeAllConfirm": "Se déconnecter sur tous les appareils, y compris celui-ci ? Chaque appareil devra se reconnecter.",
   "session.revokeAllFailed": "Impossible de déconnecter les autres appareils",
   "settings.staff.signOutEverywhere": "Déconnecter partout",
