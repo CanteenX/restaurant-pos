@@ -13,8 +13,10 @@ test.describe("theme toggle and html lang", () => {
     await expect(page.getByText("Today's Revenue")).toBeVisible();
 
     await expect(page.locator("html")).toHaveClass(/dark/);
+    await page.screenshot({ path: "test-results/theme-lang-dark.png" });
     await page.getByRole("button", { name: "Toggle theme" }).click();
     await expect(page.locator("html")).not.toHaveClass(/dark/);
+    await page.screenshot({ path: "test-results/theme-lang-light.png" });
   });
 
   test("changing the locale sets document.documentElement.lang", async ({ page }) => {
@@ -22,12 +24,11 @@ test.describe("theme toggle and html lang", () => {
     await expect(page.locator("html")).toHaveAttribute("lang", "en");
 
     await page.getByRole("combobox", { name: "Language" }).click();
-    await page.getByRole("option", { name: "Français" }).click();
-    await expect(page.locator("html")).toHaveAttribute("lang", "fr");
+    await page.getByRole("option", { name: "हिन्दी" }).click();
+    await expect(page.locator("html")).toHaveAttribute("lang", "hi");
+    await page.screenshot({ path: "test-results/theme-lang-hindi.png" });
 
-    // Restore the default so later specs see English.
-    await page.getByRole("combobox").first().click();
-    await page.getByRole("option", { name: "English" }).click();
-    await expect(page.locator("html")).toHaveAttribute("lang", "en");
+    // The locale is a per-browser preference; restore English for later specs.
+    await page.evaluate(() => localStorage.removeItem("nodedr-locale"));
   });
 });
