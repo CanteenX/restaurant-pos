@@ -1,11 +1,22 @@
-import { NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { SessionService } from './session.service';
 
-function setup(target: { id: string } | null = { id: 'u2' }) {
+const target = (name: string, keys: string[]) => ({
+  id: 'u2',
+  role: { name, permissions: keys.map((key) => ({ permission: { key } })) },
+  permissionOverrides: [],
+});
+const ACTOR = {
+  id: 'actor',
+  roleName: 'STAFF_MGR',
+  permissions: ['users.manage'],
+};
+
+function setup(found: unknown = target('WAITER', [])) {
   const prisma = {
     user: {
       update: jest.fn().mockResolvedValue({ tokenVersion: 1 }),
-      findFirst: jest.fn().mockResolvedValue(target),
+      findFirst: jest.fn().mockResolvedValue(found),
     },
   };
   const realtime = { disconnectUser: jest.fn() };
@@ -32,13 +43,12 @@ describe('SessionService', () => {
 
   it('revokeForStaff only touches a user in the same restaurant', async () => {
     const { svc, prisma, realtime, audit } = setup(null);
-    await expect(svc.revokeForStaff('actor', 'r1', 'other')).rejects.toThrow(
+    await expect(svc.revokeForStaff(ACTOR, 'r1', 'other')).rejects.toThrow(
       NotFoundException,
     );
-    expect(prisma.user.findFirst).toHaveBeenCalledWith({
-      where: { id: 'other', restaurantId: 'r1' },
-      select: { id: true },
-    });
+    expect(prisma.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'other', restaurantId: 'r1' } }),
+    );
     expect(prisma.user.update).not.toHaveBeenCalled();
     expect(realtime.disconnectUser).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
@@ -46,7 +56,7 @@ describe('SessionService', () => {
 
   it('revokeForStaff revokes and audits', async () => {
     const { svc, prisma, audit } = setup();
-    await svc.revokeForStaff('actor', 'r1', 'u2');
+    await svc.revokeForStaff(ACTOR, 'r1', 'u2');
     expect(prisma.user.update).toHaveBeenCalled();
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -55,5 +65,19 @@ describe('SessionService', () => {
         entityId: 'u2',
       }),
     );
+  });
+
+  it('revokeForStaff refuses an owner or higher target (#229)', async () => {
+    for (const t of [
+      target('OWNER', ['users.manage']),
+      target('HIGH', ['users.manage', 'reports.access']),
+    ]) {
+      const { svc, prisma, audit } = setup(t);
+      await expect(
+        svc.revokeForStaff(ACTOR, 'r1', 'u2'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    }
   });
 });
