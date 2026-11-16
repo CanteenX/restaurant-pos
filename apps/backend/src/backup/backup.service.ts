@@ -27,6 +27,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { uploadsDir } from '../common/upload/image-upload.config';
 import { notifyOwners } from './notify-owners';
+import { extractVettedTarball, UnsafeArchiveError } from './safe-tar-extract';
 import {
   CHECKSUM_FILE,
   DB_FILE,
@@ -676,6 +677,25 @@ export class BackupService {
       // destructive runs; a mismatch throws here and pg_restore never runs.
       const objects = await fetchVerifiedObjects(s3, config.bucket, record);
       await fs.writeFile(dbDumpPath, objects.db);
+      // Vet + extract the uploads archive into a scratch dir BEFORE anything
+      // destructive: a malicious archive (links, `..`, absolute paths, extra
+      // roots) is refused here and surfaces as a 400 with pg_restore untouched.
+      let extractedRoot: string | null = null;
+      if (objects.uploads) {
+        await fs.writeFile(uploadsArchivePath, objects.uploads);
+        try {
+          extractedRoot = await extractVettedTarball({
+            archivePath: uploadsArchivePath,
+            expectedRoot: path.basename(uploadRoot),
+            destDir: path.join(workDir, 'uploads-extract'),
+          });
+        } catch (err) {
+          if (err instanceof UnsafeArchiveError) {
+            throw new BadRequestException(err.message);
+          }
+          throw err;
+        }
+      }
       await execFileAsync('pg_restore', [
         '--clean',
         '--if-exists',
@@ -685,8 +705,7 @@ export class BackupService {
         dbDumpPath,
       ]);
 
-      if (objects.uploads) {
-        await fs.writeFile(uploadsArchivePath, objects.uploads);
+      if (extractedRoot) {
         // Empty uploadRoot's contents rather than removing the directory
         // itself: the container's non-root user owns everything inside it
         // but not necessarily its parent, so an rmdir/mkdir round-trip on
@@ -702,12 +721,7 @@ export class BackupService {
             }),
           ),
         );
-        await execFileAsync('tar', [
-          '-xzf',
-          uploadsArchivePath,
-          '-C',
-          path.dirname(uploadRoot),
-        ]);
+        await fs.cp(extractedRoot, uploadRoot, { recursive: true });
       }
 
       const completedAt = new Date().toISOString();
