@@ -8,12 +8,19 @@ const VIEWPORTS = [
   { width: 768, height: 1024 },
 ];
 
+// The dashboard scrolls inside <main>, so the document itself rarely
+// overflows; a too-wide tab bar shows up as <main> scrolling sideways.
 async function expectNoPageOverflow(page: Page) {
-  const { scrollWidth, innerWidth } = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    innerWidth: window.innerWidth,
-  }));
-  expect(scrollWidth).toBeLessThanOrEqual(innerWidth);
+  await page.waitForLoadState("networkidle").catch(() => {});
+  const m = await page.evaluate(() => {
+    const main = document.querySelector("main");
+    return {
+      doc: document.documentElement.scrollWidth - window.innerWidth,
+      main: main ? main.scrollWidth - main.clientWidth : 0,
+    };
+  });
+  expect(m.doc, "document overflows horizontally").toBeLessThanOrEqual(0);
+  expect(m.main, "<main> scrolls horizontally").toBeLessThanOrEqual(1);
 }
 
 for (const viewport of VIEWPORTS) {
