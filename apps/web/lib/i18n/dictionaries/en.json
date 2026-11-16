@@ -1798,6 +1798,7 @@
   "session.idle.signOutNow": "Sign out now",
   "session.idle.stay": "Stay signed in",
   "session.revokeAll": "Log out of all devices",
+  "theme.toggle": "Toggle theme",
   "session.revokeAllConfirm": "Sign out on every device, including this one? Each device will need to sign in again.",
   "session.revokeAllFailed": "Could not sign out other devices",
   "settings.staff.signOutEverywhere": "Sign out everywhere",

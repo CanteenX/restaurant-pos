@@ -1798,6 +1798,7 @@
   "session.idle.signOutNow": "Cerrar sesión ahora",
   "session.idle.stay": "Mantener la sesión",
   "session.revokeAll": "Cerrar sesión en todos los dispositivos",
+  "theme.toggle": "Cambiar tema",
   "session.revokeAllConfirm": "¿Cerrar sesión en todos los dispositivos, incluido este? Cada dispositivo tendrá que iniciar sesión de nuevo.",
   "session.revokeAllFailed": "No se pudo cerrar sesión en los otros dispositivos",
   "settings.staff.signOutEverywhere": "Cerrar sesión en todas partes",

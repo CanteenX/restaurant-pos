@@ -47,7 +47,7 @@ export function UserMenu({ user }: { user?: SessionUser }) {
         type="button"
         onClick={() => setTheme(nextTheme(resolvedTheme))}
         className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-secondary"
-        aria-label="Toggle theme"
+        aria-label={t("theme.toggle")}
       >
         <Sun className="h-[18px] w-[18px] dark:hidden" />
         <Moon className="hidden h-[18px] w-[18px] dark:block" />
