@@ -223,6 +223,29 @@ describe('isPrivateAddress: classification from parsed bytes', () => {
   ])('allows public form %s', (ip) => expect(isPrivateAddress(ip)).toBe(false));
 
   it.each([
+    '2001:db8::',
+    '2001:db8::1',
+    '2001:0db8:0:0:0:0:0:1',
+    '2001:DB8:ffff:ffff:ffff:ffff:ffff:ffff',
+    '2001:db8:abcd::1',
+    '100::',
+    '100::1',
+    '100:0:0:0:ffff:ffff:ffff:ffff',
+  ])('blocks IPv6 documentation/discard-only range %s', (ip) =>
+    expect(isPrivateAddress(ip)).toBe(true),
+  );
+
+  it.each([
+    '2001:db7::1',
+    '2001:dba::1',
+    '100:0:0:1::1',
+    '100:1::1',
+    '101::1',
+  ])('allows neighbouring public IPv6 %s', (ip) =>
+    expect(isPrivateAddress(ip)).toBe(false),
+  );
+
+  it.each([
     '192.0.2.1',
     '198.51.100.7',
     '203.0.113.9',
