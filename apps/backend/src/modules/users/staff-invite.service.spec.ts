@@ -38,7 +38,13 @@ const MANAGER = {
 };
 
 function setup(
-  opts: { found?: unknown; smtp?: boolean; publicUrl?: string } = {},
+  opts: {
+    found?: unknown;
+    smtp?: boolean;
+    publicUrl?: string;
+    actorKeys?: string[];
+    actorActive?: boolean;
+  } = {},
 ) {
   const found = 'found' in opts ? opts.found : target();
   const tx = {
@@ -47,8 +53,20 @@ function setup(
       update: jest.fn().mockResolvedValue({}),
     },
   };
+  // The acting manager as stored (#229 re-reads the actor, never trusts the
+  // session's permission list); any other id is the invite target.
+  const managerRow = {
+    id: 'mgr',
+    isActive: opts.actorActive ?? true,
+    role: role('MANAGER', opts.actorKeys ?? MANAGER.permissions),
+    permissionOverrides: [],
+  };
   const prisma = {
-    user: { findFirst: jest.fn().mockResolvedValue(found) },
+    user: {
+      findFirst: jest.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(where.id === 'mgr' ? managerRow : found),
+      ),
+    },
     restaurant: {
       findUnique: jest.fn().mockResolvedValue({ name: 'Spice Garden' }),
     },
@@ -90,7 +108,10 @@ function setup(
         : undefined,
     ),
   };
-  const sessions = { revokeAll: jest.fn().mockResolvedValue(1), disconnect: jest.fn() };
+  const sessions = {
+    revokeAll: jest.fn().mockResolvedValue(1),
+    disconnect: jest.fn(),
+  };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
   const svc = new StaffInviteService(
     prisma as never,
@@ -183,6 +204,20 @@ describe('StaffInviteService', () => {
         );
         expect(t.tokens.issue).not.toHaveBeenCalled();
       }
+    });
+
+    it('judges the actor by their stored access, not the session (#229)', async () => {
+      // Session still claims orders.create, but the stored role lost it.
+      const lost = setup({ actorKeys: ['users.manage'] });
+      await expect(lost.svc.send('r1', MANAGER, 'u2')).rejects.toThrow(
+        ForbiddenException,
+      );
+      const disabled = setup({ actorActive: false });
+      await expect(disabled.svc.revoke('r1', MANAGER, 'u2')).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(lost.tokens.issue).not.toHaveBeenCalled();
+      expect(disabled.tokens.revokeOutstanding).not.toHaveBeenCalled();
     });
 
     it('refuses active accounts and accounts without email', async () => {

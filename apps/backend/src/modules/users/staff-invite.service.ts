@@ -18,6 +18,7 @@ import { KeyRateLimiter } from '../../common/guards/key-rate-limiter';
 import {
   assertCanManage,
   ceilingUserInclude,
+  loadCeilingActor,
   type CeilingActor,
 } from '../../common/privilege-ceiling';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -241,8 +242,10 @@ export class StaffInviteService {
       },
     });
     if (!target) throw new NotFoundException('Staff account not found');
-    // #229: only within the actor's own access; only an owner for an owner.
-    assertCanManage(actor, target);
+    // #229: only within the actor's own access (re-read from the database,
+    // as UsersService does); only an owner for an owner.
+    const me = await loadCeilingActor(this.prisma, actor, restaurantId);
+    assertCanManage(me, target);
     return target;
   }
 
