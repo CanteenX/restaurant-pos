@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -27,6 +28,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { uploadsDir } from '../common/upload/image-upload.config';
 import { notifyOwners } from './notify-owners';
+import { swapUploads, UploadsRollbackError } from './swap-uploads';
+import { extractVettedTarball, UnsafeArchiveError } from './safe-tar-extract';
 import {
   CHECKSUM_FILE,
   DB_FILE,
@@ -81,6 +84,7 @@ function mask(value: string): string {
 @Injectable()
 export class BackupService {
   private readonly logger = new Logger(BackupService.name);
+  private restoreInFlight = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -630,6 +634,24 @@ export class BackupService {
    * the plan's Phase 4 addition.
    */
   async restore(user: SessionUser, id: string, dto: RestoreBackupDto) {
+    // Single-flight: the backend is one process, so a flag is enough to stop
+    // two restores interleaving their pg_restore and uploads swap.
+    if (this.restoreInFlight) {
+      throw new ConflictException('A restore is already in progress');
+    }
+    this.restoreInFlight = true;
+    try {
+      return await this.runRestore(user, id, dto);
+    } finally {
+      this.restoreInFlight = false;
+    }
+  }
+
+  private async runRestore(
+    user: SessionUser,
+    id: string,
+    dto: RestoreBackupDto,
+  ) {
     this.requireOwner(user);
     if (dto.confirm !== 'RESTORE') {
       throw new BadRequestException(
@@ -676,6 +698,25 @@ export class BackupService {
       // destructive runs; a mismatch throws here and pg_restore never runs.
       const objects = await fetchVerifiedObjects(s3, config.bucket, record);
       await fs.writeFile(dbDumpPath, objects.db);
+      // Vet + extract the uploads archive into a scratch dir BEFORE anything
+      // destructive: a malicious archive (links, `..`, absolute paths, extra
+      // roots) is refused here and surfaces as a 400 with pg_restore untouched.
+      let extractedRoot: string | null = null;
+      if (objects.uploads) {
+        await fs.writeFile(uploadsArchivePath, objects.uploads);
+        try {
+          extractedRoot = await extractVettedTarball({
+            archivePath: uploadsArchivePath,
+            expectedRoot: path.basename(uploadRoot),
+            destDir: path.join(workDir, 'uploads-extract'),
+          });
+        } catch (err) {
+          if (err instanceof UnsafeArchiveError) {
+            throw new BadRequestException(err.message);
+          }
+          throw err;
+        }
+      }
       await execFileAsync('pg_restore', [
         '--clean',
         '--if-exists',
@@ -685,29 +726,16 @@ export class BackupService {
         dbDumpPath,
       ]);
 
-      if (objects.uploads) {
-        await fs.writeFile(uploadsArchivePath, objects.uploads);
-        // Empty uploadRoot's contents rather than removing the directory
-        // itself: the container's non-root user owns everything inside it
-        // but not necessarily its parent, so an rmdir/mkdir round-trip on
-        // uploadRoot itself can fail with EACCES. tar then recreates the
-        // same tree from the archive, merging into the now-empty
-        // directory (same approach zulivio's restore() uses).
-        const existingEntries = await fs.readdir(uploadRoot).catch(() => []);
-        await Promise.all(
-          existingEntries.map((entry) =>
-            fs.rm(path.join(uploadRoot, entry), {
-              recursive: true,
-              force: true,
-            }),
-          ),
+      if (extractedRoot) {
+        // Swapped in LAST, from the already-validated tree; the old uploads
+        // are kept aside and restored if the swap fails.
+        await swapUploads(
+          extractedRoot,
+          uploadRoot,
+          // Outside workDir: if the rollback fails this copy must survive
+          // the `finally` cleanup below.
+          path.join(os.tmpdir(), `nventra-uploads-aside-${Date.now()}`),
         );
-        await execFileAsync('tar', [
-          '-xzf',
-          uploadsArchivePath,
-          '-C',
-          path.dirname(uploadRoot),
-        ]);
       }
 
       const completedAt = new Date().toISOString();
@@ -729,6 +757,9 @@ export class BackupService {
       return { ok: true, restoredFrom: record.id };
     } catch (err) {
       const failureReason = (err as Error).message;
+      if (err instanceof UploadsRollbackError) {
+        this.logger.error(failureReason);
+      }
       await this.audit.record({
         userId: user.id,
         action: 'backup.restore_failed',
