@@ -35,6 +35,7 @@ const TABS: SettingsTab[] = [
   { labelKey: "settings.tabs.apiKeys", href: "/settings/api-keys" },
   { labelKey: "settings.tabs.security", href: "/settings/security" },
   { labelKey: "settings.tabs.webhooks", href: "/settings/webhooks", permission: "settings.manage" },
+  { labelKey: "settings.tabs.emailTemplates", href: "/settings/email-templates", permission: "settings.emailTemplates" },
   { label: "VERI*FACTU", href: "/settings/verifactu", permission: "settings.manage", country: "ES" },
 ];
 

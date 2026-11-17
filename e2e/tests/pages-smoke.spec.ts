@@ -7,7 +7,7 @@ const PAGES = [
   "/customers", "/gift-cards", "/inventory", "/inventory/procurement", "/delivery", "/team",
   "/attendance", "/accounting", "/reports", "/marketing", "/operations",
   "/settings", "/settings/roles", "/settings/security", "/settings/audit-log",
-  "/settings/backup",
+  "/settings/backup", "/settings/email-templates",
 ];
 
 test("all staff pages render without console errors", async ({ page }) => {
@@ -15,7 +15,10 @@ test("all staff pages render without console errors", async ({ page }) => {
   test.setTimeout(180_000);
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
-  page.on("console", (m) => m.type() === "error" && errors.push(`console: ${m.text()}`));
+  // The email preview frame is deliberately sandboxed without allow-scripts; the browser
+  // logs a (benign) notice when the test harness's own injected script is blocked there.
+  const SANDBOX_NOTICE = /^Blocked script execution in 'about:srcdoc'/;
+  page.on("console", (m) => m.type() === "error" && !SANDBOX_NOTICE.test(m.text()) && errors.push(`console: ${m.text()}`));
 
   // The delivery map loads OSM tiles; answer with a blank PNG so the smoke run
   // does not depend on (or hit) the public tile server.

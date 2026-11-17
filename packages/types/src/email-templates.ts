@@ -211,6 +211,14 @@ export interface EmailBrandingView {
   replyTo: string | null;
 }
 
+/** Where "Send test to my email" goes: the signed-in user's own address. */
+export interface EmailTestRecipientView {
+  /** Null when the account has no email address. */
+  email: string | null;
+  /** False when the server has no SMTP settings. */
+  configured: boolean;
+}
+
 export interface EmailPreviewView {
   subject: string;
   html: string;

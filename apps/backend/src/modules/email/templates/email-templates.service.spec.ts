@@ -97,3 +97,26 @@ describe('EmailTemplatesController throttling', () => {
     expect(Reflect.getMetadata('THROTTLER:TTLdefault', handler)).toBe(60_000);
   });
 });
+
+describe('EmailTemplatesService.testRecipient', () => {
+  it("returns the acting user's own email so the editor can show it", async () => {
+    const { service, prisma } = makeService({
+      userEmail: ' Admin@Alpha.Example.com ',
+    });
+    await expect(service.testRecipient('r1', 'u1')).resolves.toEqual({
+      email: OWN,
+      configured: true,
+    });
+    expect(prisma.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'u1', restaurantId: 'r1' } }),
+    );
+  });
+
+  it('returns null (not an error) when the account has no email', async () => {
+    const { service } = makeService({ userEmail: null });
+    await expect(service.testRecipient('r1', 'u1')).resolves.toEqual({
+      email: null,
+      configured: true,
+    });
+  });
+});
