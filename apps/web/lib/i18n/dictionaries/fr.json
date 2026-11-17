@@ -2104,5 +2104,16 @@
   "acct.petty.col.type": "Nature",
   "acct.petty.col.amount": "Montant",
   "acct.petty.col.balance": "Solde",
-  "acct.petty.empty": "Aucun mouvement de petite caisse sur les 30 derniers jours"
+  "acct.petty.empty": "Aucun mouvement de petite caisse sur les 30 derniers jours",
+  "settings.general.digitalReceipts.label": "Envoyer un reçu numérique par e-mail après le paiement",
+  "settings.general.digitalReceipts.hint": "Envoyé uniquement aux clients qui donnent une adresse e-mail et acceptent à l'encaissement. Modifiez le texte dans Paramètres > Modèles d'e-mail.",
+  "pos.checkout.receiptEmail.label": "Envoyer le reçu à (facultatif)",
+  "pos.checkout.receiptEmail.placeholder": "client@exemple.com",
+  "pos.checkout.receiptEmail.consent": "Le client accepte de recevoir ce reçu par e-mail",
+  "pos.checkout.receiptEmail.invalid": "Saisissez une adresse e-mail valide",
+  "pos.checkout.receiptEmail.sentTo": "Reçu envoyé à {email}",
+  "pos.checkout.receiptEmail.notSent": "Le reçu pour {email} n'a pas été envoyé",
+  "pos.checkout.receiptEmail.resend": "Renvoyer le reçu par e-mail",
+  "pos.checkout.receiptEmail.resent": "Reçu envoyé",
+  "pos.checkout.receiptEmail.resendFailed": "Impossible d'envoyer le reçu"
 }

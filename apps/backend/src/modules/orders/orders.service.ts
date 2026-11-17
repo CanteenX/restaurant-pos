@@ -27,6 +27,7 @@ import { GiftCardsService } from '../gift-cards/gift-cards.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { MarketingService } from '../marketing/marketing.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { ReceiptEmailService } from './receipt-email.service';
 import { IntegrationOutboxService } from '../../integration-hub/outbox/integration-outbox.service';
 import { gatewayQrOpenSince } from '../../integration-hub/payments/payment-gateway';
 import { resolveProfile } from './escpos/encoder';
@@ -77,6 +78,7 @@ export class OrdersService {
     private readonly verifactu: VerifactuService,
     private readonly referrals: ReferralsService,
     private readonly outbox: IntegrationOutboxService,
+    private readonly receiptEmails: ReceiptEmailService,
   ) {}
 
   async listOpen(branchId: string, tableId?: string) {
@@ -1875,6 +1877,15 @@ export class OrdersService {
         ? { status: 'PAID' }
         : { balanceDue: settlement.balanceAfter }),
     });
+    // Digital receipt (#222): keep the address the guest agreed to, then mail
+    // the receipt once the bill is fully paid. Neither can fail the payment.
+    await this.receiptEmails.capture({
+      orderId,
+      branchId,
+      customerId: effectiveCustomerId,
+      dto,
+    });
+    if (settlement.fullyPaid) void this.receiptEmails.sendAfterPayment(orderId);
     if (settlement.fullyPaid) {
       if (order.tableId) {
         this.realtime.emitToBranch(branchId, 'table.updated', {

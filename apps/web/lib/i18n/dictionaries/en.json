@@ -2104,5 +2104,16 @@
   "acct.petty.col.type": "Type",
   "acct.petty.col.amount": "Amount",
   "acct.petty.col.balance": "Balance",
-  "acct.petty.empty": "No petty cash entries in the last 30 days"
+  "acct.petty.empty": "No petty cash entries in the last 30 days",
+  "settings.general.digitalReceipts.label": "Email a digital receipt after payment",
+  "settings.general.digitalReceipts.hint": "Sent only to guests who give an email address and agree at checkout. Edit the wording under Settings > Email templates.",
+  "pos.checkout.receiptEmail.label": "Email the receipt to (optional)",
+  "pos.checkout.receiptEmail.placeholder": "guest@example.com",
+  "pos.checkout.receiptEmail.consent": "The guest agrees to receive this receipt by email",
+  "pos.checkout.receiptEmail.invalid": "Enter a valid email address",
+  "pos.checkout.receiptEmail.sentTo": "Receipt emailed to {email}",
+  "pos.checkout.receiptEmail.notSent": "Receipt email to {email} has not been sent",
+  "pos.checkout.receiptEmail.resend": "Resend receipt email",
+  "pos.checkout.receiptEmail.resent": "Receipt email sent",
+  "pos.checkout.receiptEmail.resendFailed": "Could not send the receipt email"
 }

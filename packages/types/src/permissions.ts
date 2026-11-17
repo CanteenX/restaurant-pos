@@ -16,6 +16,7 @@ export const PERMISSIONS = [
   { key: "refunds.process", label: "Process Refunds", category: "Orders" },
   { key: "orders.delete", label: "Delete Past Transactions (admin password)", category: "Orders" },
   { key: "bills.print", label: "Print Bills", category: "Orders" },
+  { key: "bills.resendReceipt", label: "Resend Digital Receipts", category: "Orders" },
   { key: "tables.view", label: "View Floors & Tables (read-only)", category: "Tables" },
   { key: "tables.manage", label: "Manage Tables", category: "Tables" },
   { key: "menu.view", label: "View Menu (read-only)", category: "Menu" },
@@ -93,7 +94,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<StaffRole, PermissionKey[]> = {
   ADMINISTRATOR: PERMISSIONS.map((p) => p.key),
   RESTAURANT_MANAGER: [
     "sales.view", "orders.create", "orders.edit", "orders.cancel", "orders.accept",
-    "discounts.apply", "discounts.unlimited", "bills.print", "tables.manage", "tables.view", "menu.manage", "menu.view",
+    "discounts.apply", "discounts.unlimited", "bills.print", "bills.resendReceipt", "tables.manage", "tables.view", "menu.manage", "menu.view",
     "inventory.manage", "reports.access", "kds.manage",
     "reservations.manage", "customers.manage", "memberships.manage", "refunds.process",
     "attendance.manage", "delivery.manage", "staff.manage", "accounting.manage", "expenses.approve", "petty_cash.manage", "marketing.manage", "operations.manage",

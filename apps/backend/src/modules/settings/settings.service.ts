@@ -38,6 +38,7 @@ export class SettingsService {
         loyaltyEarnPerCurrency: true,
         maxManualDiscountPercent: true,
         requireDiscountReason: true,
+        digitalReceiptsEnabled: true,
       },
     });
     const branch = await this.prisma.branch.findFirst({

@@ -160,6 +160,7 @@ function build(opts: { zones?: boolean } = {}) {
     {} as never,
     {} as never,
     { enqueueOrderStatus: jest.fn() } as never,
+    {} as never,
   );
   const service = new IntegrationsService(
     prisma,

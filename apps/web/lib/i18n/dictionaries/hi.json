@@ -2104,5 +2104,16 @@
   "acct.petty.col.type": "प्रकार",
   "acct.petty.col.amount": "राशि",
   "acct.petty.col.balance": "शेष",
-  "acct.petty.empty": "पिछले 30 दिनों में कोई पेटी कैश प्रविष्टि नहीं"
+  "acct.petty.empty": "पिछले 30 दिनों में कोई पेटी कैश प्रविष्टि नहीं",
+  "settings.general.digitalReceipts.label": "भुगतान के बाद ईमेल से डिजिटल रसीद भेजें",
+  "settings.general.digitalReceipts.hint": "यह केवल उन ग्राहकों को जाती है जो ईमेल पता देते हैं और चेकआउट पर सहमति देते हैं। शब्द बदलने के लिए सेटिंग्स > ईमेल टेम्पलेट खोलें।",
+  "pos.checkout.receiptEmail.label": "रसीद इस पते पर भेजें (वैकल्पिक)",
+  "pos.checkout.receiptEmail.placeholder": "guest@example.com",
+  "pos.checkout.receiptEmail.consent": "ग्राहक इस रसीद को ईमेल से पाने के लिए सहमत है",
+  "pos.checkout.receiptEmail.invalid": "सही ईमेल पता दर्ज करें",
+  "pos.checkout.receiptEmail.sentTo": "रसीद {email} पर भेजी गई",
+  "pos.checkout.receiptEmail.notSent": "{email} पर रसीद अभी नहीं भेजी गई",
+  "pos.checkout.receiptEmail.resend": "रसीद ईमेल दोबारा भेजें",
+  "pos.checkout.receiptEmail.resent": "रसीद ईमेल भेज दी गई",
+  "pos.checkout.receiptEmail.resendFailed": "रसीद ईमेल नहीं भेजी जा सकी"
 }

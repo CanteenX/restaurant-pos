@@ -77,6 +77,8 @@ model Restaurant {
   onlineMinOrderAmount   Decimal @default(0) @db.Decimal(10, 2)
   // Stock alerts: warn this many days before a batch expires (0 = only already-expired).
   expiryAlertDays        Int     @default(7)
+  // Email a digital receipt after payment (only to guests who gave an address and consent).
+  digitalReceiptsEnabled Boolean @default(false)
   // Website / API ordering price change: PERCENT or AMOUNT (per item). Negative = cheaper, positive = costlier. 0 = off.
   onlinePriceAdjustKind  String  @default("PERCENT")
   onlinePriceAdjustValue Decimal @default(0) @db.Decimal(10, 2)
@@ -1387,6 +1389,11 @@ model Customer {
   referralCode    String? @unique
   // Opted out of marketing messages; excluded from every campaign audience.
   marketingOptOut Boolean @default(false)
+  // The address this guest agreed to receive digital receipts at (set at
+  // checkout), and when. Kept apart from `email` on purpose: marketing reads
+  // `email` only, so a receipt-only guest is never a campaign recipient.
+  receiptEmail     String?
+  receiptConsentAt DateTime? @db.Timestamptz(3)
   walletBalance   Decimal @default(0) @db.Decimal(12, 2) // store credit
 
   createdAt        DateTime              @default(now())
@@ -1656,6 +1663,7 @@ model Order {
   @@index([branchId, deliveryStatus])
   @@index([integrationKeyId])
   @@map("orders")
+  receiptEmail ReceiptEmail?
 }
 
 model OrderItem {
@@ -3030,4 +3038,26 @@ model EmailBranding {
   updatedBy    String?
 
   @@map("email_branding")
+}
+
+// Digital receipt email for one paid order (#222). One row per order, so a
+// payment can never mail two receipts; the guest's address and consent time
+// are kept here so a resend needs no new consent.
+model ReceiptEmail {
+  id           String    @id @default(cuid())
+  orderId      String    @unique
+  order        Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  restaurantId String
+  toEmail      String
+  consentAt    DateTime  @db.Timestamptz(3)
+  // PENDING (waiting for full payment), SENDING, SENT, FAILED, SKIPPED (turned off)
+  status       String    @default("PENDING")
+  sendCount    Int       @default(0)
+  sentAt       DateTime? @db.Timestamptz(3)
+  lastError    String? // error kind only, never an address
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@index([restaurantId])
+  @@map("receipt_emails")
 }

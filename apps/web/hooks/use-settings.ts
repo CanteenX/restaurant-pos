@@ -29,6 +29,7 @@ export interface RestaurantSettings {
   onlinePriceAdjustValue: string;
   maxManualDiscountPercent: string;
   requireDiscountReason: boolean;
+  digitalReceiptsEnabled: boolean;
 }
 
 export interface BranchSettings {
@@ -73,7 +74,7 @@ export type DisplayRestaurant = Pick<
   RestaurantSettings,
   | "id" | "name" | "legalName" | "logoUrl" | "currency" | "timezone"
   | "upiVpa" | "upiPayeeName" | "loyaltyPointValue" | "loyaltyEarnPerCurrency" | "referralEnabled" | "referralSharerPoints" | "referralReferredPoints" | "referralMinPurchase" | "onlineMinOrderAmount" | "onlinePriceAdjustKind" | "onlinePriceAdjustValue"
-  | "maxManualDiscountPercent" | "requireDiscountReason"
+  | "maxManualDiscountPercent" | "requireDiscountReason" | "digitalReceiptsEnabled"
 >;
 export type DisplayBranch = Pick<
   BranchSettings,

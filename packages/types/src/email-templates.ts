@@ -29,7 +29,7 @@ export const EMAIL_TEMPLATE_PLACEHOLDERS: Record<EmailTemplateKey, readonly stri
   MARKETING_CAMPAIGN: ["customer.name", "campaign.name", "campaign.message", "unsubscribe.url"],
   REPORT_SCHEDULED: ["report.title", "report.period", "report.from", "report.to"],
   STOCK_ALERT: ["alert.summary", "alert.details"],
-  RECEIPT: ["customer.name", "order.number", "order.date", "order.total", "receipt.url"],
+  RECEIPT: ["customer.name", "order.number", "order.date", "order.total", "order.summary", "order.payment", "order.taxId", "receipt.url"],
   STAFF_INVITE: ["staff.name", "invite.role", "invite.url"],
   PASSWORD_RESET: ["user.name", "reset.url", "reset.expiresIn"],
 };
