@@ -84,9 +84,9 @@ export class RestoreRoleService implements OnApplicationBootstrap {
       this.logger.log(
         `Restore role "${role}" is ready (data-only privileges).`,
       );
-    } catch (err) {
+    } catch {
       this.logger.warn(
-        `Could not prepare the restore role: ${(err as Error).message}`,
+        'Could not prepare the restore role; check database role configuration.',
       );
     }
   }

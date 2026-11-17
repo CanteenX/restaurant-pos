@@ -31,7 +31,10 @@ const HOSTILE_SCHEMA_ENTRIES = [
 describe('selectDataEntries', () => {
   it('keeps only table data and sequence sets for app tables', () => {
     const toc = [...HOSTILE_SCHEMA_ENTRIES, DATA, SEQ].join('\n');
-    expect(selectDataEntries(toc, TABLES)).toEqual([DATA, SEQ]);
+    expect(selectDataEntries(toc, TABLES, new Set(['Order_id_seq']))).toEqual([
+      DATA,
+      SEQ,
+    ]);
   });
 
   it('skips _prisma_migrations data instead of restoring it', () => {
@@ -57,5 +60,17 @@ describe('selectDataEntries', () => {
     expect(() =>
       selectDataEntries(HOSTILE_SCHEMA_ENTRIES.join('\n'), TABLES),
     ).toThrow(/no table data/);
+  });
+
+  it('does not trust table-name prefixes to identify sequences', () => {
+    expect(() =>
+      selectDataEntries(`${DATA}\n${SEQ}`, TABLES, new Set()),
+    ).toThrow(RestoreVetError);
+  });
+
+  it('rejects duplicate table data entries', () => {
+    expect(() => selectDataEntries(`${DATA}\n${DATA}`, TABLES)).toThrow(
+      /duplicate/,
+    );
   });
 });

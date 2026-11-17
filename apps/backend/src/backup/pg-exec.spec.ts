@@ -8,7 +8,7 @@ import {
   UNSAFE_OPT_IN_ENV,
 } from './pg-exec';
 import { deriveRestorePassword } from './restore-role';
-import { runStreamedRestore } from './restore-stream';
+import { loadVettedData } from './restore-load';
 
 interface Call {
   cmd: string;
@@ -22,8 +22,8 @@ const tables = 'Branch\nOrder\nUser\n_prisma_migrations\nverifactu_records\n';
 const edges = 'Order|Branch\nverifactu_records|Branch\nOrder|User\n';
 let toc = '';
 
-jest.mock('./restore-stream', () => ({
-  runStreamedRestore: jest.fn().mockResolvedValue(undefined),
+jest.mock('./restore-load', () => ({
+  loadVettedData: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock('node:child_process', () => ({
   ...jest.requireActual<object>('node:child_process'),
@@ -40,6 +40,10 @@ jest.mock('node:child_process', () => ({
       if (sql.includes('AS unsafe')) return ok(`${roleUnsafe}\n`);
       if (sql.includes('pg_tables WHERE schemaname')) return ok(tables);
       if (sql.includes('pg_constraint')) return ok(edges);
+      if (sql.includes('relkind') && sql.includes("'S'"))
+        return ok('Order_id_seq|Order|id|1|2147483647|1|f\n');
+      if (sql.includes('pg_attribute'))
+        return ok('Order|id\nOrder|name\nUser|id\n');
       if (sql.includes('count(*)')) return ok(`${ledgerRows}\n`);
       return ok();
     }
@@ -60,7 +64,7 @@ const GOOD_TOC = [
   '3348; 0 16410 TABLE DATA public _prisma_migrations nventra',
 ].join('\n');
 
-const streamed = runStreamedRestore as jest.Mock;
+const streamed = loadVettedData as jest.Mock;
 const sqlSent = () =>
   calls.filter((c) => c.cmd === 'psql').map((c) => c.args[c.args.length - 1]);
 
@@ -109,11 +113,14 @@ describe('pg-exec restore', () => {
       'rolsuper',
       'rolcreaterole',
       'rolcreatedb',
-      'pg_execute_server_program',
-      'pg_write_server_files',
-      'pg_read_server_files',
-      "has_schema_privilege(current_user,'public','CREATE')",
-      'tableowner',
+      "m.rolname LIKE 'pg\\_%'",
+      "pg_has_role(current_user, oid, 'member')",
+      "has_schema_privilege(m.oid,'public','CREATE')",
+      'has_database_privilege',
+      'pg_proc',
+      'proowner',
+      'relowner',
+      'nspowner',
       "'TRIGGER'",
     ]) {
       expect(check).toContain(needle);
@@ -134,13 +141,12 @@ describe('pg-exec restore', () => {
     expect(streamed).toHaveBeenCalled();
   });
 
-  it('restores only vetted data entries through the streamed transaction', async () => {
+  it('restores only vetted data entries through the file-data transaction', async () => {
     await restoreDatabase(dump);
     const o = streamed.mock.calls[0][0] as {
-      listFile: string;
-      prelude: string;
+      entries: string[];
     };
-    const list = await fs.readFile(o.listFile, 'utf8');
+    const list = o.entries.join('\n');
     expect(list).toContain(DATA);
     expect(list).toContain(SEQ);
     expect(list).not.toMatch(/FUNCTION|TRIGGER|COMMENT|_prisma_migrations/);
@@ -148,11 +154,9 @@ describe('pg-exec restore', () => {
 
   it('deletes (never truncates) children first and skips sync + migrations', async () => {
     await restoreDatabase(dump);
-    const { prelude } = streamed.mock.calls[0][0] as { prelude: string };
-    expect(prelude).toMatch(/^SET app\.sync_origin = '__skip';/);
-    expect(prelude).not.toMatch(/TRUNCATE/i);
-    expect(prelude).not.toContain('_prisma_migrations');
-    const at = (t: string) => prelude.indexOf(`DELETE FROM "${t}";`);
+    const { wipe } = streamed.mock.calls[0][0] as { wipe: string[] };
+    expect(wipe).not.toContain('_prisma_migrations');
+    const at = (t: string) => wipe.indexOf(t);
     expect(at('Order')).toBeGreaterThan(-1);
     expect(at('Order')).toBeLessThan(at('Branch'));
     expect(at('Order')).toBeLessThan(at('User'));
@@ -172,6 +176,16 @@ describe('pg-exec restore', () => {
     toc = `${GOOD_TOC}\n3350; 0 16500 TABLE DATA public pg_authid x`;
     await expect(restoreDatabase(dump)).rejects.toThrow(/not an app table/);
     expect(streamed).not.toHaveBeenCalled();
+  });
+
+  it('removes scratch files even when the data loader fails', async () => {
+    streamed.mockImplementationOnce(async (options: { workDir: string }) => {
+      await fs.writeFile(path.join(options.workDir, 'partial.copy'), 'rows');
+      throw new Error('load rejected');
+    });
+    await expect(restoreDatabase(dump)).rejects.toThrow('load rejected');
+    const { workDir } = streamed.mock.calls[0][0] as { workDir: string };
+    await expect(fs.stat(workDir)).rejects.toHaveProperty('code', 'ENOENT');
   });
 });
 

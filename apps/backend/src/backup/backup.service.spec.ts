@@ -11,8 +11,8 @@ import {
   sha256Hex,
 } from './backup-integrity';
 
-jest.mock('./restore-stream', () => ({
-  runStreamedRestore: jest.fn().mockResolvedValue(undefined),
+jest.mock('./restore-load', () => ({
+  loadVettedData: jest.fn().mockResolvedValue(undefined),
 }));
 const execCalls: string[][] = [];
 jest.mock('node:child_process', () => ({

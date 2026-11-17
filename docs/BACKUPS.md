@@ -9,7 +9,7 @@ Each backup is one folder named `nventra-backup-<UTC time>` containing:
 
 | File | What |
 |---|---|
-| `db.dump` | Postgres custom-format dump (restore with `pg_restore --clean --if-exists`) |
+| `db.dump` | Postgres custom-format dump (restore through the app into its migrated schema) |
 | `uploads.tar.gz` | uploaded images and files |
 | `SHA256SUMS` | checksums; check a copy with `sha256sum -c SHA256SUMS` |
 
@@ -69,8 +69,9 @@ every hour.
 A restore is destructive and Owner-only. Backups are untrusted input, so:
 
 - **Limited role.** The database is restored as `nventra_restore` (NOSUPERUSER,
-  NOCREATEROLE, NOCREATEDB, no `pg_*_server_*` roles, no CREATE on the schema,
-  no table ownership or TRIGGER rights; only DML and TRUNCATE on the app tables
+  NOCREATEROLE, NOCREATEDB, no predefined `pg_*` memberships, no database or
+  schema CREATE, no schema/table/sequence/function ownership or TRIGGER rights;
+  only data privileges on the app tables
   and USAGE/SELECT/UPDATE on sequences). The backend creates and re-syncs this
   role at startup and before every restore when it is connected as a superuser
   (the shipped Docker default). Its password is derived from the database
@@ -83,10 +84,23 @@ A restore is destructive and Owner-only. Backups are untrusted input, so:
   your bucket could execute code on the database host. Only use it for a
   one-off recovery you fully trust, then unset it.
 - **Data only.** The schema, functions, triggers, roles and extensions in a
-  dump are never executed. The app's migrated schema stays; only table rows and
-  sequence values are replaced, in a single transaction (a failure leaves the
-  current data untouched). The restore script is line-vetted before it reaches
-  `psql`.
+  dump are never executed. The app's migrated schema stays; table rows are
+  replaced in a single transaction. A failed restore rolls back the
+  deletes and copied rows. The app extracts raw COPY bytes to private temporary
+  files, verifies table and column names against the live schema, and generates
+  its own file-based `\copy` commands. Dump SQL and psql commands never reach
+  the psql command parser. Hindi, rupee signs and other UTF-8 data retain their
+  original bytes. Extraction rejects lines over 8 MiB and total data over 1 GiB;
+  scratch files are removed after success or failure.
+- **Sequence counters only move forward.** PostgreSQL sequence changes do not
+  roll back. Every live, table-owned sequence is reconciled to the greatest of
+  its existing value, the vetted backup value and the largest restored column
+  value. All archive values, permissions and final targets are checked before
+  any counter is set. Deferred constraints run before counter updates. A failed
+  restore may leave harmless forward gaps, as a failed INSERT can, but never
+  rewinds an existing counter. Only ascending, noncycling, increment-one app
+  sequences are supported. Restore takes exclusive locks on app tables; perform
+  it during maintenance without administrative direct `nextval`/`setval` calls.
 - **Fiscal ledger.** `verifactu_records` is append-only and hash-chained, so a
   restore never deletes or overwrites it. It is refused if the ledger is not
   empty; restore into a freshly migrated, empty database in that case.

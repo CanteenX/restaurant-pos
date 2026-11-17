@@ -13,6 +13,20 @@ const IGNORED_TABLES = new Set(['_prisma_migrations']);
 const DATA_LINE =
   /^(\d+;\s+\d+\s+\d+)\s+(TABLE DATA|SEQUENCE SET)\s+(\S+)\s+(\S+)/;
 
+export interface DataEntry {
+  kind: 'TABLE DATA' | 'SEQUENCE SET';
+  schema: string;
+  name: string;
+}
+
+/** Parses a TOC line that selectDataEntries already allowed. */
+export function parseDataEntry(line: string): DataEntry | null {
+  const m = DATA_LINE.exec(line);
+  return m
+    ? { kind: m[2] as DataEntry['kind'], schema: m[3], name: m[4] }
+    : null;
+}
+
 export class RestoreVetError extends Error {
   constructor(reason: string) {
     super(`Backup database dump rejected: ${reason}`);
@@ -35,26 +49,29 @@ function shown(raw: string): string {
 export function selectDataEntries(
   toc: string,
   appTables: ReadonlySet<string>,
+  appSequences: ReadonlySet<string> = new Set(),
 ): string[] {
   const lines = toc.split('\n').map((l) => l.trim());
   if (!lines.some((l) => /^\d+;/.test(l))) {
     throw new RestoreVetError('it is empty or unreadable');
   }
   const allowed: string[] = [];
+  const seen = new Set<string>();
   for (const line of lines) {
     const m = DATA_LINE.exec(line);
     if (!m) continue; // schema, functions, triggers, ACLs...: never executed
     const [, , kind, schema, name] = m;
     if (IGNORED_TABLES.has(name)) continue;
     const known =
-      kind === 'TABLE DATA'
-        ? appTables.has(name)
-        : [...appTables].some((t) => name.startsWith(`${t}_`));
+      kind === 'TABLE DATA' ? appTables.has(name) : appSequences.has(name);
     if (schema !== 'public' || !known) {
       throw new RestoreVetError(
         `it contains data for "${shown(`${schema}.${name}`)}", which is not an app table`,
       );
     }
+    const key = `${kind}:${name}`;
+    if (seen.has(key)) throw new RestoreVetError('duplicate data entry');
+    seen.add(key);
     allowed.push(line);
   }
   if (!allowed.some((l) => DATA_LINE.exec(l)?.[2] === 'TABLE DATA')) {
