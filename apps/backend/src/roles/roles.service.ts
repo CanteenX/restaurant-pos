@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   assertCanGrant,
   assertCanManageRole,
+  loadCeilingActor,
 } from '../common/privilege-ceiling';
 
 const SELECT = {
@@ -47,8 +48,10 @@ export class RolesService {
   }
 
   async create(restaurantId: string, actor: SessionUser, dto: CreateRoleDto) {
-    // #229: a new role can only carry permissions the creator holds.
-    assertCanGrant(actor, dto.permissionKeys);
+    // #229: a new role can only carry permissions the creator holds;
+    // #236: permanently, not through a time-limited grant.
+    const me = await loadCeilingActor(this.prisma, actor, restaurantId);
+    assertCanGrant(me, dto.permissionKeys);
     const permissions = await this.assertPermissionKeysValid(
       dto.permissionKeys,
     );
@@ -90,8 +93,9 @@ export class RolesService {
     const existing = await this.getForRestaurant(restaurantId, id);
     // #229: no editing a role above your own access (OWNER included), and no
     // adding permissions you do not hold.
-    assertCanManageRole(actor, existing);
-    if (dto.permissionKeys) assertCanGrant(actor, dto.permissionKeys);
+    const me = await loadCeilingActor(this.prisma, actor, restaurantId);
+    assertCanManageRole(me, existing);
+    if (dto.permissionKeys) assertCanGrant(me, dto.permissionKeys);
 
     const nextPermissions = dto.permissionKeys
       ? await this.assertPermissionKeysValid(dto.permissionKeys)
@@ -141,7 +145,8 @@ export class RolesService {
 
   async remove(restaurantId: string, actor: SessionUser, id: string) {
     const existing = await this.getForRestaurant(restaurantId, id);
-    assertCanManageRole(actor, existing);
+    const me = await loadCeilingActor(this.prisma, actor, restaurantId);
+    assertCanManageRole(me, existing);
     if (existing.isSystem) {
       throw new BadRequestException(
         'Seeded system roles cannot be deleted — create a custom role instead',

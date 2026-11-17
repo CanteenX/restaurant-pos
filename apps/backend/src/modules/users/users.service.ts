@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -17,13 +18,35 @@ import { AuditService } from '../../audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SessionService } from '../../auth/session.service';
 import {
+  OWNER_ROLE,
   assertCanAssignRole,
   assertCanManage,
   assertCanManageRole,
+  assertCanResetCredentials,
+  canGrant,
   canManageRole,
   ceilingRoleInclude,
   ceilingUserInclude,
+  isOwner,
+  loadCeilingActor,
+  type CeilingActor,
 } from '../../common/privilege-ceiling';
+
+/** Target of an edit: ceiling data plus what self-edit rules compare. */
+const updateTargetInclude = {
+  ...ceilingUserInclude,
+  branches: { select: { branchId: true } },
+} as const;
+
+type UpdateTarget = Prisma.UserGetPayload<{
+  include: typeof updateTargetInclude;
+}>;
+
+const sameSet = (a: readonly string[], b: readonly string[]): boolean => {
+  const sa = new Set(a);
+  const sb = new Set(b);
+  return sa.size === sb.size && [...sa].every((x) => sb.has(x));
+};
 
 const SELECT = {
   id: true,
@@ -68,13 +91,14 @@ export class UsersService {
    * (#229), so a manager never sees OWNER or a role above their own access.
    */
   async listRoles(restaurantId: string, actor: SessionUser) {
+    const me = await loadCeilingActor(this.prisma, actor, restaurantId);
     const roles = await this.prisma.role.findMany({
       where: { restaurantId },
       orderBy: { label: 'asc' },
       include: ceilingRoleInclude,
     });
     return roles
-      .filter((role) => canManageRole(actor, role))
+      .filter((role) => canManageRole(me, role))
       .map(({ id, restaurantId: rid, name, label, isSystem, createdAt }) => ({
         id,
         restaurantId: rid,
@@ -86,9 +110,10 @@ export class UsersService {
   }
 
   async create(restaurantId: string, actor: SessionUser, dto: CreateStaffDto) {
+    const me = await loadCeilingActor(this.prisma, actor, restaurantId);
     const role = await this.assertRoleInRestaurant(restaurantId, dto.roleId);
     // #229: you can only create an account at or below your own access.
-    assertCanManageRole(actor, role);
+    assertCanManageRole(me, role);
     await this.assertBranchesInRestaurant(restaurantId, dto.branchIds);
     await this.assertDepartmentInRestaurant(restaurantId, dto.departmentId);
 
@@ -137,42 +162,30 @@ export class UsersService {
     id: string,
     dto: UpdateStaffDto,
   ) {
+    const me = await loadCeilingActor(this.prisma, actor, restaurantId);
     const existing = await this.prisma.user.findFirst({
       where: { id, restaurantId },
-      include: ceilingUserInclude,
+      include: updateTargetInclude,
     });
     if (!existing) {
       throw new NotFoundException('Staff account not found');
     }
-    // #229: editing (incl. password reset, disabling) needs at least the
-    // target's access; changing a role also needs the new role's access.
-    assertCanManage(actor, existing);
+    // #229: editing (incl. disabling) needs at least the target's access;
+    // changing a role also needs the new role's access.
+    assertCanManage(me, existing);
+    if (id === me.id) {
+      await this.assertSelfEditAllowed(me, existing, dto);
+    } else if (dto.password) {
+      // #236: a password reset needs strictly more access than the target.
+      assertCanResetCredentials(me, existing);
+    }
     const roleChanged = Boolean(dto.roleId) && dto.roleId !== existing.roleId;
     if (roleChanged) {
       const nextRole = await this.assertRoleInRestaurant(
         restaurantId,
         dto.roleId!,
       );
-      assertCanAssignRole(actor, id, nextRole);
-    }
-
-    if (
-      (dto.isActive === false || dto.roleId) &&
-      existing.role.name === 'OWNER'
-    ) {
-      const otherActiveOwners = await this.prisma.user.count({
-        where: {
-          restaurantId,
-          isActive: true,
-          id: { not: id },
-          role: { name: 'OWNER' },
-        },
-      });
-      if (otherActiveOwners === 0) {
-        throw new BadRequestException(
-          'Cannot disable or change the role of the last active owner',
-        );
-      }
+      assertCanAssignRole(me, id, nextRole);
     }
 
     if (dto.branchIds) {
@@ -184,26 +197,40 @@ export class UsersService {
       ? await bcrypt.hash(dto.password, 12)
       : undefined;
 
-    const updated = await this.prisma.user.update({
-      where: { id },
-      data: {
-        name: dto.name,
-        email: dto.email,
-        phone: dto.phone,
-        roleId: dto.roleId,
-        departmentId: dto.departmentId,
-        isActive: dto.isActive,
-        passwordHash,
-        ...(dto.branchIds
-          ? {
-              branches: {
-                deleteMany: {},
-                create: dto.branchIds.map((branchId) => ({ branchId })),
-              },
-            }
-          : {}),
-      },
-      select: SELECT,
+    const demotesOwner =
+      existing.role.name === OWNER_ROLE &&
+      (dto.isActive === false || roleChanged);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (demotesOwner) {
+        await this.assertAnotherActiveOwner(
+          tx,
+          restaurantId,
+          id,
+          'Cannot disable or change the role of the last active owner',
+        );
+      }
+      return tx.user.update({
+        where: { id },
+        data: {
+          name: dto.name,
+          email: dto.email,
+          phone: dto.phone,
+          roleId: dto.roleId,
+          departmentId: dto.departmentId,
+          isActive: dto.isActive,
+          passwordHash,
+          ...(dto.branchIds
+            ? {
+                branches: {
+                  deleteMany: {},
+                  create: dto.branchIds.map((branchId) => ({ branchId })),
+                },
+              }
+            : {}),
+        },
+        select: SELECT,
+      });
     });
 
     // A new password or a disabled account ends every existing session.
@@ -246,24 +273,21 @@ export class UsersService {
     if (!existing) {
       throw new NotFoundException('Staff account not found');
     }
-    assertCanManage(actor, existing);
-
-    if (existing.role.name === 'OWNER') {
-      const otherActiveOwners = await this.prisma.user.count({
-        where: {
-          restaurantId,
-          isActive: true,
-          id: { not: id },
-          role: { name: 'OWNER' },
-        },
-      });
-      if (otherActiveOwners === 0) {
-        throw new BadRequestException('Cannot delete the last active owner');
-      }
-    }
+    const me = await loadCeilingActor(this.prisma, actor, restaurantId);
+    assertCanManage(me, existing);
 
     try {
-      await this.prisma.user.delete({ where: { id } });
+      await this.prisma.$transaction(async (tx) => {
+        if (existing.role.name === OWNER_ROLE) {
+          await this.assertAnotherActiveOwner(
+            tx,
+            restaurantId,
+            id,
+            'Cannot delete the last active owner',
+          );
+        }
+        await tx.user.delete({ where: { id } });
+      });
     } catch (err) {
       // Order/Refund/PurchaseOrder/... all keep a required, non-cascading
       // reference to the staff member who created them, so history is never
@@ -405,6 +429,7 @@ export class UsersService {
         'You cannot change your own permission overrides',
       );
     }
+    const me = await loadCeilingActor(this.prisma, actor, restaurantId);
     const target = await this.prisma.user.findFirst({
       where: { id: targetId, restaurantId },
       include: ceilingUserInclude,
@@ -415,7 +440,7 @@ export class UsersService {
         'The owner role cannot have permission overrides',
       );
     }
-    assertCanManage(actor, target);
+    assertCanManage(me, target);
 
     const keys = dto.overrides.map((o) => o.permissionKey);
     if (new Set(keys).size !== keys.length) {
@@ -430,12 +455,11 @@ export class UsersService {
       if (!byKey.has(o.permissionKey)) {
         throw new BadRequestException(`Unknown permission: ${o.permissionKey}`);
       }
-      if (
-        o.effect === 'GRANT' &&
-        !actor.permissions.includes(o.permissionKey)
-      ) {
+      // #236: `me` leaves out the actor's own time-limited grants, so
+      // temporary access can never be passed on (with or without expiry).
+      if (o.effect === 'GRANT' && !canGrant(me, [o.permissionKey])) {
         throw new BadRequestException(
-          `You cannot grant "${o.permissionKey}" because you do not hold it yourself`,
+          `You cannot grant "${o.permissionKey}" because you do not hold it yourself permanently`,
         );
       }
       if (o.expiresAt && new Date(o.expiresAt).getTime() <= now) {
@@ -476,6 +500,69 @@ export class UsersService {
       where: { id: targetId },
       select: SELECT,
     });
+  }
+
+  /**
+   * #236: editing your own record. A new password needs the current one
+   * (a borrowed session must not be enough to lock you out). A non-owner may
+   * not change their own active status or branches; their role is guarded
+   * by `assertCanAssignRole` and their overrides by `setPermissionOverrides`.
+   * Re-sending unchanged values is fine, so a full edit form still works.
+   */
+  private async assertSelfEditAllowed(
+    me: CeilingActor,
+    existing: UpdateTarget,
+    dto: UpdateStaffDto,
+  ) {
+    if (dto.password) {
+      if (!dto.currentPassword) {
+        throw new BadRequestException(
+          'Enter your current password to set a new one',
+        );
+      }
+      const ok = await bcrypt.compare(
+        dto.currentPassword,
+        existing.passwordHash,
+      );
+      if (!ok) throw new ForbiddenException('Current password is incorrect');
+    }
+    if (isOwner(me)) return;
+    if (dto.isActive !== undefined && dto.isActive !== existing.isActive) {
+      throw new ForbiddenException(
+        'You cannot enable or disable your own account',
+      );
+    }
+    const myBranches = existing.branches.map((b) => b.branchId);
+    if (dto.branchIds && !sameSet(dto.branchIds, myBranches)) {
+      throw new ForbiddenException(
+        'You cannot change your own branch assignments',
+      );
+    }
+  }
+
+  /**
+   * #236: the last-owner check and the write it guards run in ONE
+   * transaction. The active owner rows are locked (FOR UPDATE, in id order
+   * so two requests cannot deadlock), so a concurrent "disable the other
+   * owner" waits, then re-reads and sees the change.
+   */
+  private async assertAnotherActiveOwner(
+    tx: Prisma.TransactionClient,
+    restaurantId: string,
+    id: string,
+    message: string,
+  ) {
+    const owners = await tx.$queryRaw<{ id: string }[]>`
+      SELECT u."id" FROM "users" u
+      JOIN "roles" r ON r."id" = u."roleId"
+      WHERE u."restaurantId" = ${restaurantId}
+        AND u."isActive" = true
+        AND r."name" = ${OWNER_ROLE}
+      ORDER BY u."id"
+      FOR UPDATE OF u`;
+    if (!owners.some((o) => o.id !== id)) {
+      throw new BadRequestException(message);
+    }
   }
 
   private async assertDepartmentInRestaurant(

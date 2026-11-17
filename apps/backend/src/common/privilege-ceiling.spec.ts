@@ -4,10 +4,13 @@ import {
   assertCanGrant,
   assertCanManage,
   assertCanManageRole,
+  assertCanResetCredentials,
   canGrant,
   canManage,
   canManageRole,
   ceilingKeys,
+  grantableKeys,
+  loadCeilingActor,
   type CeilingActor,
   type CeilingRole,
   type CeilingUser,
@@ -178,5 +181,147 @@ describe('assertCanAssignRole', () => {
     expect(() => assertCanAssignRole(fullMgr, 'x', WAITER)).not.toThrow();
     expect(() => assertCanAssignRole(owner, 'x', OWNER)).not.toThrow();
     expect(() => assertCanAssignRole(owner, owner.id, HIGH)).not.toThrow();
+  });
+});
+
+// --- #236 follow-ups -------------------------------------------------------
+
+const ov = (
+  effect: 'GRANT' | 'DENY',
+  key: string,
+  expiresAt: Date | null = null,
+) => ({ effect, expiresAt, permission: { key } });
+const soon = () => new Date(Date.now() + 60_000);
+
+describe('grantableKeys (#236)', () => {
+  it('drops permissions held only through a time-limited GRANT', () => {
+    const keys = grantableKeys(
+      user('m', STAFF_MGR, [
+        ov('GRANT', 'reports.access', soon()),
+        ov('GRANT', 'orders.create'),
+      ]),
+    );
+    expect(keys.sort()).toEqual(['orders.create', 'users.manage']);
+  });
+
+  it('keeps a role permission even when a temporary GRANT repeats it', () => {
+    const keys = grantableKeys(
+      user('m', STAFF_MGR, [ov('GRANT', 'users.manage', soon())]),
+    );
+    expect(keys).toEqual(['users.manage']);
+  });
+
+  it('subtracts a live DENY and ignores an expired one', () => {
+    const past = new Date(Date.now() - 60_000);
+    const keys = grantableKeys(
+      user('m', FULL_MGR, [
+        ov('DENY', 'orders.create'),
+        ov('DENY', 'users.manage', past),
+      ]),
+    );
+    expect(keys).toEqual(['users.manage']);
+  });
+});
+
+describe('loadCeilingActor (#236)', () => {
+  const record = {
+    id: 'm',
+    isActive: true,
+    role: STAFF_MGR,
+    permissionOverrides: [ov('GRANT', 'reports.access', soon())],
+  };
+
+  it('reloads the actor and leaves out temporary grants', async () => {
+    const findFirst = jest.fn().mockResolvedValue(record);
+    const actor = await loadCeilingActor(
+      { user: { findFirst } } as never,
+      { id: 'm' },
+      'rest',
+    );
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'm', restaurantId: 'rest' } }),
+    );
+    expect(actor).toEqual({
+      id: 'm',
+      roleName: 'STAFF_MGR',
+      permissions: ['users.manage'],
+    });
+  });
+
+  it('refuses a missing or disabled actor', async () => {
+    for (const found of [null, { ...record, isActive: false }]) {
+      const findFirst = jest.fn().mockResolvedValue(found);
+      await expect(
+        loadCeilingActor({ user: { findFirst } } as never, { id: 'm' }, 'r'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    }
+  });
+});
+
+describe('assertCanResetCredentials (#236)', () => {
+  it('refuses a same-level peer', () => {
+    expect(() =>
+      assertCanResetCredentials(staffMgr, user('p', STAFF_MGR)),
+    ).toThrow(ForbiddenException);
+    expect(() => assertCanResetCredentials(admin, user('p', ADMIN))).toThrow(
+      /less access/,
+    );
+  });
+
+  it('refuses a target whose temporary grant makes them equal', () => {
+    const boosted = user('w', role('LOW', []), [
+      ov('GRANT', 'users.manage', soon()),
+    ]);
+    expect(() => assertCanResetCredentials(staffMgr, boosted)).toThrow(
+      /less access/,
+    );
+  });
+
+  it('allows a strictly lower target', () => {
+    expect(() =>
+      assertCanResetCredentials(fullMgr, user('w', WAITER)),
+    ).not.toThrow();
+    expect(() =>
+      assertCanResetCredentials(admin, user('h', HIGH)),
+    ).not.toThrow();
+  });
+
+  it('still refuses a higher target or an OWNER', () => {
+    expect(() => assertCanResetCredentials(staffMgr, user('h', HIGH))).toThrow(
+      ForbiddenException,
+    );
+    expect(() => assertCanResetCredentials(admin, user('o', OWNER))).toThrow(
+      ForbiddenException,
+    );
+  });
+
+  it('the owner may reset anyone, including another owner', () => {
+    expect(() =>
+      assertCanResetCredentials(owner, user('o2', OWNER)),
+    ).not.toThrow();
+  });
+});
+
+describe('403 messages list the missing permission keys (#236)', () => {
+  it('assertCanManage names what the actor lacks', () => {
+    expect(() => assertCanManage(staffMgr, user('h', HIGH))).toThrow(
+      /missing: reports\.access/,
+    );
+  });
+
+  it('assertCanManageRole names what the actor lacks', () => {
+    expect(() => assertCanManageRole(staffMgr, FULL_MGR)).toThrow(
+      /missing: orders\.create/,
+    );
+  });
+
+  it('does not leak ids or role names', () => {
+    let message = '';
+    try {
+      assertCanManage(staffMgr, user('secret-id', HIGH));
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).not.toMatch(/secret-id|HIGH/);
   });
 });
