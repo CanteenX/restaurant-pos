@@ -162,43 +162,40 @@ export class UsersService {
         : dto.password,
       12,
     );
-    const user = await this.prisma.user.create({
-      data: {
-        restaurantId,
-        name: dto.name,
-        email: dto.email,
-        phone: dto.phone,
-        roleId: dto.roleId,
-        departmentId: dto.departmentId ?? undefined,
-        passwordHash,
-        ...(dto.invite ? { isActive: false } : {}),
-        branches: {
-          create: dto.branchIds.map((branchId) => ({ branchId })),
+    const createAccount = async () => {
+      const user = await this.prisma.user.create({
+        data: {
+          restaurantId,
+          name: dto.name,
+          email: dto.email,
+          phone: dto.phone,
+          roleId: dto.roleId,
+          departmentId: dto.departmentId ?? undefined,
+          passwordHash,
+          ...(dto.invite ? { isActive: false } : {}),
+          branches: {
+            create: dto.branchIds.map((branchId) => ({ branchId })),
+          },
         },
-      },
-      select: SELECT,
-    });
+        select: SELECT,
+      });
 
-    await this.audit.record({
-      userId: actor.id,
-      action: 'staff.created',
-      entity: 'User',
-      entityId: user.id,
-      metadata: {
-        name: user.name,
-        email: user.email,
-        roleId: user.roleId,
-        invited: Boolean(dto.invite),
-      },
-    });
-
-    if (!dto.invite) return user;
-    // The account exists either way; a failed email can be re-sent.
-    const inviteSent = await this.invites
-      .send(restaurantId, actor, user.id)
-      .then(() => true)
-      .catch(() => false);
-    return { ...user, inviteSent };
+      await this.audit.record({
+        userId: actor.id,
+        action: 'staff.created',
+        entity: 'User',
+        entityId: user.id,
+        metadata: {
+          name: user.name,
+          email: user.email,
+          roleId: user.roleId,
+          invited: Boolean(dto.invite),
+        },
+      });
+      return user;
+    };
+    if (!dto.invite) return createAccount();
+    return this.invites.createAndInvite(restaurantId, actor, createAccount);
   }
 
   async update(
@@ -261,7 +258,20 @@ export class UsersService {
           'Cannot disable or change the role of the last active owner',
         );
       }
-      return tx.user.update({
+      if (dto.email !== undefined && id !== me.id) {
+        // A login email is a recovery credential. Compare with its current
+        // value under the same lock used by token issue/redeem; a stale form
+        // must not turn an unchanged-email edit into a credential reset.
+        await tx.$queryRaw`SELECT "id" FROM "users"
+          WHERE "id" = ${id} AND "restaurantId" = ${restaurantId} FOR UPDATE`;
+        const current = await tx.user.findFirst({
+          where: { id, restaurantId },
+          include: updateTargetInclude,
+        });
+        if (!current) throw new NotFoundException('Staff account not found');
+        if (dto.email !== current.email) assertCanResetCredentials(me, current);
+      }
+      const user = await tx.user.update({
         where: { id },
         data: {
           name: dto.name,
@@ -282,14 +292,23 @@ export class UsersService {
         },
         select: SELECT,
       });
+      // The update locks the user row before touching tokens, matching issue
+      // and redeem. Commit identity/credential changes with link revocation,
+      // so an old recipient can never race an administrator's correction.
+      if (
+        dto.email !== undefined ||
+        dto.password ||
+        dto.isActive !== undefined
+      ) {
+        await tx.authToken.deleteMany({ where: { userId: id, usedAt: null } });
+      }
+      return user;
     }, LAST_OWNER_TX_OPTIONS);
 
     // A new password or a disabled account ends every existing session.
     if (dto.password || dto.isActive === false) {
       await this.sessions.revokeAll(id);
     }
-    // A disabled account must not be re-activated by an old invite link.
-    if (dto.isActive === false) await this.invites.dropPending(id);
 
     // Never log `dto.password`/`passwordHash` — only the fields it's safe
     // for an owner reviewing history to see. `passwordChanged` is a boolean

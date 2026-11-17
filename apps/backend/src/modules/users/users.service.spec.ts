@@ -71,14 +71,14 @@ beforeAll(async () => {
   passwordHash = await bcrypt.hash('Current123!', 4);
 });
 
-function setup() {
-  const findUser = ({ where }: { where: { id: string } }) => {
+function setup(existingEmail: string | null = null) {
+  const findUser = async ({ where }: { where: { id: string } }) => {
     const r = USERS[where.id];
     if (!r) return Promise.resolve(null);
     return Promise.resolve({
       id: where.id,
       name: where.id,
-      email: null,
+      email: existingEmail,
       isActive: true,
       passwordHash,
       roleId: ROLES[r].id,
@@ -112,6 +112,7 @@ function setup() {
         .mockResolvedValue([{ id: 'p', key: 'reports.access' }]),
     },
     userPermissionOverride: { deleteMany: jest.fn(), createMany: jest.fn() },
+    authToken: { deleteMany: jest.fn().mockResolvedValue({ count: 2 }) },
     // Active owners still standing, as the row-locking query sees them.
     $queryRaw: jest.fn().mockResolvedValue([{ id: 'owner' }, { id: 'owner2' }]),
     $transaction: jest.fn(),
@@ -128,9 +129,23 @@ function setup() {
       bcrypt.compare(pw, u.passwordHash),
     ),
   };
+  const send = jest.fn().mockResolvedValue({ sent: true });
   const invites = {
     assertAvailable: jest.fn(),
-    send: jest.fn().mockResolvedValue({ sent: true }),
+    send,
+    createAndInvite: jest.fn(
+      async (
+        restaurantId: string,
+        actingUser: SessionUser,
+        createAccount: () => Promise<{ id: string }>,
+      ) => {
+        const user = await createAccount();
+        const inviteSent = await send(restaurantId, actingUser, user.id)
+          .then(() => true)
+          .catch(() => false);
+        return { ...user, inviteSent };
+      },
+    ),
     dropPending: jest.fn().mockResolvedValue(0),
   };
   const svc = new UsersService(
@@ -364,6 +379,71 @@ describe('UsersService #236 follow-ups', () => {
       expect(sessions.revokeAll).not.toHaveBeenCalled();
     });
 
+    it('cannot redirect a same-level peer login email to gain password reset access', async () => {
+      const { svc, prisma } = setup('peer@example.com');
+      await expect(
+        svc.update('rest', actor('staffmgr', 'STAFF_MGR'), 'peer', {
+          email: 'replacement@example.com',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('allows harmless peer edits with the unchanged email field', async () => {
+      const { svc, prisma } = setup('peer@example.com');
+      await svc.update('rest', actor('staffmgr', 'STAFF_MGR'), 'peer', {
+        name: 'Peer name',
+        email: 'peer@example.com',
+      });
+      expect(prisma.user.update).toHaveBeenCalled();
+    });
+
+    it('judges unchanged email under the transaction lock, not an earlier snapshot', async () => {
+      const { svc, prisma } = setup('same@example.com');
+      const find = prisma.user.findFirst.getMockImplementation()!;
+      let reads = 0;
+      prisma.user.findFirst.mockImplementation(async (args) => {
+        const user = await find(args);
+        return user && args.where.id === 'peer'
+          ? {
+              ...user,
+              email:
+                ++reads === 1 ? 'same@example.com' : 'corrected@example.com',
+            }
+          : user;
+      });
+      await expect(
+        svc.update('rest', actor('staffmgr', 'STAFF_MGR'), 'peer', {
+          email: 'same@example.com',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('allows a higher-access manager to change a lower-access login email', async () => {
+      const { svc, prisma } = setup('waiter@example.com');
+      await svc.update('rest', actor('fullmgr', 'FULL_MGR'), 'waiter', {
+        email: 'corrected@example.com',
+      });
+      expect(prisma.user.update).toHaveBeenCalled();
+    });
+
+    it('allows an owner to change another owner login email', async () => {
+      const { svc, prisma } = setup('old@example.com');
+      await svc.update('rest', actor('owner', 'OWNER'), 'owner2', {
+        email: 'new@example.com',
+      });
+      expect(prisma.user.update).toHaveBeenCalled();
+    });
+
+    it('preserves the existing self-email update behavior', async () => {
+      const { svc, prisma } = setup('self@example.com');
+      await svc.update('rest', actor('staffmgr', 'STAFF_MGR'), 'staffmgr', {
+        email: 'self-new@example.com',
+      });
+      expect(prisma.user.update).toHaveBeenCalled();
+    });
+
     it('but can still edit a same-level peer', async () => {
       const { svc, prisma } = setup();
       await svc.update('rest', actor('staffmgr', 'STAFF_MGR'), 'peer', {
@@ -581,11 +661,39 @@ describe('UsersService staff invites (#223)', () => {
   });
 
   it('disabling an account drops its pending invite', async () => {
-    const { svc, invites } = setup();
+    const { svc, prisma } = setup();
     await svc.update('rest', actor('owner', 'OWNER'), 'waiter', {
       isActive: false,
     });
-    expect(invites.dropPending).toHaveBeenCalledWith('waiter');
+    expect(prisma.authToken.deleteMany).toHaveBeenCalledWith({
+      where: { userId: 'waiter', usedAt: null },
+    });
+  });
+
+  it.each([
+    { email: 'corrected@example.com' },
+    { password: 'ChangedPassword9' },
+    { isActive: true },
+  ])(
+    'invalidates every outstanding token for an administrative change: %j',
+    async (dto) => {
+      const { svc, prisma } = setup();
+      await svc.update('rest', actor('owner', 'OWNER'), 'waiter', dto);
+      expect(prisma.authToken.deleteMany).toHaveBeenCalledWith({
+        where: { userId: 'waiter', usedAt: null },
+      });
+      expect(prisma.user.update.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.authToken.deleteMany.mock.invocationCallOrder[0],
+      );
+    },
+  );
+
+  it('keeps link tokens for an ordinary name edit', async () => {
+    const { svc, prisma } = setup();
+    await svc.update('rest', actor('owner', 'OWNER'), 'waiter', {
+      name: 'Corrected',
+    });
+    expect(prisma.authToken.deleteMany).not.toHaveBeenCalled();
   });
 
   it('the password-create path is unchanged (no invite sent)', async () => {

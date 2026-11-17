@@ -17,6 +17,7 @@ import { authLink, publicBaseUrl } from '../../auth/tokens/public-url';
 import { KeyRateLimiter } from '../../common/guards/key-rate-limiter';
 import {
   assertCanManage,
+  assertCanResetCredentials,
   ceilingUserInclude,
   loadCeilingActor,
   type CeilingActor,
@@ -84,13 +85,51 @@ export class StaffInviteService {
     }
   }
 
-  /** Sends (or re-sends) the invite; any earlier link stops working. */
+  /**
+   * Initial onboarding is allowed at the actor's own ceiling. The caller
+   * supplies account creation, never an existing id or an HTTP bypass flag.
+   * Only this freshly-created account can reach the private initial path.
+   */
+  async createAndInvite<T extends { id: string }>(
+    restaurantId: string,
+    actor: CeilingActor,
+    createAccount: () => Promise<T>,
+  ): Promise<T & { inviteSent: boolean }> {
+    this.assertAvailable();
+    const user = await createAccount();
+    const inviteSent = await this.sendInitial(restaurantId, actor, user.id)
+      .then(() => true)
+      .catch(() => false);
+    return { ...user, inviteSent };
+  }
+
+  private async sendInitial(
+    restaurantId: string,
+    actor: CeilingActor,
+    userId: string,
+  ): Promise<{ sent: true }> {
+    const target = await this.loadTarget(restaurantId, actor, userId);
+    return this.sendToTarget(restaurantId, actor, target);
+  }
+
+  /** Existing-account send/resend resets credentials: equal access is insufficient. */
   async send(
     restaurantId: string,
     actor: CeilingActor,
     userId: string,
   ): Promise<{ sent: true }> {
     const target = await this.loadTarget(restaurantId, actor, userId);
+    const me = await loadCeilingActor(this.prisma, actor, restaurantId);
+    assertCanResetCredentials(me, target);
+    return this.sendToTarget(restaurantId, actor, target);
+  }
+
+  private async sendToTarget(
+    restaurantId: string,
+    actor: CeilingActor,
+    target: Awaited<ReturnType<StaffInviteService['loadTarget']>>,
+  ): Promise<{ sent: true }> {
+    const userId = target.id;
     if (target.isActive) {
       throw new ConflictException(
         'This account is already active. Use a password reset instead.',
@@ -111,6 +150,7 @@ export class StaffInviteService {
       purpose: 'STAFF_INVITE',
       ttlMs: INVITE_TTL_MS,
       createdById: actor.id,
+      expectedInactiveEmail: target.email,
     });
     const branchId =
       target.branches[0]?.branchId ?? (await this.firstBranch(restaurantId));
@@ -173,8 +213,16 @@ export class StaffInviteService {
     const claim = await this.tokens.peek(token, 'STAFF_INVITE');
     const user = claim
       ? await this.prisma.user.findFirst({
-          where: { id: claim.userId, restaurantId: claim.restaurantId },
-          select: { name: true, role: { select: { label: true } } },
+          where: {
+            id: claim.userId,
+            restaurantId: claim.restaurantId,
+            isActive: false,
+          },
+          select: {
+            name: true,
+            isActive: true,
+            role: { select: { label: true } },
+          },
         })
       : null;
     const restaurant = claim
@@ -183,7 +231,8 @@ export class StaffInviteService {
           select: { name: true },
         })
       : null;
-    if (!user || !restaurant) throw new BadRequestException(INVALID_INVITE);
+    if (!user || user.isActive || !restaurant)
+      throw new BadRequestException(INVALID_INVITE);
     return {
       name: user.name,
       restaurantName: restaurant.name,
@@ -203,11 +252,12 @@ export class StaffInviteService {
       async (tx, claim) => {
         const user = await tx.user.findFirst({
           where: { id: claim.userId, restaurantId: claim.restaurantId },
-          select: { id: true },
+          select: { id: true, isActive: true },
         });
-        if (!user) throw new BadRequestException(INVALID_INVITE);
+        if (!user || user.isActive)
+          throw new BadRequestException(INVALID_INVITE);
         await tx.user.update({
-          where: { id: user.id },
+          where: { id: user.id, isActive: false },
           data: {
             passwordHash,
             isActive: true,
@@ -225,6 +275,7 @@ export class StaffInviteService {
       action: 'staff.invite.accepted',
       entity: 'User',
       entityId: userId,
+      metadata: { isActive: true },
     });
     return { ok: true };
   }

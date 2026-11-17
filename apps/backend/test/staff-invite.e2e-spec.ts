@@ -12,6 +12,8 @@ import cookieParser from 'cookie-parser';
 import { randomUUID } from 'crypto';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { PasswordResetService } from './../src/auth/password-reset.service';
+import { AuthTokensService } from './../src/auth/tokens/auth-tokens.service';
 import { AppModule } from './../src/app.module';
 import {
   EmailService,
@@ -231,6 +233,134 @@ describe('Staff invites (e2e)', () => {
     ]);
   });
 
+  it.each([
+    ['email', { email: 'corrected-invite@example.com' }],
+    ['password', { password: NEW_PASSWORD }],
+    ['activation', { isActive: true }],
+    ['disable', { isActive: false }],
+  ])(
+    'rejects old invite and reset links after administrator %s change',
+    async (label, change) => {
+      const inv = await invite(A, 'changed-' + label);
+      const tokens = app.get(AuthTokensService);
+      const reset = await tokens.issue({
+        userId: inv.id,
+        restaurantId: A.restaurantId,
+        purpose: 'PASSWORD_RESET',
+        ttlMs: 60_000,
+      });
+      await A.manager
+        .patch('/api/v1/users/' + inv.id)
+        .send(change)
+        .expect(200);
+      const before = await prisma.user.findUniqueOrThrow({
+        where: { id: inv.id },
+      });
+      expect(await tokens.peek(inv.token, 'STAFF_INVITE')).toBeNull();
+      expect(await tokens.peek(reset.token, 'PASSWORD_RESET')).toBeNull();
+      await http()
+        .post('/api/v1/auth/invite/inspect')
+        .send({ token: inv.token })
+        .expect(400);
+      await http()
+        .post('/api/v1/auth/invite/accept')
+        .send({ token: inv.token, password: 'UnwantedChange9' })
+        .expect(400);
+      const after = await prisma.user.findUniqueOrThrow({
+        where: { id: inv.id },
+      });
+      expect(after.passwordHash).toBe(before.passwordHash);
+      expect(after.isActive).toBe(before.isActive);
+      expect(after.email).toBe(before.email);
+    },
+  );
+
+  it('rejects acceptance when the account was activated without revoking its link', async () => {
+    const inv = await invite(A, 'already-active');
+    await prisma.user.update({
+      where: { id: inv.id },
+      data: { isActive: true },
+    });
+    const before = await prisma.user.findUniqueOrThrow({
+      where: { id: inv.id },
+    });
+    await http()
+      .post('/api/v1/auth/invite/accept')
+      .send({ token: inv.token, password: NEW_PASSWORD })
+      .expect(400);
+    const after = await prisma.user.findUniqueOrThrow({
+      where: { id: inv.id },
+    });
+    expect(after.passwordHash).toBe(before.passwordHash);
+  });
+
+  it('does not issue a link to a stale address when an administrator corrects it during send', async () => {
+    const inv = await invite(A, 'stale-address');
+    sent.length = 0;
+    const tokens = app.get(AuthTokensService);
+    const original = tokens.issue.bind(tokens);
+    let release!: () => void;
+    let arrived!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reached = new Promise<void>((resolve) => {
+      arrived = resolve;
+    });
+    const spy = jest
+      .spyOn(tokens, 'issue')
+      .mockImplementationOnce(async (input) => {
+        arrived();
+        await paused;
+        return original(input);
+      });
+    const sending = A.manager
+      .post('/api/v1/users/' + inv.id + '/invite')
+      .then((response) => response);
+    try {
+      await reached;
+      await A.manager
+        .patch('/api/v1/users/' + inv.id)
+        .send({ email: 'new-recipient-' + tag + '@example.com' })
+        .expect(200);
+      release();
+      expect((await sending).status).toBe(400);
+      expect(sent).toHaveLength(0);
+      expect(
+        await prisma.authToken.count({
+          where: { userId: inv.id, usedAt: null },
+        }),
+      ).toBe(0);
+    } finally {
+      release();
+      await sending;
+      spy.mockRestore();
+    }
+  });
+
+  it('audits explicit reactivation when an administrator re-invites disabled staff', async () => {
+    const inv = await invite(A, 'reactivated');
+    await http()
+      .post('/api/v1/auth/invite/accept')
+      .send({ token: inv.token, password: NEW_PASSWORD })
+      .expect(200);
+    await A.manager
+      .patch('/api/v1/users/' + inv.id)
+      .send({ isActive: false })
+      .expect(200);
+    sent.length = 0;
+    await A.manager.post('/api/v1/users/' + inv.id + '/invite').expect(201);
+    await http()
+      .post('/api/v1/auth/invite/accept')
+      .send({ token: tokenFrom(sent[0]), password: NEW_PASSWORD })
+      .expect(200);
+    const audit = await prisma.auditLog.findFirstOrThrow({
+      where: { entityId: inv.id, action: 'staff.invite.accepted' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(audit.metadata).toEqual({ isActive: true });
+  });
+
   it('rejects an expired invite', async () => {
     const inv = await invite(A, 'expired');
     await prisma.authToken.updateMany({
@@ -298,6 +428,158 @@ describe('Staff invites (e2e)', () => {
     });
     await A.manager.post(`/api/v1/users/${owner.id}/invite`).expect(403);
     await A.manager.delete(`/api/v1/users/${owner.id}/invite`).expect(403);
+  });
+
+  it('allows initial onboarding at equal access while existing-account sends stay stricter', async () => {
+    const managerRole = await prisma.role.findFirstOrThrow({
+      where: { restaurantId: A.restaurantId, name: 'MANAGER_' + tag },
+    });
+    const inv = await invite(A, 'new-equal-peer', managerRole.id);
+    expect(inv.body.inviteSent).toBe(true);
+    await http()
+      .post('/api/v1/auth/invite/accept')
+      .send({ token: inv.token, password: NEW_PASSWORD })
+      .expect(200);
+  });
+
+  it('serializes an accepting invite with an administrator credential change', async () => {
+    const inv = await invite(A, 'concurrent-admin');
+    const tokens = app.get(AuthTokensService);
+    const original = tokens.redeem.bind(tokens);
+    let release!: () => void;
+    let arrived!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reached = new Promise<void>((resolve) => {
+      arrived = resolve;
+    });
+    const spy = jest
+      .spyOn(tokens, 'redeem')
+      .mockImplementationOnce((token, purpose, apply) =>
+        original(token, purpose, async (tx, claim) => {
+          arrived();
+          await paused;
+          return apply(tx, claim);
+        }),
+      );
+    const accepting = http()
+      .post('/api/v1/auth/invite/accept')
+      .send({ token: inv.token, password: NEW_PASSWORD })
+      .then((response) => response);
+    let changing: Promise<request.Response> | undefined;
+    try {
+      await reached;
+      changing = A.manager
+        .patch('/api/v1/users/' + inv.id)
+        .send({ password: 'AdminControlled9', isActive: false })
+        .then((response) => response);
+      let blocked = false;
+      const deadline = Date.now() + 4000;
+      while (Date.now() < deadline) {
+        const waiting = await prisma.$queryRaw<{ count: bigint }[]>`
+          SELECT count(*) AS count FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock'
+            AND query ILIKE '%users%'
+        `;
+        if (Number(waiting[0].count) > 0) {
+          blocked = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(blocked).toBe(true);
+      release();
+      expect((await accepting).status).toBe(200);
+      expect((await changing).status).toBe(200);
+      const final = await prisma.user.findUniqueOrThrow({
+        where: { id: inv.id },
+      });
+      expect(final.isActive).toBe(false);
+      expect(await bcrypt.compare('AdminControlled9', final.passwordHash)).toBe(
+        true,
+      );
+      expect(
+        await prisma.authToken.count({
+          where: { userId: inv.id, usedAt: null },
+        }),
+      ).toBe(0);
+    } finally {
+      release();
+      await accepting;
+      if (changing) await changing;
+      spy.mockRestore();
+    }
+  }, 15_000);
+
+  it('cannot reset an equal-access peer by disabling, changing email and re-inviting', async () => {
+    const managerRole = await prisma.role.findFirstOrThrow({
+      where: { restaurantId: A.restaurantId, name: 'MANAGER_' + tag },
+    });
+    const response = await A.manager
+      .post('/api/v1/users')
+      .send({
+        name: 'Equal access peer',
+        email: 'peer-' + tag + '@example.com',
+        password: NEW_PASSWORD,
+        roleId: managerRole.id,
+        branchIds: [A.branchId],
+      })
+      .expect(201);
+    const id = (response.body as { id: string }).id;
+    await A.manager
+      .patch('/api/v1/users/' + id)
+      .send({ isActive: false })
+      .expect(200);
+    await A.manager
+      .patch('/api/v1/users/' + id)
+      .send({ email: 'replacement-peer-' + tag + '@example.com' })
+      .expect(403);
+    sent.length = 0;
+    await A.manager.post('/api/v1/users/' + id + '/invite').expect(403);
+    expect(sent).toHaveLength(0);
+    expect(
+      await prisma.authToken.count({ where: { userId: id, usedAt: null } }),
+    ).toBe(0);
+  });
+
+  it('blocks peer email takeover through the password-reset channel (#250)', async () => {
+    const managerRole = await prisma.role.findFirstOrThrow({
+      where: { restaurantId: A.restaurantId, name: 'MANAGER_' + tag },
+    });
+    const email = 'email-peer-' + tag + '@example.com';
+    const attackerEmail = 'redirected-peer-' + tag + '@example.com';
+    const response = await A.manager
+      .post('/api/v1/users')
+      .send({
+        name: 'Email peer',
+        email,
+        password: NEW_PASSWORD,
+        roleId: managerRole.id,
+        branchIds: [A.branchId],
+      })
+      .expect(201);
+    const id = (response.body as { id: string }).id;
+    const before = await prisma.user.findUniqueOrThrow({ where: { id } });
+    await A.manager
+      .patch('/api/v1/users/' + id)
+      .send({ name: 'Harmless name edit', email })
+      .expect(200);
+    await A.manager
+      .patch('/api/v1/users/' + id)
+      .send({ email: attackerEmail })
+      .expect(403);
+    sent.length = 0;
+    await http()
+      .post('/api/v1/auth/password-reset/request')
+      .send({ email: attackerEmail })
+      .expect(202);
+    await app.get(PasswordResetService).idle();
+    expect(sent).toHaveLength(0);
+    const after = await prisma.user.findUniqueOrThrow({ where: { id } });
+    expect(after.email).toBe(email);
+    expect(after.passwordHash).toBe(before.passwordHash);
+    expect(after.name).toBe('Harmless name edit');
   });
 
   it('needs an email to invite; the password flow is unchanged', async () => {

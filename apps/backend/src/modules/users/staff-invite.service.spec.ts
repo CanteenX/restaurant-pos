@@ -44,12 +44,13 @@ function setup(
     publicUrl?: string;
     actorKeys?: string[];
     actorActive?: boolean;
+    actorRole?: string;
   } = {},
 ) {
   const found = 'found' in opts ? opts.found : target();
   const tx = {
     user: {
-      findFirst: jest.fn().mockResolvedValue({ id: 'u2' }),
+      findFirst: jest.fn().mockResolvedValue({ id: 'u2', isActive: false }),
       update: jest.fn().mockResolvedValue({}),
     },
   };
@@ -58,7 +59,10 @@ function setup(
   const managerRow = {
     id: 'mgr',
     isActive: opts.actorActive ?? true,
-    role: role('MANAGER', opts.actorKeys ?? MANAGER.permissions),
+    role: role(
+      opts.actorRole ?? 'MANAGER',
+      opts.actorKeys ?? MANAGER.permissions,
+    ),
     permissionOverrides: [],
   };
   const prisma = {
@@ -144,6 +148,22 @@ describe('StaffInviteService', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
+  describe('initial onboarding', () => {
+    it('allows a newly-created account at the same permission ceiling', async () => {
+      const t = setup({
+        found: target({ role: role('MANAGER', MANAGER.permissions) }),
+      });
+      const createAccount = jest
+        .fn()
+        .mockResolvedValue({ id: 'u2', name: 'New peer' });
+      await expect(
+        t.svc.createAndInvite('r1', MANAGER, createAccount),
+      ).resolves.toEqual({ id: 'u2', name: 'New peer', inviteSent: true });
+      expect(createAccount).toHaveBeenCalledTimes(1);
+      expect(t.email.send).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('send', () => {
     it('emails a 72-hour link from PUBLIC_URL and audits without the address', async () => {
       const t = setup();
@@ -160,6 +180,7 @@ describe('StaffInviteService', () => {
         purpose: 'STAFF_INVITE',
         ttlMs: INVITE_TTL_MS,
         createdById: 'mgr',
+        expectedInactiveEmail: 'ravi@example.com',
       });
       expect(t.templates.forBranchAlways).toHaveBeenCalledWith(
         'b1',
@@ -204,6 +225,28 @@ describe('StaffInviteService', () => {
         );
         expect(t.tokens.issue).not.toHaveBeenCalled();
       }
+    });
+
+    it('an owner can re-invite an inactive owner', async () => {
+      const t = setup({
+        actorRole: 'OWNER',
+        found: target({ role: role('OWNER', []) }),
+      });
+      await expect(t.svc.send('r1', MANAGER, 'u2')).resolves.toEqual({
+        sent: true,
+      });
+      expect(t.email.send).toHaveBeenCalledTimes(1);
+    });
+
+    it('cannot reset an equal-access peer through an invite', async () => {
+      const t = setup({
+        found: target({ role: role('MANAGER', MANAGER.permissions) }),
+      });
+      await expect(t.svc.send('r1', MANAGER, 'u2')).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(t.tokens.issue).not.toHaveBeenCalled();
+      expect(t.email.send).not.toHaveBeenCalled();
     });
 
     it('judges the actor by their stored access, not the session (#229)', async () => {
@@ -297,6 +340,11 @@ describe('StaffInviteService', () => {
   });
 
   describe('inspect', () => {
+    it('rejects a link for an account that is already active', async () => {
+      const t = setup({ found: target({ isActive: true }) });
+      await expect(t.svc.inspect(TOKEN)).rejects.toThrow(BadRequestException);
+    });
+
     it('shows name, restaurant and role for a valid link only', async () => {
       const t = setup();
       await expect(t.svc.inspect(TOKEN)).resolves.toEqual({
@@ -310,6 +358,17 @@ describe('StaffInviteService', () => {
   });
 
   describe('accept', () => {
+    it('rejects a link after its account has been activated', async () => {
+      const t = setup();
+      t.tx.user.findFirst.mockResolvedValue({ id: 'u2', isActive: true });
+      await expect(t.svc.accept(TOKEN, 'NewPassword9')).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(t.tx.user.update).not.toHaveBeenCalled();
+      expect(t.sessions.disconnect).not.toHaveBeenCalled();
+      expect(t.audit.record).not.toHaveBeenCalled();
+    });
+
     it('sets the password, activates, ends old sessions and audits', async () => {
       const t = setup();
       await expect(t.svc.accept(TOKEN, 'NewPassword9')).resolves.toEqual({
@@ -330,6 +389,7 @@ describe('StaffInviteService', () => {
         expect.objectContaining({
           userId: 'u2',
           action: 'staff.invite.accepted',
+          metadata: { isActive: true },
         }),
       );
     });

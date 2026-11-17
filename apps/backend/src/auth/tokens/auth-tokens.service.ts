@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import type { AuthToken, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -19,6 +19,8 @@ export interface IssueTokenInput {
   purpose: AuthTokenPurpose;
   ttlMs: number;
   createdById?: string;
+  /** Invite issuance must still target the same inactive email under lock. */
+  expectedInactiveEmail?: string;
 }
 
 /** What a valid token stands for. */
@@ -52,6 +54,22 @@ export class AuthTokensService {
     // replaced, so a reset request cannot revoke a staff invite (#223).
     const row = await this.prisma.$transaction(async (tx) => {
       await this.lockUser(tx, input.userId);
+      if (input.expectedInactiveEmail !== undefined) {
+        const pending = await tx.user.findFirst({
+          where: {
+            id: input.userId,
+            restaurantId: input.restaurantId,
+            email: input.expectedInactiveEmail,
+            isActive: false,
+          },
+          select: { id: true },
+        });
+        if (!pending) {
+          throw new BadRequestException(
+            'The account changed. Send a new invite.',
+          );
+        }
+      }
       await tx.authToken.deleteMany({
         where: { userId: input.userId, purpose: input.purpose, usedAt: null },
       });
