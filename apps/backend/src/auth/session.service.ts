@@ -32,6 +32,15 @@ export class SessionService {
     return tokenVersion;
   }
 
+  /**
+   * Drops live sockets only. For callers that bumped tokenVersion inside
+   * their own transaction (password reset, invite accept) and run this
+   * after it commits.
+   */
+  disconnect(userId: string): void {
+    this.realtime.disconnectUser(userId);
+  }
+
   /** An admin signs a staff member of their own restaurant out everywhere. */
   async revokeForStaff(
     actor: { id: string },

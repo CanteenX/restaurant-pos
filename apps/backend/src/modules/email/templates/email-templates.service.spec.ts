@@ -77,6 +77,68 @@ describe('EmailTemplatesService.sendTest', () => {
   });
 });
 
+describe('EmailTemplatesService.forBranchAlways (auth emails)', () => {
+  const disabledCustom = {
+    subject: 'Custom {{user.name}}',
+    heading: 'Custom heading',
+    body: 'Custom body',
+    buttonText: 'Go',
+    buttonUrl: '{{reset.url}}',
+    footer: null,
+    enabled: false,
+  };
+  const withBranch = (row: unknown) => {
+    const t = makeService();
+    Object.assign(t.prisma, {
+      branch: {
+        findUnique: jest.fn().mockResolvedValue({
+          address: 'St 1',
+          restaurant: { id: 'r1', name: 'Alpha' },
+        }),
+      },
+    });
+    t.prisma.emailTemplate.findUnique.mockResolvedValue(row);
+    return t;
+  };
+  const values = {
+    'user.name': 'Ravi',
+    'reset.url': 'https://pos.example.com/reset-password#token=a.b',
+    'reset.expiresIn': '30 minutes',
+  };
+
+  it('forBranch returns null for a disabled template (unchanged)', async () => {
+    const { service } = withBranch(disabledCustom);
+    expect(await service.forBranch('b1', 'PASSWORD_RESET')).toBeNull();
+  });
+
+  it('never returns null: a disabled template falls back to the code default', async () => {
+    const { service } = withBranch(disabledCustom);
+    const compose = await service.forBranchAlways('b1', 'PASSWORD_RESET');
+    const mail = compose(values);
+    expect(mail.subject).toBe('Reset your password');
+    expect(mail.text).toContain(values['reset.url']);
+    expect(mail.text).not.toContain('Custom body');
+  });
+
+  it('uses an enabled custom template as is', async () => {
+    const { service } = withBranch({ ...disabledCustom, enabled: true });
+    const mail = (await service.forBranchAlways('b1', 'PASSWORD_RESET'))(
+      values,
+    );
+    expect(mail.subject).toBe('Custom Ravi');
+  });
+
+  it('is a 404 for a missing branch', async () => {
+    const { service, prisma } = withBranch(null);
+    (
+      prisma as unknown as { branch: { findUnique: jest.Mock } }
+    ).branch.findUnique.mockResolvedValue(null);
+    await expect(
+      service.forBranchAlways('nope', 'PASSWORD_RESET'),
+    ).rejects.toThrow(/Branch not found/);
+  });
+});
+
 describe('send-test request schema', () => {
   it('accepts no recipient from the client', () => {
     expect(emailTemplateTestSchema.safeParse({}).success).toBe(true);

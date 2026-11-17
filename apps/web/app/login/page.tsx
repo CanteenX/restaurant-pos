@@ -15,10 +15,15 @@ import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { useLogin } from "@/hooks/use-auth";
 import { ApiError } from "@/lib/api";
+import { usePasswordResetEnabled } from "@/hooks/use-password-reset";
+import { useI18n } from "@/lib/i18n/context";
 
 export default function LoginPage() {
   const router = useRouter();
   const login = useLogin();
+  const { t } = useI18n();
+  // Hidden unless this server can email reset links (#224).
+  const resetEnabled = usePasswordResetEnabled().data?.enabled === true;
   // Set once the server says this account uses two-factor authentication.
   const [needsCode, setNeedsCode] = useState(false);
   // Shown inline under the form (a toast vanishes before it can be read).
@@ -112,6 +117,14 @@ export default function LoginPage() {
             />
             {errors.password && (
               <p className="text-xs text-destructive">{errors.password.message}</p>
+            )}
+            {resetEnabled && (
+              <Link
+                href="/forgot-password"
+                className="self-end text-xs font-medium text-primary hover:underline"
+              >
+                {t("auth.login.forgot")}
+              </Link>
             )}
           </div>
 

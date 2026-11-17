@@ -35,3 +35,15 @@ footer and in the `List-Unsubscribe` / `List-Unsubscribe-Post` headers, RFC
 points at your server; it defaults to `http://localhost:1995`. Links expire
 after a year. Opting out sets the customer's marketing opt-out, so later
 campaigns skip them.
+
+## Password reset by email
+"Forgot password?" appears on the login page only when SMTP is configured
+**and** `PUBLIC_URL` is set to a plain `http(s)://` address. Reset links are
+always built from `PUBLIC_URL` (never from the request's Host header), work
+once and expire after 30 minutes; the token sits in the URL fragment, so it
+never reaches server logs. Requesting a reset answers the same for every
+address. Limits: 5 requests per 15 minutes per IP (`PASSWORD_RESET_IP_LIMIT`)
+and 3 emails per hour per account. Completing a reset signs the user out on
+every device; two-factor authentication stays on. The PASSWORD_RESET email is
+always sent: if a restaurant turns that template off, the built-in wording is
+used instead.

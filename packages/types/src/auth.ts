@@ -46,3 +46,27 @@ export const twoFactorDisableSchema = z.object({
   password: z.string().min(1),
   code: z.string().trim().min(6).max(20),
 });
+
+// --- Password reset by email (#224) -----------------------------------------
+
+/** The account password policy: the same rule as sign-up and staff create. */
+export const newPasswordSchema = z.string().min(8).max(200);
+
+export const passwordResetRequestSchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(200),
+});
+export type PasswordResetRequestDto = z.infer<typeof passwordResetRequestSchema>;
+
+/** A single-use link token: `<selector>.<verifier>` (backend auth/tokens). */
+export const authLinkTokenSchema = z
+  .string()
+  .trim()
+  .min(20)
+  .max(200)
+  .regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+
+export const passwordResetConfirmSchema = z.object({
+  token: authLinkTokenSchema,
+  password: newPasswordSchema,
+});
+export type PasswordResetConfirmDto = z.infer<typeof passwordResetConfirmSchema>;

@@ -310,6 +310,27 @@ export class EmailTemplatesService {
     return this.composerFor(ctx, key);
   }
 
+  /**
+   * Composer for emails that must always go out (password reset, staff
+   * invite): a restaurant turning the template off must never lock people
+   * out. A disabled custom template falls back to the code default wording,
+   * not to the disabled custom content.
+   */
+  async forBranchAlways(
+    branchId: string,
+    key: EmailTemplateKey,
+  ): Promise<EmailComposer> {
+    const ctx = await this.branchContext(branchId);
+    if (!ctx) throw new NotFoundException('Branch not found');
+    const composer = await this.composerFor(ctx, key);
+    if (composer) return composer;
+    // With an override the composer is never null.
+    return (await this.composerFor(ctx, key, {
+      ...EMAIL_TEMPLATE_DEFAULTS[key],
+      enabled: true,
+    })) as EmailComposer;
+  }
+
   private async previewComposer(
     restaurantId: string,
     key: EmailTemplateKey,

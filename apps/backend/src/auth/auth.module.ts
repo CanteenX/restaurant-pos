@@ -10,6 +10,9 @@ import { JwtStrategy } from './jwt.strategy';
 import { PasswordCheckService } from './password-check.service';
 import { SessionService } from './session.service';
 import { TwoFactorService } from './two-factor.service';
+import { PasswordResetController } from './password-reset.controller';
+import { PasswordResetService } from './password-reset.service';
+import { AuthTokensService } from './tokens/auth-tokens.service';
 
 @Module({
   imports: [
@@ -26,14 +29,21 @@ import { TwoFactorService } from './two-factor.service';
       }),
     }),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, PasswordResetController],
   providers: [
     AuthService,
     JwtStrategy,
     TwoFactorService,
     SessionService,
     PasswordCheckService,
+    AuthTokensService,
+    PasswordResetService,
   ],
-  exports: [AuthService, SessionService, PasswordCheckService],
+  exports: [
+    AuthService,
+    SessionService,
+    PasswordCheckService,
+    AuthTokensService,
+  ],
 })
 export class AuthModule {}

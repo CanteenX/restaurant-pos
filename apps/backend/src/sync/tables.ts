@@ -185,6 +185,8 @@ export const LOCAL_TABLES: Readonly<Record<string, string>> = {
   webhook_endpoints: 'signing secret sealed per install (G11)',
   staff_api_keys: 'bearer-token hashes stay on this machine',
   integration_api_keys: 'bearer-token hashes stay on this machine',
+  auth_tokens:
+    'single-use reset/invite link hashes are redeemed on the install that sent them',
   device_tokens: 'push tokens belong to the sending install',
   notifications: 'the bell belongs to this install',
   sync_peers: 'branch installs registered at this HQ, with key hashes',

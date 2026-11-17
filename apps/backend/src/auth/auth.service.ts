@@ -28,6 +28,7 @@ import {
   hasAnotherActiveOwner,
 } from '../common/last-owner';
 import { DUMMY_PASSWORD_HASH } from './dummy-hash';
+import { emailAccountQuery } from './account-lookup';
 import { TwoFactorService } from './two-factor.service';
 import {
   effectivePermissions,
@@ -161,10 +162,14 @@ export class AuthService {
     return this.issueSession(user);
   }
 
-  /** Email login: exactly one bcrypt compare, real hash or dummy. */
+  /**
+   * Email login through the shared resolver (account-lookup.ts, also used by
+   * password reset): exactly one bcrypt compare, against the resolved
+   * account or the dummy hash, however many restaurants share the address.
+   */
   private async findEmailCandidate(email: string, password: string) {
     const u = await this.prisma.user.findFirst({
-      where: { email, isActive: true },
+      ...emailAccountQuery(email),
       include: permissionInclude,
     });
     const ok = await bcrypt.compare(
