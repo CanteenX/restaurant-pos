@@ -121,6 +121,7 @@ export class AuthController {
     await this.authService.deleteOwnAccount(
       user.id,
       String(body?.password ?? ''),
+      req.ip ?? 'unknown',
     );
     this.clearSessionCookies(req, res);
     return { ok: true };
@@ -187,8 +188,14 @@ export class AuthController {
   twoFactorDisable(
     @CurrentUser() user: SessionUser,
     @Body() body: { password: string; code: string },
+    @Req() req: Request,
   ) {
-    return this.twoFactor.disable(user.id, body.password, body.code);
+    return this.twoFactor.disable(
+      user.id,
+      body.password,
+      body.code,
+      req.ip ?? 'unknown',
+    );
   }
 
   // An owner/admin unlocks a staff member who lost their authenticator.

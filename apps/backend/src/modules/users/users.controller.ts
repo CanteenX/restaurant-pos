@@ -7,9 +7,11 @@ import {
   Patch,
   Post,
   Put,
+  Req,
   UsePipes,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import type { Request } from 'express';
 import {
   createStaffSchema,
   departmentSchema,
@@ -53,8 +55,16 @@ export class UsersController {
     @CurrentUser() user: SessionUser,
     @Param('id') id: string,
     @Body() body: unknown,
+    @Req() req: Request,
   ) {
-    return this.usersService.update(user.restaurantId, user, id, body as never);
+    // The client address feeds the current-password rate limit (#236).
+    return this.usersService.update(
+      user.restaurantId,
+      user,
+      id,
+      body as never,
+      req.ip ?? 'unknown',
+    );
   }
 
   @Auth('users.manage')

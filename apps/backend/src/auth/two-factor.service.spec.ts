@@ -69,6 +69,7 @@ function setup(
     config as never,
     { record: jest.fn() } as never,
     sessions as never,
+    { verify: jest.fn().mockResolvedValue(true) } as never,
   );
   const codeAt = (offset = 0) =>
     hotp(base32Decode(secret), stepAt(Date.now()) + offset);
@@ -175,5 +176,30 @@ describe('TwoFactorService.adminReset', () => {
     );
     await svc.adminReset(OWNER_ACTOR, 'r1', 'u2');
     expect(sessions.revokeAll).toHaveBeenCalledWith('u2');
+  });
+});
+
+describe('TwoFactorService.disable password check (#236 review)', () => {
+  it('goes through the rate-limited checker and refuses a wrong password', async () => {
+    const row = { id: 'u1', twoFactorEnabled: true, passwordHash: 'h' };
+    const prisma = {
+      user: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(row),
+        update: jest.fn(),
+      },
+    };
+    const passwordCheck = { verify: jest.fn().mockResolvedValue(false) };
+    const svc = new TwoFactorService(
+      prisma as never,
+      { get: () => KEY, getOrThrow: () => KEY } as never,
+      { record: jest.fn() } as never,
+      { revokeAll: jest.fn() } as never,
+      passwordCheck as never,
+    );
+    await expect(
+      svc.disable('u1', 'guess', '123456', '4.4.4.4'),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(passwordCheck.verify).toHaveBeenCalledWith(row, 'guess', '4.4.4.4');
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 });

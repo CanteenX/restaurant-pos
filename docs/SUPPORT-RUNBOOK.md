@@ -66,15 +66,45 @@ docker compose logs --tail=100 postgres
 
 ## 4. Forgot password
 
-The backend has no self-service "forgot password" email flow. An owner or an
-administrator with the `users.manage` permission sets a new password:
+The backend has no self-service "forgot password" email flow yet (planned in #224).
+Someone with **strictly more access** than the staff member sets a new password.
+That is an owner, or a manager whose permissions include all of the staff member's
+permissions and at least one more. A peer at the same level cannot do it.
 
 1. Open the staff member's record in the app's staff page and set a new password (at least 8 characters).
    This calls `PATCH /api/v1/users/:id` (`apps/backend/src/modules/users/users.controller.ts`).
 2. Tell the staff member to sign in with email and the new password.
 
-If the owner's password is lost and nobody else can sign in, do not edit the
-database by hand. Escalate (see [What to collect](#what-to-collect-for-escalation)).
+Changing **your own** password through the same endpoint needs `currentPassword`. That
+check is limited like sign-in: 5 tries a minute per account and per address. After
+5 wrong passwords, these checks are locked for that account for 15 minutes. The lock
+also covers deleting your own account and turning off 2FA, but not sign-in. A
+backend restart clears it.
+
+### Owner password lost
+
+If there is another owner, they reset it on the staff page. If the only owner forgot
+their password, someone with **shell access to the server** runs:
+
+```sh
+# Docker install (from the folder with docker-compose.yml)
+docker compose exec backend node dist/src/system/reset-owner-password.cli.js --email owner@example.com
+
+# From a source checkout (DATABASE_URL set)
+pnpm --filter ./apps/backend run reset-owner-password -- --email owner@example.com
+```
+
+- It only works on an OWNER account.
+- It generates a new password and prints it once.
+- It signs that owner out of every device (`tokenVersion` + 1).
+- It writes an `owner.password_reset_cli` entry to the audit log. The password itself is never logged.
+- If the same email is an owner in more than one restaurant on the server, add `--restaurant <id>`.
+- Give the password to the owner over a private channel.
+- Do not edit the database by hand.
+
+The script does not clear two-factor. If the owner also lost their authenticator, they
+sign in with a recovery code. If they have no recovery code, escalate (see
+[What to collect](#what-to-collect-for-escalation)).
 
 ## 5. Forgot PIN or PIN login blocked
 
@@ -88,7 +118,8 @@ the lock counters are held in memory (`apps/backend/src/auth/failure-lockout.ts`
 
 ## 6. Two-factor (authenticator) lost
 
-An owner or administrator resets the staff member's two-factor setup:
+An owner, or a manager with strictly more access than the staff member, resets
+the staff member's two-factor setup:
 `POST /api/v1/auth/2fa/reset/:userId` (requires `users.manage`,
 `apps/backend/src/auth/auth.controller.ts`). The staff member then sets up
 the authenticator again at their next sign-in.

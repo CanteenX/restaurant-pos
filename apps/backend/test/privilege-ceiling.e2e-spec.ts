@@ -83,6 +83,13 @@ describe('Privilege ceiling (e2e)', () => {
       })
       .compile();
     app = mod.createNestApplication();
+    // Lets tests pick a client address (X-Forwarded-For) for the
+    // per-address password-check limit.
+    (
+      app.getHttpAdapter().getInstance() as {
+        set: (k: string, v: unknown) => void;
+      }
+    ).set('trust proxy', true);
     app.use(cookieParser());
     app.setGlobalPrefix('api', { exclude: [] });
     await app.init();
@@ -129,6 +136,7 @@ describe('Privilege ceiling (e2e)', () => {
     await makeUser('owner2', 'OWNER');
     await makeUser('selfie', 'STAFF_MGR');
     await makeUser('tempmgr', 'FULL_MGR');
+    await makeUser('guesser', 'STAFF_MGR');
     // tempmgr holds reports.access only until tomorrow.
     await prisma.userPermissionOverride.create({
       data: {
@@ -481,6 +489,13 @@ describe('Privilege ceiling (e2e)', () => {
       expect(rows).toBe(0);
     });
 
+    it('the holder of a temporary grant can still edit their own record', async () => {
+      await as.tempmgr
+        .patch(`/api/v1/users/${userId.tempmgr}`)
+        .send({ name: 'Temp manager', branchIds: [branchId] })
+        .expect(200);
+    });
+
     it('permanent permissions can still be granted', async () => {
       await as.tempmgr
         .put(`/api/v1/users/${userId.waiter}/permission-overrides`)
@@ -563,6 +578,32 @@ describe('Privilege ceiling (e2e)', () => {
     });
   });
 
+  describe('(g2) current-password guessing is rate limited (#236 review)', () => {
+    it('wrong guesses hit 429 within 5 tries, and then even the right password is refused', async () => {
+      // A distinct client address, so earlier tests' attempts don't count.
+      const ip = '10.236.0.1';
+      const guesser = await login('guesser');
+      const url = `/api/v1/users/${userId.guesser}`;
+      const statuses: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const res = await guesser
+          .patch(url)
+          .set('X-Forwarded-For', ip)
+          .send({ password: 'Brand-new123!', currentPassword: `guess-${i}` });
+        statuses.push(res.status);
+      }
+      expect(statuses.slice(0, 5)).toEqual([403, 403, 403, 403, 403]);
+      expect(statuses[5]).toBe(429);
+      await guesser
+        .patch(url)
+        .set('X-Forwarded-For', '10.236.0.2')
+        .send({ password: 'Brand-new123!', currentPassword: password })
+        .expect(429);
+      // The password was never changed.
+      await login('guesser');
+    });
+  });
+
   // Last: it disables one of the two owners.
   describe('(h) last-owner check under concurrency (#236)', () => {
     it('two owners disabling each other at once leaves one active owner', async () => {
@@ -586,6 +627,41 @@ describe('Privilege ceiling (e2e)', () => {
           where: { id: { in: ownerIds }, isActive: true },
         });
         expect(active).toBe(1);
+      }
+    });
+
+    it('an owner deleting their own account while disabling the other owner leaves one active owner', async () => {
+      const ownerIds = [userId.owner, userId.owner2];
+      const hash = await bcrypt.hash(password, 4);
+      // 4 rounds: the per-user password-check rate is 5 a minute.
+      for (let round = 0; round < 4; round++) {
+        // DELETE /auth/me scrambles the account; put it back each round.
+        await prisma.user.update({
+          where: { id: userId.owner },
+          data: { isActive: true, email: email('owner'), passwordHash: hash },
+        });
+        await prisma.user.update({
+          where: { id: userId.owner2 },
+          data: { isActive: true },
+        });
+        const a = await login('owner');
+        const ip = `10.236.1.${round}`;
+        const results = await Promise.all([
+          a
+            .delete('/api/v1/auth/me')
+            .set('X-Forwarded-For', ip)
+            .send({ password }),
+          a
+            .patch(`/api/v1/users/${userId.owner2}`)
+            .set('X-Forwarded-For', ip)
+            .send({ isActive: false }),
+        ]);
+        const active = await prisma.user.count({
+          where: { id: { in: ownerIds }, isActive: true },
+        });
+        expect({ round, active }).toEqual({ round, active: 1 });
+        // Exactly one of the two went through.
+        expect(results.filter((r) => r.status === 200)).toHaveLength(1);
       }
     });
   });

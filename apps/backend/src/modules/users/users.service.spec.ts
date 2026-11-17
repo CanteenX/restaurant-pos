@@ -1,4 +1,8 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+} from '@nestjs/common';
 import type { SessionUser } from '@nventra/types';
 import * as bcrypt from 'bcrypt';
 import { UsersService } from './users.service';
@@ -36,6 +40,7 @@ const USERS: Record<string, RoleKey> = {
   peer: 'STAFF_MGR',
   fullmgr: 'FULL_MGR',
   tempmgr: 'FULL_MGR',
+  deniedmgr: 'FULL_MGR',
   waiter: 'WAITER',
   high: 'HIGH',
 };
@@ -46,8 +51,15 @@ const TEMP_GRANT = {
   expiresAt: new Date(Date.now() + 86_400_000),
   permission: { key: 'reports.access' },
 };
-const OVERRIDES: Record<string, (typeof TEMP_GRANT)[]> = {
+const OVERRIDES: Record<
+  string,
+  { effect: string; expiresAt: Date | null; permission: { key: string } }[]
+> = {
   tempmgr: [TEMP_GRANT],
+  // A manager with one of their role's permissions denied.
+  deniedmgr: [
+    { effect: 'DENY', expiresAt: null, permission: { key: 'orders.create' } },
+  ],
 };
 const tempMgr = (): SessionUser => ({
   ...actor('tempmgr', 'FULL_MGR'),
@@ -110,12 +122,19 @@ function setup() {
       : Promise.resolve([]),
   );
   const sessions = { revokeAll: jest.fn() };
+  // Same answer as the real check, minus the rate limit (tested on its own).
+  const passwordCheck = {
+    verify: jest.fn((u: { passwordHash: string }, pw: string) =>
+      bcrypt.compare(pw, u.passwordHash),
+    ),
+  };
   const svc = new UsersService(
     prisma as never,
     { record: jest.fn() } as never,
     sessions as never,
+    passwordCheck as never,
   );
-  return { svc, prisma, sessions };
+  return { svc, prisma, sessions, passwordCheck };
 }
 
 const staffDto = (r: RoleKey) => ({
@@ -403,6 +422,63 @@ describe('UsersService #236 follow-ups', () => {
       expect(prisma.user.update).toHaveBeenCalled();
     });
 
+    it('the current-password check goes through the rate-limited checker, with the client address', async () => {
+      const { svc, prisma, passwordCheck } = setup();
+      await svc.update(
+        'rest',
+        me(),
+        'staffmgr',
+        { password: 'Another123!', currentPassword: 'Current123!' },
+        '7.7.7.7',
+      );
+      expect(passwordCheck.verify).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'staffmgr' }),
+        'Current123!',
+        '7.7.7.7',
+      );
+      expect(prisma.user.update).toHaveBeenCalled();
+    });
+
+    it('a locked-out checker (429) stops the change', async () => {
+      const { svc, prisma, passwordCheck } = setup();
+      const tooMany = new HttpException('Too many', 429);
+      passwordCheck.verify.mockRejectedValue(tooMany);
+      await expect(
+        svc.update('rest', me(), 'staffmgr', {
+          password: 'Another123!',
+          currentPassword: 'Current123!',
+        }),
+      ).rejects.toBe(tooMany);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('a user with a temporary GRANT can still edit their own name and password', async () => {
+      const { svc, prisma } = setup();
+      await svc.update('rest', tempMgr(), 'tempmgr', {
+        name: 'Temp',
+        password: 'Another123!',
+        currentPassword: 'Current123!',
+      });
+      expect(prisma.user.update).toHaveBeenCalled();
+    });
+
+    it('a user with a DENY override can still edit their own name', async () => {
+      const { svc, prisma } = setup();
+      const denied: SessionUser = {
+        ...actor('deniedmgr', 'FULL_MGR'),
+        permissions: ['users.manage'],
+      };
+      await svc.update('rest', denied, 'deniedmgr', { name: 'D' });
+      expect(prisma.user.update).toHaveBeenCalled();
+    });
+
+    it('…but still cannot change their own role', async () => {
+      const { svc } = setup();
+      await expect(
+        svc.update('rest', tempMgr(), 'tempmgr', { roleId: ROLES.HIGH.id }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
     it('the owner may change their own branches', async () => {
       const { svc, prisma } = setup();
       prisma.branch.count.mockResolvedValue(2);
@@ -421,7 +497,10 @@ describe('UsersService #236 follow-ups', () => {
       });
       expect(prisma.$queryRaw).toHaveBeenCalled();
       expect(prisma.user.count).not.toHaveBeenCalled();
-      expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function));
+      expect(prisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ timeout: expect.any(Number) }),
+      );
     });
 
     it('refuses when the locked rows show no other active owner', async () => {

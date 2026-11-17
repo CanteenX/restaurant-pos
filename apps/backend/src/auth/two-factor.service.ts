@@ -8,6 +8,7 @@ import * as bcrypt from 'bcrypt';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SessionService } from './session.service';
+import { PasswordCheckService } from './password-check.service';
 import {
   assertCanResetCredentials,
   ceilingUserInclude,
@@ -49,6 +50,7 @@ export class TwoFactorService {
     private readonly config: ConfigService,
     private readonly audit: AuditService,
     private readonly sessions: SessionService,
+    private readonly passwordCheck: PasswordCheckService,
   ) {}
 
   private get keyMaterial() {
@@ -216,13 +218,19 @@ export class TwoFactorService {
   }
 
   /** Turning it off needs the password AND a valid code (or recovery code). */
-  async disable(userId: string, password: string, code: string) {
+  async disable(
+    userId: string,
+    password: string,
+    code: string,
+    ip = 'unknown',
+  ) {
     const u = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
     });
     if (!u.twoFactorEnabled)
       throw new BadRequestException('Two-factor authentication is not on');
-    if (!(await bcrypt.compare(password, u.passwordHash)))
+    // Rate-limited and locked out like login (#236 review).
+    if (!(await this.passwordCheck.verify(u, password, ip)))
       throw new UnauthorizedException('Incorrect password');
     await this.verifyLogin(u, code);
     await this.clear(userId);

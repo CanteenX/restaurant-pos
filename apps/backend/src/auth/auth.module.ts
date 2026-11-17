@@ -7,6 +7,7 @@ import { AuditModule } from '../audit/audit.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
+import { PasswordCheckService } from './password-check.service';
 import { SessionService } from './session.service';
 import { TwoFactorService } from './two-factor.service';
 
@@ -26,7 +27,13 @@ import { TwoFactorService } from './two-factor.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, TwoFactorService, SessionService],
-  exports: [AuthService, SessionService],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    TwoFactorService,
+    SessionService,
+    PasswordCheckService,
+  ],
+  exports: [AuthService, SessionService, PasswordCheckService],
 })
 export class AuthModule {}

@@ -58,6 +58,7 @@ function setup(user: ReturnType<typeof makeUser> | null = makeUser()) {
     jwt as never,
     {} as never,
     audit as unknown as AuditService,
+    {} as never,
   );
   return { svc, prisma, jwt, audit };
 }
@@ -280,6 +281,7 @@ function loginSetup(user: ReturnType<typeof makeLoginUser> | null) {
     jwt as never,
     { verifyLogin: jest.fn() } as never,
     audit as unknown as AuditService,
+    {} as never,
   );
   return { svc };
 }

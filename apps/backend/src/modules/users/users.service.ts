@@ -17,6 +17,11 @@ import * as bcrypt from 'bcrypt';
 import { AuditService } from '../../audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SessionService } from '../../auth/session.service';
+import { PasswordCheckService } from '../../auth/password-check.service';
+import {
+  LAST_OWNER_TX_OPTIONS,
+  hasAnotherActiveOwner,
+} from '../../common/last-owner';
 import {
   OWNER_ROLE,
   assertCanAssignRole,
@@ -76,6 +81,7 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly sessions: SessionService,
+    private readonly passwordCheck: PasswordCheckService,
   ) {}
 
   list(restaurantId: string) {
@@ -161,6 +167,7 @@ export class UsersService {
     actor: SessionUser,
     id: string,
     dto: UpdateStaffDto,
+    ip = 'unknown',
   ) {
     const me = await loadCeilingActor(this.prisma, actor, restaurantId);
     const existing = await this.prisma.user.findFirst({
@@ -170,14 +177,19 @@ export class UsersService {
     if (!existing) {
       throw new NotFoundException('Staff account not found');
     }
-    // #229: editing (incl. disabling) needs at least the target's access;
-    // changing a role also needs the new role's access.
-    assertCanManage(me, existing);
     if (id === me.id) {
-      await this.assertSelfEditAllowed(me, existing, dto);
-    } else if (dto.password) {
+      // Your own record: the ceiling is not compared against yourself (a
+      // timed GRANT or a DENY would always look like "more access than you").
+      // Only the fields that carry privilege are restricted: role (below),
+      // active status and branches (assertSelfEditAllowed); overrides have
+      // their own endpoint, which refuses self-edits.
+      await this.assertSelfEditAllowed(me, existing, dto, ip);
+    } else {
+      // #229: editing someone (incl. disabling) needs at least their access;
+      // changing a role also needs the new role's access.
+      assertCanManage(me, existing);
       // #236: a password reset needs strictly more access than the target.
-      assertCanResetCredentials(me, existing);
+      if (dto.password) assertCanResetCredentials(me, existing);
     }
     const roleChanged = Boolean(dto.roleId) && dto.roleId !== existing.roleId;
     if (roleChanged) {
@@ -202,11 +214,11 @@ export class UsersService {
       (dto.isActive === false || roleChanged);
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      if (demotesOwner) {
-        await this.assertAnotherActiveOwner(
-          tx,
-          restaurantId,
-          id,
+      if (
+        demotesOwner &&
+        !(await hasAnotherActiveOwner(tx, restaurantId, id))
+      ) {
+        throw new BadRequestException(
           'Cannot disable or change the role of the last active owner',
         );
       }
@@ -231,7 +243,7 @@ export class UsersService {
         },
         select: SELECT,
       });
-    });
+    }, LAST_OWNER_TX_OPTIONS);
 
     // A new password or a disabled account ends every existing session.
     if (dto.password || dto.isActive === false) {
@@ -278,16 +290,14 @@ export class UsersService {
 
     try {
       await this.prisma.$transaction(async (tx) => {
-        if (existing.role.name === OWNER_ROLE) {
-          await this.assertAnotherActiveOwner(
-            tx,
-            restaurantId,
-            id,
-            'Cannot delete the last active owner',
-          );
+        if (
+          existing.role.name === OWNER_ROLE &&
+          !(await hasAnotherActiveOwner(tx, restaurantId, id))
+        ) {
+          throw new BadRequestException('Cannot delete the last active owner');
         }
         await tx.user.delete({ where: { id } });
-      });
+      }, LAST_OWNER_TX_OPTIONS);
     } catch (err) {
       // Order/Refund/PurchaseOrder/... all keep a required, non-cascading
       // reference to the staff member who created them, so history is never
@@ -508,11 +518,13 @@ export class UsersService {
    * not change their own active status or branches; their role is guarded
    * by `assertCanAssignRole` and their overrides by `setPermissionOverrides`.
    * Re-sending unchanged values is fine, so a full edit form still works.
+   * The current-password check is rate-limited and locks out like login.
    */
   private async assertSelfEditAllowed(
     me: CeilingActor,
     existing: UpdateTarget,
     dto: UpdateStaffDto,
+    ip: string,
   ) {
     if (dto.password) {
       if (!dto.currentPassword) {
@@ -520,9 +532,10 @@ export class UsersService {
           'Enter your current password to set a new one',
         );
       }
-      const ok = await bcrypt.compare(
+      const ok = await this.passwordCheck.verify(
+        existing,
         dto.currentPassword,
-        existing.passwordHash,
+        ip,
       );
       if (!ok) throw new ForbiddenException('Current password is incorrect');
     }
@@ -537,31 +550,6 @@ export class UsersService {
       throw new ForbiddenException(
         'You cannot change your own branch assignments',
       );
-    }
-  }
-
-  /**
-   * #236: the last-owner check and the write it guards run in ONE
-   * transaction. The active owner rows are locked (FOR UPDATE, in id order
-   * so two requests cannot deadlock), so a concurrent "disable the other
-   * owner" waits, then re-reads and sees the change.
-   */
-  private async assertAnotherActiveOwner(
-    tx: Prisma.TransactionClient,
-    restaurantId: string,
-    id: string,
-    message: string,
-  ) {
-    const owners = await tx.$queryRaw<{ id: string }[]>`
-      SELECT u."id" FROM "users" u
-      JOIN "roles" r ON r."id" = u."roleId"
-      WHERE u."restaurantId" = ${restaurantId}
-        AND u."isActive" = true
-        AND r."name" = ${OWNER_ROLE}
-      ORDER BY u."id"
-      FOR UPDATE OF u`;
-    if (!owners.some((o) => o.id !== id)) {
-      throw new BadRequestException(message);
     }
   }
 
