@@ -90,7 +90,7 @@ function setup(
         : undefined,
     ),
   };
-  const sessions = { revokeAll: jest.fn().mockResolvedValue(1) };
+  const sessions = { revokeAll: jest.fn().mockResolvedValue(1), disconnect: jest.fn() };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
   const svc = new StaffInviteService(
     prisma as never,
@@ -287,7 +287,10 @@ describe('StaffInviteService', () => {
       expect(await bcrypt.compare('NewPassword9', data.passwordHash)).toBe(
         true,
       );
-      expect(t.sessions.revokeAll).toHaveBeenCalledWith('u2');
+      // tokenVersion in the same transaction as password + claim (#244 review).
+      expect(data).toHaveProperty('tokenVersion', { increment: 1 });
+      expect(t.sessions.revokeAll).not.toHaveBeenCalled();
+      expect(t.sessions.disconnect).toHaveBeenCalledWith('u2');
       expect(t.audit.record).toHaveBeenCalledWith(
         expect.objectContaining({
           userId: 'u2',
@@ -305,7 +308,7 @@ describe('StaffInviteService', () => {
       await expect(t.svc.accept(TOKEN, 'short')).rejects.toThrow(
         BadRequestException,
       );
-      expect(t.sessions.revokeAll).not.toHaveBeenCalled();
+      expect(t.sessions.disconnect).not.toHaveBeenCalled();
     });
   });
 });

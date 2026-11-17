@@ -207,13 +207,18 @@ export class StaffInviteService {
         if (!user) throw new BadRequestException(INVALID_INVITE);
         await tx.user.update({
           where: { id: user.id },
-          data: { passwordHash, isActive: true },
+          data: {
+            passwordHash,
+            isActive: true,
+            // Committed with the password and the token claim (#244 review).
+            tokenVersion: { increment: 1 },
+          },
         });
         return user.id;
       },
     );
     if (!userId) throw new BadRequestException(INVALID_INVITE);
-    await this.sessions.revokeAll(userId);
+    this.sessions.disconnect(userId);
     await this.audit.record({
       userId,
       action: 'staff.invite.accepted',
