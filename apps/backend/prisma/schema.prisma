@@ -344,6 +344,7 @@ model User {
   refundsIssued Refund[]
   notifications Notification[] @relation("NotificationRecipient")
   deviceTokens  DeviceToken[]
+  authTokens    AuthToken[]
 
   purchaseOrdersCreated  PurchaseOrder[]  @relation("PurchaseOrderCreatedBy")
   goodsReceiptsReceived  GoodsReceipt[]   @relation("GoodsReceiptReceivedBy")
@@ -400,6 +401,26 @@ model StaffApiKey {
 
   @@index([userId])
   @@map("staff_api_keys")
+}
+
+// Single-use emailed links (#224 password reset, #223 staff invite). Only a
+// SHA-256 hash of the secret half of the token is stored; the link carries
+// `<id>.<secret>`. Stays on this install (sync LOCAL_TABLES).
+model AuthToken {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurantId String
+  purpose      String // PASSWORD_RESET | STAFF_INVITE
+  tokenHash    String
+  expiresAt    DateTime  @db.Timestamptz(3)
+  usedAt       DateTime? @db.Timestamptz(3)
+  createdById  String?
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, purpose])
+  @@index([expiresAt])
+  @@map("auth_tokens")
 }
 
 // A restaurant-issued credential for an EXTERNAL system (a partner
