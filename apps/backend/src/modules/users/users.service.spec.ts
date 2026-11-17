@@ -128,13 +128,19 @@ function setup() {
       bcrypt.compare(pw, u.passwordHash),
     ),
   };
+  const invites = {
+    assertAvailable: jest.fn(),
+    send: jest.fn().mockResolvedValue({ sent: true }),
+    dropPending: jest.fn().mockResolvedValue(0),
+  };
   const svc = new UsersService(
     prisma as never,
     { record: jest.fn() } as never,
     sessions as never,
     passwordCheck as never,
+    invites as never,
   );
-  return { svc, prisma, sessions, passwordCheck };
+  return { svc, prisma, sessions, passwordCheck, invites };
 }
 
 const staffDto = (r: RoleKey) => ({
@@ -517,5 +523,78 @@ describe('UsersService #236 follow-ups', () => {
       expect(prisma.user.update).not.toHaveBeenCalled();
       expect(prisma.user.delete).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('UsersService staff invites (#223)', () => {
+  const inviteDto = (r: RoleKey) => ({
+    name: 'Ravi',
+    email: 'ravi@example.com',
+    invite: true,
+    roleId: ROLES[r].id,
+    branchIds: ['b'],
+  });
+
+  it('creates an inactive account with no usable password and emails the invite', async () => {
+    const { svc, prisma, invites } = setup();
+    const me = actor('fullmgr', 'FULL_MGR');
+    const res = await svc.create('rest', me, inviteDto('WAITER'));
+    expect(invites.assertAvailable).toHaveBeenCalled();
+    const { data } = prisma.user.create.mock.calls[0][0] as {
+      data: { isActive: boolean; passwordHash: string };
+    };
+    expect(data.isActive).toBe(false);
+    expect(data.passwordHash).toMatch(/^\$2[aby]\$/);
+    expect(invites.send).toHaveBeenCalledWith('rest', me, 'new');
+    expect(res).toEqual(expect.objectContaining({ inviteSent: true }));
+  });
+
+  it('checks email setup before creating anything', async () => {
+    const { svc, prisma, invites } = setup();
+    invites.assertAvailable.mockImplementation(() => {
+      throw new Error('no smtp');
+    });
+    await expect(
+      svc.create('rest', actor('owner', 'OWNER'), inviteDto('WAITER')),
+    ).rejects.toThrow('no smtp');
+    expect(prisma.user.create).not.toHaveBeenCalled();
+  });
+
+  it('keeps the account when the email fails, reporting inviteSent: false', async () => {
+    const { svc, invites } = setup();
+    invites.send.mockRejectedValue(new Error('smtp down'));
+    const res = await svc.create(
+      'rest',
+      actor('owner', 'OWNER'),
+      inviteDto('WAITER'),
+    );
+    expect(res).toEqual(expect.objectContaining({ inviteSent: false }));
+  });
+
+  it('cannot invite into a role above the actor (#229)', async () => {
+    const { svc, prisma, invites } = setup();
+    await expect(
+      svc.create('rest', actor('staffmgr', 'STAFF_MGR'), inviteDto('HIGH')),
+    ).rejects.toThrow(ForbiddenException);
+    expect(prisma.user.create).not.toHaveBeenCalled();
+    expect(invites.send).not.toHaveBeenCalled();
+  });
+
+  it('disabling an account drops its pending invite', async () => {
+    const { svc, invites } = setup();
+    await svc.update('rest', actor('owner', 'OWNER'), 'waiter', {
+      isActive: false,
+    });
+    expect(invites.dropPending).toHaveBeenCalledWith('waiter');
+  });
+
+  it('the password-create path is unchanged (no invite sent)', async () => {
+    const { svc, invites, prisma } = setup();
+    await svc.create('rest', actor('owner', 'OWNER'), staffDto('WAITER'));
+    expect(invites.send).not.toHaveBeenCalled();
+    const { data } = prisma.user.create.mock.calls[0][0] as {
+      data: { isActive?: boolean };
+    };
+    expect(data.isActive).toBeUndefined();
   });
 });

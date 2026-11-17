@@ -6,6 +6,7 @@ import { toast } from "@/lib/toast";
 import { DepartmentsCard } from "@/components/settings/departments-card";
 import { StaffAccessDialog } from "@/components/settings/staff-access-dialog";
 import { AddStaffDialog } from "@/components/settings/add-staff-dialog";
+import { StaffInviteActions } from "@/components/settings/staff-invite-actions";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -120,7 +121,16 @@ export default function StaffPage() {
             <TableBody>
               {visible.map((member) => (
                 <TableRow key={member.id}>
-                  <TableCell className="font-medium text-foreground">{member.name}</TableCell>
+                  <TableCell className="font-medium text-foreground">
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      {member.name}
+                      {member.invitePendingUntil && (
+                        <Badge variant="outline" className="font-normal">
+                          {t("settings.staff.invitePending")}
+                        </Badge>
+                      )}
+                    </span>
+                  </TableCell>
                   <TableCell className="hidden text-muted-foreground md:table-cell">
                     {member.email || member.phone || "—"}
                   </TableCell>
@@ -156,7 +166,8 @@ export default function StaffPage() {
                   </TableCell>
                   <TableCell>
                     {member.id !== currentUser?.user.id && (
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex flex-wrap items-center justify-end gap-1">
+                        {canRevokeSessions && <StaffInviteActions member={member} />}
                         {canEditAccess && <StaffAccessDialog member={member} />}
                         <Button
                           variant="ghost"

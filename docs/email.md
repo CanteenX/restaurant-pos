@@ -47,3 +47,15 @@ and 3 emails per hour per account. Completing a reset signs the user out on
 every device; two-factor authentication stays on. The PASSWORD_RESET email is
 always sent: if a restaurant turns that template off, the built-in wording is
 used instead.
+
+## Staff invites
+With the same setup (SMTP and `PUBLIC_URL`), Add staff offers "Email an invite
+instead of setting a password". The account is created switched off; the
+STAFF_INVITE email carries a single-use link (72 hours) to `/accept-invite`
+where the person sets their password, which switches the account on. Staff
+management shows "Invite pending" with Resend (the old link stops working;
+3 emails per staff member per hour) and Revoke. Sending, resending and
+revoking need `users.manage` and stay within your own access: you cannot
+invite into, or act on, an account with more access than yours, and only an
+owner can act on an owner. Disabling an account cancels its pending invite.
+Like password reset, the invite email is sent even if its template is off.

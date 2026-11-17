@@ -44,6 +44,7 @@ const EXTRACTED_PATHS = [
   "components/operations",
   "app/forgot-password",
   "app/reset-password",
+  "app/accept-invite",
   "components/auth",
 ];
 

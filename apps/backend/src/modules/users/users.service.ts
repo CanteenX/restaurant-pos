@@ -14,7 +14,9 @@ import type {
 } from '@nventra/types';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 import { AuditService } from '../../audit/audit.service';
+import { StaffInviteService } from './staff-invite.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SessionService } from '../../auth/session.service';
 import { PasswordCheckService } from '../../auth/password-check.service';
@@ -82,14 +84,31 @@ export class UsersService {
     private readonly audit: AuditService,
     private readonly sessions: SessionService,
     private readonly passwordCheck: PasswordCheckService,
+    private readonly invites: StaffInviteService,
   ) {}
 
-  list(restaurantId: string) {
-    return this.prisma.user.findMany({
+  /** Staff list; `invitePendingUntil` is set while an invite link is live. */
+  async list(restaurantId: string) {
+    const users = await this.prisma.user.findMany({
       where: { restaurantId },
-      select: SELECT,
+      select: {
+        ...SELECT,
+        authTokens: {
+          where: {
+            purpose: 'STAFF_INVITE',
+            usedAt: null,
+            expiresAt: { gt: new Date() },
+          },
+          select: { expiresAt: true },
+          take: 1,
+        },
+      },
       orderBy: { createdAt: 'asc' },
     });
+    return users.map(({ authTokens, ...u }) => ({
+      ...u,
+      invitePendingUntil: authTokens[0]?.expiresAt.toISOString() ?? null,
+    }));
   }
 
   /**
@@ -134,7 +153,15 @@ export class UsersService {
       }
     }
 
-    const passwordHash = await bcrypt.hash(dto.password, 12);
+    // #223: an invited account starts inactive with a random, never-shared
+    // password; the emailed link sets the real one and activates it.
+    if (dto.invite) this.invites.assertAvailable();
+    const passwordHash = await bcrypt.hash(
+      dto.invite || !dto.password
+        ? randomBytes(32).toString('base64url')
+        : dto.password,
+      12,
+    );
     const user = await this.prisma.user.create({
       data: {
         restaurantId,
@@ -144,6 +171,7 @@ export class UsersService {
         roleId: dto.roleId,
         departmentId: dto.departmentId ?? undefined,
         passwordHash,
+        ...(dto.invite ? { isActive: false } : {}),
         branches: {
           create: dto.branchIds.map((branchId) => ({ branchId })),
         },
@@ -156,10 +184,21 @@ export class UsersService {
       action: 'staff.created',
       entity: 'User',
       entityId: user.id,
-      metadata: { name: user.name, email: user.email, roleId: user.roleId },
+      metadata: {
+        name: user.name,
+        email: user.email,
+        roleId: user.roleId,
+        invited: Boolean(dto.invite),
+      },
     });
 
-    return user;
+    if (!dto.invite) return user;
+    // The account exists either way; a failed email can be re-sent.
+    const inviteSent = await this.invites
+      .send(restaurantId, actor, user.id)
+      .then(() => true)
+      .catch(() => false);
+    return { ...user, inviteSent };
   }
 
   async update(
@@ -249,6 +288,8 @@ export class UsersService {
     if (dto.password || dto.isActive === false) {
       await this.sessions.revokeAll(id);
     }
+    // A disabled account must not be re-activated by an old invite link.
+    if (dto.isActive === false) await this.invites.dropPending(id);
 
     // Never log `dto.password`/`passwordHash` — only the fields it's safe
     // for an owner reviewing history to see. `passwordChanged` is a boolean
