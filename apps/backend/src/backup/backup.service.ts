@@ -31,6 +31,7 @@ import { notifyOwners } from './notify-owners';
 import { swapUploads, UploadsRollbackError } from './swap-uploads';
 import { extractVettedTarball, UnsafeArchiveError } from './safe-tar-extract';
 import { dumpDatabase, restoreDatabase } from './pg-exec';
+import { RestoreRoleService } from './restore-role';
 import {
   CHECKSUM_FILE,
   DB_FILE,
@@ -708,6 +709,9 @@ export class BackupService {
           throw err;
         }
       }
+      // Re-derive and reset the restore role right before every restore, so a
+      // tampered earlier restore cannot leave it with a password it chose.
+      await new RestoreRoleService(this.prisma).ensure();
       await restoreDatabase(dbDumpPath);
 
       if (extractedRoot) {

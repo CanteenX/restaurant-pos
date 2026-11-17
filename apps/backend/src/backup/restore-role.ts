@@ -49,6 +49,8 @@ export class RestoreRoleService implements OnApplicationBootstrap {
   }
 
   async ensure(): Promise<void> {
+    // An operator-managed restore role is theirs to provision.
+    if (process.env.DATABASE_RESTORE_URL) return;
     try {
       const rows = await this.prisma.$queryRawUnsafe<{ rolsuper: boolean }[]>(
         'SELECT rolsuper FROM pg_roles WHERE rolname = current_user',

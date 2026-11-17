@@ -69,6 +69,13 @@ describe('RestoreRoleService', () => {
     expect(all).toContain(deriveRestorePassword('dbpw'));
   });
 
+  it('leaves an operator-set DATABASE_RESTORE_URL role alone', async () => {
+    process.env.DATABASE_RESTORE_URL = 'postgresql://r:pw@db:5432/app';
+    const { svc, sql } = make(true);
+    await svc.ensure();
+    expect(sql).toHaveLength(0);
+  });
+
   it('does nothing when the app is not a superuser', async () => {
     const { svc, sql } = make(false);
     await svc.ensure();

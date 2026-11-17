@@ -1,4 +1,17 @@
-import { RestoreVetError, selectDataEntries } from './pg-restore-vet';
+import {
+  orderEntries,
+  RestoreVetError,
+  selectDataEntries,
+} from './pg-restore-vet';
+
+describe('orderEntries', () => {
+  it('loads parent tables first and sequence values last', () => {
+    const u = '1; 0 1 TABLE DATA public User x';
+    const o = '2; 0 2 TABLE DATA public Order x';
+    const s = '3; 0 0 SEQUENCE SET public Order_id_seq x';
+    expect(orderEntries([s, o, u], ['User', 'Order'])).toEqual([u, o, s]);
+  });
+});
 
 const TABLES = new Set(['Order', 'User']);
 const DATA = '3345; 0 16400 TABLE DATA public Order nventra';

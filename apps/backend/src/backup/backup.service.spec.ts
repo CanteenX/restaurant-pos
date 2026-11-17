@@ -11,6 +11,9 @@ import {
   sha256Hex,
 } from './backup-integrity';
 
+jest.mock('./restore-stream', () => ({
+  runStreamedRestore: jest.fn().mockResolvedValue(undefined),
+}));
 const execCalls: string[][] = [];
 jest.mock('node:child_process', () => ({
   ...jest.requireActual<object>('node:child_process'),
@@ -30,11 +33,13 @@ jest.mock('node:child_process', () => ({
     const stdout =
       cmd === 'pg_restore' && args.includes('-l')
         ? '3345; 0 16400 TABLE DATA public Order nventra'
-        : cmd === 'psql' && sql.includes('pg_has_role')
+        : cmd === 'psql' && sql.includes('AS unsafe')
           ? 'f'
-          : cmd === 'psql' && sql.includes('pg_tables')
+          : cmd === 'psql' && sql.includes('pg_tables WHERE schemaname')
             ? 'Order'
-            : '';
+            : cmd === 'psql' && sql.includes('count(*)')
+              ? '0'
+              : '';
     cb(null, { stdout, stderr: '' });
   },
 }));

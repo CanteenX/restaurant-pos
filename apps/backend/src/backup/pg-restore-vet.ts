@@ -62,3 +62,24 @@ export function selectDataEntries(
   }
   return allowed;
 }
+
+/**
+ * Orders allowed entries so parent tables load before the tables that
+ * reference them (pg_restore honours the order of a `-L` list). Sequence
+ * values go last. `loadOrder` is parents-first.
+ */
+export function orderEntries(
+  entries: readonly string[],
+  loadOrder: readonly string[],
+): string[] {
+  const rank = (line: string): number => {
+    const m = DATA_LINE.exec(line);
+    if (!m || m[2] !== 'TABLE DATA') return Number.MAX_SAFE_INTEGER;
+    const i = loadOrder.indexOf(m[4]);
+    return i === -1 ? loadOrder.length : i;
+  };
+  return entries
+    .map((line, idx) => ({ line, idx, r: rank(line) }))
+    .sort((a, b) => a.r - b.r || a.idx - b.idx)
+    .map((e) => e.line);
+}
