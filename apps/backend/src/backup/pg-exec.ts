@@ -1,48 +1,36 @@
 import { execFile } from 'node:child_process';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { promisify } from 'node:util';
+import { Logger } from '@nestjs/common';
 import {
   describeExecError,
   knownDbSecrets,
   pgEnvFromUrl,
   redactSecrets,
 } from './pg-env';
+import { selectDataEntries } from './pg-restore-vet';
+import { restoreConnectionUrl } from './restore-role';
 
 const execFileAsync = promisify(execFile);
-const TOC_MAX_BUFFER = 64 * 1024 * 1024;
+const logger = new Logger('PgRestore');
+const MAX_BUFFER = 64 * 1024 * 1024;
+const MAX_ERROR_CHARS = 500;
+export const UNSAFE_OPT_IN_ENV = 'NVENTRA_ALLOW_UNSAFE_SUPERUSER_RESTORE';
 
-/** Extensions and languages a restore may create; anything else is refused. */
-const ALLOWED_EXTENSIONS = new Set([
-  'plpgsql',
-  'pgcrypto',
-  'uuid-ossp',
-  'pg_trgm',
-  'citext',
-]);
-/** TOC entry types a restore must never contain. */
-const FORBIDDEN_TYPES = [
-  'PROCEDURAL LANGUAGE',
-  'EVENT TRIGGER',
-  'FOREIGN DATA WRAPPER',
-  'FOREIGN TABLE',
-  'SERVER',
-  'USER MAPPING',
-  'PUBLICATION',
-  'SUBSCRIPTION',
-  'ROLE',
-  'TRANSFORM',
-  'ACCESS METHOD',
-];
-const TOC_LINE = /^\d+;\s+\d+\s+\d+\s+(.+)$/;
-
-function connectionUrl(restore: boolean): string | undefined {
-  return restore
-    ? (process.env.DATABASE_RESTORE_URL ?? process.env.DATABASE_URL)
-    : process.env.DATABASE_URL;
-}
+/** True when the role could run code on the DB host or read/write its files. */
+const UNSAFE_ROLE_SQL =
+  "SELECT (r.rolsuper OR pg_has_role(current_user,'pg_execute_server_program','member') " +
+  "OR pg_has_role(current_user,'pg_write_server_files','member') " +
+  "OR pg_has_role(current_user,'pg_read_server_files','member')) AS unsafe " +
+  'FROM pg_roles r WHERE r.rolname = current_user';
+const APP_TABLES_SQL =
+  "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY 1";
 
 /** Runs a pg client binary with credentials in env (never argv) and a redacted error. */
 async function runPg(
-  cmd: 'pg_dump' | 'pg_restore',
+  cmd: 'pg_dump' | 'pg_restore' | 'psql',
   args: string[],
   url: string | undefined,
 ): Promise<string> {
@@ -50,76 +38,137 @@ async function runPg(
   try {
     const { stdout } = await execFileAsync(cmd, args, {
       env,
-      maxBuffer: TOC_MAX_BUFFER,
+      maxBuffer: MAX_BUFFER,
     });
     return String(stdout);
   } catch (err) {
+    const msg = redactSecrets(describeExecError(cmd, err), knownDbSecrets(url));
     throw new Error(
-      redactSecrets(describeExecError(cmd, err), knownDbSecrets(url)),
+      msg.length > MAX_ERROR_CHARS
+        ? `${msg.slice(0, MAX_ERROR_CHARS)}...`
+        : msg,
     );
   }
 }
 
-/**
- * Refuses a dump whose table of contents holds objects that can run code or
- * widen privileges (roles, untrusted languages, event triggers, FDWs,
- * unlisted extensions). Fails closed on an empty listing.
- */
-export function assertSafeToc(toc: string): void {
-  const entries = toc
-    .split('\n')
-    .map((l) => TOC_LINE.exec(l.trim())?.[1])
-    .filter((e): e is string => Boolean(e));
-  if (entries.length === 0) {
-    throw new Error('Backup database dump is empty or unreadable');
-  }
-  for (const entry of entries) {
-    const forbidden = FORBIDDEN_TYPES.find(
-      (t) => entry === t || entry.startsWith(`${t} `),
-    );
-    const ext = /^EXTENSION\s+\S+\s+(\S+)/.exec(entry)?.[1];
-    if (forbidden || (ext && !ALLOWED_EXTENSIONS.has(ext))) {
-      const what = forbidden ?? `EXTENSION ${ext}`;
-      throw new Error(
-        `Backup database dump rejected: object type ${what} is not allowed in a restore`,
-      );
-    }
-  }
-}
+const psql = (sql: string, url: string | undefined) =>
+  runPg(
+    'psql',
+    ['-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-c', sql],
+    url,
+  );
 
 export async function dumpDatabase(file: string): Promise<void> {
   await runPg(
     'pg_dump',
     ['--format=custom', '--file', file],
-    connectionUrl(false),
+    process.env.DATABASE_URL,
   );
 }
 
-/**
- * Restores `file` into the database. The TOC is vetted first, then the
- * restore runs in one transaction without ownership or ACLs. Set
- * DATABASE_RESTORE_URL to a non-superuser role to also remove the
- * code-execution ceiling of a superuser connection.
- */
-export async function restoreDatabase(file: string): Promise<void> {
-  const url = connectionUrl(true);
+async function assertRestoreRoleIsLimited(url: string | undefined) {
+  const out = (await psql(UNSAFE_ROLE_SQL, url)).trim();
+  if (out === 'f') return;
+  if (process.env[UNSAFE_OPT_IN_ENV] === '1') {
+    logger.warn(
+      `${UNSAFE_OPT_IN_ENV}=1: restoring as a role with superuser or server file/program privileges. This is DANGEROUS.`,
+    );
+    return;
+  }
+  throw new Error(
+    'Restore refused: the database role used for restores has superuser or ' +
+      'server file/program privileges. Use the limited "nventra_restore" role ' +
+      '(created automatically when the backend starts as a superuser) or set ' +
+      `DATABASE_RESTORE_URL to a limited role. ${UNSAFE_OPT_IN_ENV}=1 overrides ` +
+      'this and is dangerous.',
+  );
+}
+
+async function listAppTables(url: string | undefined): Promise<Set<string>> {
+  const out = await psql(APP_TABLES_SQL, url);
+  return new Set(
+    out
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean),
+  );
+}
+
+const truncateSql = (tables: Set<string>) =>
+  `TRUNCATE TABLE ${[...tables]
+    .filter((t) => t !== '_prisma_migrations')
+    .map((t) => `"${t.replace(/"/g, '""')}"`)
+    .join(', ')}`;
+
+/** Data-only, allow-listed, single-transaction restore of one dump file. */
+async function restoreDataFrom(
+  file: string,
+  url: string | undefined,
+  tables: Set<string>,
+): Promise<void> {
   const toc = await runPg('pg_restore', ['-l', file], url);
-  assertSafeToc(toc);
+  const entries = selectDataEntries(toc, tables);
+  const listFile = `${file}.list`;
+  await fs.writeFile(listFile, `${entries.join('\n')}\n`);
   const dbName = pgEnvFromUrl(url).PGDATABASE;
   if (!dbName) throw new Error('Database name missing from connection URL');
   await runPg(
     'pg_restore',
     [
-      '--clean',
-      '--if-exists',
-      '--no-owner',
-      '--no-privileges',
+      '--data-only',
       '--single-transaction',
       '--exit-on-error',
+      '--no-owner',
+      '--no-privileges',
+      '-L',
+      listFile,
       '--dbname',
       dbName,
       file,
     ],
     url,
   );
+}
+
+/**
+ * Restores the DATA of `file` into the live (already migrated) schema as the
+ * limited restore role. Nothing structural from the dump is ever executed.
+ * A data-only copy of the current database is taken first and put back if
+ * the restore fails after the tables were emptied.
+ */
+export async function restoreDatabase(file: string): Promise<void> {
+  const url = restoreConnectionUrl();
+  await assertRestoreRoleIsLimited(url);
+  const tables = await listAppTables(url);
+  // Vets the dump BEFORE any destructive step.
+  selectDataEntries(await runPg('pg_restore', ['-l', file], url), tables);
+
+  const safetyDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'nventra-pre-restore-'),
+  );
+  const safety = path.join(safetyDir, 'safety.dump');
+  await runPg(
+    'pg_dump',
+    ['--format=custom', '--data-only', '--file', safety],
+    url,
+  );
+  try {
+    await psql(truncateSql(tables), url);
+    await restoreDataFrom(file, url, tables);
+  } catch (err) {
+    try {
+      await psql(truncateSql(tables), url);
+      await restoreDataFrom(safety, url, tables);
+    } catch {
+      throw new Error(
+        `${(err as Error).message}. The previous data could NOT be put back automatically; ` +
+          `a data-only copy of it is preserved at ${safety}`,
+      );
+    }
+    await fs.rm(safetyDir, { recursive: true, force: true });
+    throw new Error(
+      `${(err as Error).message}. The previous data was put back.`,
+    );
+  }
+  await fs.rm(safetyDir, { recursive: true, force: true });
 }

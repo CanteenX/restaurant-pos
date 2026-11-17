@@ -26,10 +26,15 @@ jest.mock('node:child_process', () => ({
         .requireActual<typeof import('node:fs')>('node:fs')
         .writeFileSync(args[fileIdx + 1], 'DUMP-BYTES');
     }
+    const sql = args[args.length - 1];
     const stdout =
       cmd === 'pg_restore' && args.includes('-l')
         ? '3345; 0 16400 TABLE DATA public Order nventra'
-        : '';
+        : cmd === 'psql' && sql.includes('pg_has_role')
+          ? 'f'
+          : cmd === 'psql' && sql.includes('pg_tables')
+            ? 'Order'
+            : '';
     cb(null, { stdout, stderr: '' });
   },
 }));
