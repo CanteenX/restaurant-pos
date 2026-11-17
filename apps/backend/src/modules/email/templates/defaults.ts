@@ -57,9 +57,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: Readonly<
   RECEIPT: fields({
     subject: 'Your receipt from {{restaurant.name}}',
     heading: 'Thanks for your order, {{customer.name}}',
-    body: 'Order **{{order.number}}** on {{order.date}}\n\nTotal paid: **{{order.total}}**\n\nWe hope to see you again soon.',
-    buttonText: 'View receipt',
-    buttonUrl: '{{receipt.url}}',
+    body: 'Order **{{order.number}}** on {{order.date}}\n\n{{order.summary}}\n\n{{order.payment}}\n\n{{order.taxId}}\n\nWe hope to see you again soon.',
   }),
   STAFF_INVITE: fields({
     subject: "You're invited to join {{restaurant.name}}",
@@ -117,7 +115,11 @@ export const EMAIL_SAMPLE_DATA: Readonly<
     'order.number': '#1042',
     'order.date': '15 Nov 2026, 8:42 pm',
     'order.total': '₹1,250.00',
-    'receipt.url': 'https://pos.example.com/r/sample',
+    'order.summary':
+      '2 × Paneer Tikka: ₹600.00\n1 × Biryani: ₹650.00\n\nSubtotal: ₹1250.00\nTotal: ₹1250.00',
+    'order.payment': 'Paid by UPI: ₹1250.00',
+    'order.taxId': 'GSTIN: 29ABCDE1234F1Z5',
+    'receipt.url': '',
   },
   STAFF_INVITE: {
     ...COMMON_SAMPLE,

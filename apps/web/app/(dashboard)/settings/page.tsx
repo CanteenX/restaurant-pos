@@ -212,6 +212,7 @@ function GeneralSettingsForm({
   const [adjustValue, setAdjustValue] = useState(String(Math.abs(initialAdjust)));
   const [maxDiscount, setMaxDiscount] = useState(String(Number(restaurant.maxManualDiscountPercent ?? 100)));
   const [requireReason, setRequireReason] = useState(!!restaurant.requireDiscountReason);
+  const [digitalReceipts, setDigitalReceipts] = useState(!!restaurant.digitalReceiptsEnabled);
   const { t } = useI18n();
   const logoInputRef = useRef<HTMLInputElement>(null);
   const uploadLogo = useUploadRestaurantLogo();
@@ -254,6 +255,7 @@ function GeneralSettingsForm({
         onlinePriceAdjustValue: (adjustDir === "cheaper" ? -1 : 1) * Math.abs(Number(adjustValue) || 0),
         maxManualDiscountPercent: Math.min(Math.max(Number(maxDiscount) || 0, 0), 100),
         requireDiscountReason: requireReason,
+        digitalReceiptsEnabled: digitalReceipts,
       },
       {
         onSuccess: () => saveToast.success(t("settings.general.restaurantSaved")),
@@ -579,6 +581,19 @@ function GeneralSettingsForm({
               />
               {t("settings.general.discount.requireReason")}
             </label>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label className="flex min-h-11 items-start gap-2 text-sm text-foreground">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={digitalReceipts}
+                onChange={(e) => setDigitalReceipts(e.target.checked)}
+              />
+              {t("settings.general.digitalReceipts.label")}
+            </label>
+            <p className="text-xs text-muted-foreground">{t("settings.general.digitalReceipts.hint")}</p>
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

@@ -11,6 +11,8 @@ import { Label } from "@/components/ui/label";
 import { QueryError } from "@/components/ui/query-error";
 import { PaymentMethodButtons } from "@/components/pos/payment-method-buttons";
 import { CustomerPicker } from "@/components/pos/customer-picker";
+import { ReceiptEmailField, RECEIPT_EMAIL_PATTERN } from "@/components/pos/receipt-email-field";
+import { useReceiptEmailStatus, useResendReceiptEmail } from "@/hooks/use-receipt-email";
 import { SplitBillDialog } from "@/components/pos/split-bill-dialog";
 import { GatewayUpiQr } from "@/components/pos/gateway-upi-qr";
 import { useAvailableGateways, useOpenGatewayAttempt } from "@/hooks/use-payment-gateway";
@@ -144,6 +146,17 @@ export function CheckoutPanel({
     );
   const [completed, setCompleted] = useState<CheckoutResult | null>(null);
   const { data: settings } = useDisplaySettings(branchId);
+  const receiptsOn = !!settings?.restaurant.digitalReceiptsEnabled;
+  const [receiptEmail, setReceiptEmail] = useState(initialCustomer?.receiptEmail ?? "");
+  const [receiptConsent, setReceiptConsent] = useState(!!initialCustomer?.receiptEmail);
+  const canResendReceipt = hasPermission(me?.user, "bills.resendReceipt");
+  const receiptStatus = useReceiptEmailStatus(completed?.id ?? null, branchId, receiptsOn && !!completed);
+  const resendReceipt = useResendReceiptEmail(order.id, branchId);
+  const selectCustomer = (c: Customer | null) => {
+    setCustomer(c);
+    setReceiptEmail(c?.receiptEmail ?? "");
+    setReceiptConsent(!!c?.receiptEmail);
+  };
 
   // What the guest has typed in, as numbers. Once a payment has been taken the
   // server locks the figures, so these stop mattering (and are not sent).
@@ -268,8 +281,20 @@ export function CheckoutPanel({
     return attempt.current.id;
   };
 
+  // Digital receipt: the address goes with the payment only when the guest
+  // agreed; unticking a saved consent withdraws it.
+  const receiptAddress = receiptEmail.trim();
+  const receiptEmailBad = receiptsOn && receiptConsent && receiptAddress !== "" && !RECEIPT_EMAIL_PATTERN.test(receiptAddress);
+  const receiptDto: { receiptEmail?: string; receiptEmailConsent?: boolean } = !receiptsOn
+    ? {}
+    : receiptConsent && receiptAddress !== "" && !receiptEmailBad
+      ? { receiptEmail: receiptAddress, receiptEmailConsent: true }
+      : customer?.receiptEmail && !receiptConsent
+        ? { receiptEmailConsent: false }
+        : {};
+
   const handleCheckout = () => {
-    if (!bill || repricing || manualUpiHeld) return;
+    if (!bill || repricing || manualUpiHeld || receiptEmailBad) return;
     const payments =
       plan.applied > 0
         ? [
@@ -290,6 +315,7 @@ export function CheckoutPanel({
       payments,
       allowPartial: plan.partial || undefined,
       ...(overrideQr ? { overrideOpenGatewayQr: true } : {}),
+      ...receiptDto,
     };
     checkout.mutate(
       { orderId: order.id, dto: { ...dto, requestId: requestIdFor(dto) } },
@@ -349,6 +375,31 @@ export function CheckoutPanel({
           <p className="text-xs text-muted-foreground">
             {t("pos.checkout.pointsRedeemed", { count: completed.loyaltyPointsRedeemed })}
           </p>
+        )}
+        {receiptsOn && receiptStatus.data?.hasEmail && (
+          <div className="flex flex-col items-center gap-1 text-xs text-muted-foreground" data-testid="receipt-email-status">
+            <p>
+              {receiptStatus.data.status === "SENT"
+                ? t("pos.checkout.receiptEmail.sentTo", { email: receiptStatus.data.maskedEmail ?? "" })
+                : t("pos.checkout.receiptEmail.notSent", { email: receiptStatus.data.maskedEmail ?? "" })}
+            </p>
+            {canResendReceipt && (
+              <Button
+                variant="outline"
+                className="h-11"
+                disabled={resendReceipt.isPending}
+                onClick={() =>
+                  resendReceipt.mutate(undefined, {
+                    onSuccess: () => toast.success(t("pos.checkout.receiptEmail.resent")),
+                    onError: (err) =>
+                      toast.error(err instanceof ApiError ? err.message : t("pos.checkout.receiptEmail.resendFailed")),
+                  })
+                }
+              >
+                {t("pos.checkout.receiptEmail.resend")}
+              </Button>
+            )}
+          </div>
         )}
         <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
           <Button
@@ -504,7 +555,16 @@ export function CheckoutPanel({
         </div>
       )}
 
-      <CustomerPicker branchId={branchId} customer={customer} onSelect={setCustomer} />
+      <CustomerPicker branchId={branchId} customer={customer} onSelect={selectCustomer} />
+
+      {receiptsOn && (
+        <ReceiptEmailField
+          email={receiptEmail}
+          consent={receiptConsent}
+          onEmail={setReceiptEmail}
+          onConsent={setReceiptConsent}
+        />
+      )}
 
       <div className="grid grid-cols-2 gap-4">
         <div className="flex flex-col gap-2">

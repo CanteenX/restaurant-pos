@@ -179,6 +179,7 @@ export const LOCAL_TABLES: Readonly<Record<string, string>> = {
   integration_logs: 'delivery attempts made by this install',
   integration_outbox: 'delivery queue for this install’s connections',
   download_stats: 'install telemetry',
+  receipt_emails: 'delivery record of receipts this install emailed (#222)',
   permissions: 'seeded per install, matched by key (G5)',
   integration_connections: 'credentials sealed with this install’s key (G11)',
   webhook_endpoints: 'signing secret sealed per install (G11)',

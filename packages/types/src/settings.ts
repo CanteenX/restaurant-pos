@@ -36,6 +36,8 @@ export const restaurantSettingsSchema = z.object({
   onlinePriceAdjustValue: z.coerce.number().min(-100000).max(100000).optional(),
   maxManualDiscountPercent: z.coerce.number().min(0).max(100).optional(),
   requireDiscountReason: z.boolean().optional(),
+  // Email a digital receipt after payment to customers who gave an address and consent.
+  digitalReceiptsEnabled: z.boolean().optional(),
   // Expenses above this need expenses.approve sign-off; null turns approvals off.
   expenseApprovalThreshold: z.coerce.number().min(0).max(100000000).optional().nullable(),
 });

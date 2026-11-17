@@ -188,6 +188,10 @@ export const checkoutSchema = z.object({
   // the bill: the cashier confirmed the guest is paying another way. Audited;
   // if the QR is paid after all, that payment is flagged for review.
   overrideOpenGatewayQr: z.boolean().optional(),
+  // Digital receipt (#222): the address is used only when the guest agreed
+  // (receiptEmailConsent true). Without consent no email is ever sent.
+  receiptEmail: z.string().trim().toLowerCase().email().max(254).optional(),
+  receiptEmailConsent: z.boolean().optional(),
 });
 export type CheckoutDto = z.infer<typeof checkoutSchema>;
 

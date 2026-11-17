@@ -2014,5 +2014,16 @@
   "acct.petty.col.type": "Tipo",
   "acct.petty.col.amount": "Importe",
   "acct.petty.col.balance": "Saldo",
-  "acct.petty.empty": "Sin movimientos de caja chica en los últimos 30 días"
+  "acct.petty.empty": "Sin movimientos de caja chica en los últimos 30 días",
+  "settings.general.digitalReceipts.label": "Enviar un recibo digital por correo tras el pago",
+  "settings.general.digitalReceipts.hint": "Solo se envía a los clientes que dan un correo y aceptan al cobrar. Edita el texto en Ajustes > Plantillas de correo.",
+  "pos.checkout.receiptEmail.label": "Enviar el recibo a (opcional)",
+  "pos.checkout.receiptEmail.placeholder": "cliente@ejemplo.com",
+  "pos.checkout.receiptEmail.consent": "El cliente acepta recibir este recibo por correo",
+  "pos.checkout.receiptEmail.invalid": "Introduce un correo válido",
+  "pos.checkout.receiptEmail.sentTo": "Recibo enviado a {email}",
+  "pos.checkout.receiptEmail.notSent": "El recibo para {email} no se ha enviado",
+  "pos.checkout.receiptEmail.resend": "Reenviar recibo por correo",
+  "pos.checkout.receiptEmail.resent": "Recibo enviado",
+  "pos.checkout.receiptEmail.resendFailed": "No se pudo enviar el recibo"
 }
