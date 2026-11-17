@@ -71,7 +71,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: Readonly<
   PASSWORD_RESET: fields({
     subject: 'Reset your password',
     heading: 'Reset your password',
-    body: "Hi {{user.name}},\n\nWe received a request to reset your password. This link expires in {{reset.expiresIn}}.\n\nIf you didn't ask for this, you can safely ignore this email.",
+    body: "Hi {{user.name}},\n\nWe received a request to reset the password of your **{{restaurant.name}}** account. This link expires in {{reset.expiresIn}}.\n\nIf you didn't ask for this, you can safely ignore this email.",
     buttonText: 'Reset password',
     buttonUrl: '{{reset.url}}',
   }),

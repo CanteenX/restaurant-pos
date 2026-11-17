@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-member-access -- supertest bodies are untyped by design */
 // Password reset by email (#224): request, reset, sessions revoked, expired
 // and reused tokens rejected, enumeration-safe answers, per-IP limit, 2FA
 // kept. Runs against any migrated Postgres; creates and removes its own
@@ -38,6 +39,9 @@ describe('Password reset (e2e)', () => {
     off: `reset-off-${tag}@example.com`,
   };
   const ids: Record<string, string> = {};
+  const dupEmail = `dup-${tag}@example.com`;
+  const OTHER_PASSWORD = 'SecondPass99';
+  let otherRestaurantId: string;
   const savedUrl = process.env.PUBLIC_URL;
 
   const http = () => request(app.getHttpServer());
@@ -114,6 +118,43 @@ describe('Password reset (e2e)', () => {
       });
       ids[key] = u.id;
     }
+    // The same address, cased differently, in a second restaurant (#224 review).
+    const other = await prisma.restaurant.create({
+      data: { name: `Second Cafe ${tag}` },
+    });
+    otherRestaurantId = other.id;
+    const otherBranch = await prisma.branch.create({
+      data: { restaurantId: other.id, name: 'Main' },
+    });
+    const otherRole = await prisma.role.create({
+      data: {
+        restaurantId: other.id,
+        name: `CASHIER_${tag}`,
+        label: 'Cashier',
+      },
+    });
+    const dup = await prisma.user.create({
+      data: {
+        restaurantId,
+        roleId: role.id,
+        name: 'Dup in first',
+        email: dupEmail,
+        passwordHash,
+        branches: { create: { branchId: branch.id } },
+      },
+    });
+    const dup2 = await prisma.user.create({
+      data: {
+        restaurantId: other.id,
+        roleId: otherRole.id,
+        name: 'Dup in second',
+        email: dupEmail.toUpperCase(),
+        passwordHash: await bcrypt.hash(OTHER_PASSWORD, 4),
+        branches: { create: { branchId: otherBranch.id } },
+      },
+    });
+    ids.dup = dup.id;
+    ids.dup2 = dup2.id;
   });
 
   afterAll(async () => {
@@ -122,9 +163,11 @@ describe('Password reset (e2e)', () => {
     await prisma.auditLog.deleteMany({
       where: { userId: { in: Object.values(ids) } },
     });
-    await prisma.user.deleteMany({ where: { restaurantId } });
-    await prisma.role.deleteMany({ where: { restaurantId } });
-    await prisma.restaurant.delete({ where: { id: restaurantId } });
+    for (const id of [restaurantId, otherRestaurantId]) {
+      await prisma.user.deleteMany({ where: { restaurantId: id } });
+      await prisma.role.deleteMany({ where: { restaurantId: id } });
+      await prisma.restaurant.delete({ where: { id } });
+    }
     await app.close();
   });
 
@@ -234,6 +277,58 @@ describe('Password reset (e2e)', () => {
     const b = await prisma.user.findUniqueOrThrow({ where: { id: ids.b } });
     expect(b.twoFactorEnabled).toBe(true);
     expect(await bcrypt.compare(NEW_PASSWORD, b.passwordHash)).toBe(true);
+  });
+
+  it('same email in two restaurants (any case): one link each; login and reset agree', async () => {
+    sent.length = 0;
+    await askReset(`  ${dupEmail.replace('dup', 'DuP')}  `).expect(202);
+    await resets.idle();
+    expect(sent.map((m) => m.to).sort()).toEqual(
+      [dupEmail, dupEmail.toUpperCase()].sort(),
+    );
+    const forSecond = sent.find((m) => m.to === dupEmail.toUpperCase())!;
+    const forFirst = sent.find((m) => m.to === dupEmail)!;
+    expect(forSecond.text).toContain(`Second Cafe ${tag}`);
+    expect(forFirst.text).toContain(`Reset Bistro ${tag}`);
+
+    // Resetting the second restaurant's account changes only that one, and
+    // login (any case) then reaches it with the new password.
+    await http()
+      .post(`${BASE}/confirm`)
+      .send({ token: tokenFrom(forSecond), password: NEW_PASSWORD })
+      .expect(200);
+    const second = await login(dupEmail, NEW_PASSWORD).expect(201);
+    expect(second.body.user.restaurantId).toBe(otherRestaurantId);
+    const first = await login(dupEmail.toUpperCase(), password).expect(201);
+    expect(first.body.user.restaurantId).toBe(restaurantId);
+    await login(dupEmail, OTHER_PASSWORD).expect(401);
+  });
+
+  it('issuing is atomic and per purpose: parallel requests leave one live link; invites survive', async () => {
+    const tokens = app.get(AuthTokensService);
+    const invite = await tokens.issue({
+      userId: ids.dup,
+      restaurantId,
+      purpose: 'STAFF_INVITE',
+      ttlMs: 72 * 3600_000,
+    });
+    const issueReset = () =>
+      tokens.issue({
+        userId: ids.dup,
+        restaurantId,
+        purpose: 'PASSWORD_RESET',
+        ttlMs: 30 * 60_000,
+      });
+    await Promise.all([issueReset(), issueReset(), issueReset()]);
+    const live = await prisma.authToken.findMany({
+      where: { userId: ids.dup, usedAt: null },
+      select: { purpose: true },
+    });
+    expect(live.map((r) => r.purpose).sort()).toEqual([
+      'PASSWORD_RESET',
+      'STAFF_INVITE',
+    ]);
+    expect(await tokens.peek(invite.token, 'STAFF_INVITE')).not.toBeNull();
   });
 
   it('rejects malformed tokens at the boundary', async () => {

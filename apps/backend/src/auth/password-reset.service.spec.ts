@@ -6,6 +6,7 @@ import {
   RESET_PER_ACCOUNT_LIMIT,
   RESET_PER_IP_LIMIT,
 } from './password-reset.service';
+import { emailAccountQuery } from './account-lookup';
 
 const USER = {
   id: 'u1',
@@ -41,7 +42,7 @@ function setup(opts: Opts = {}) {
     },
   };
   const prisma = {
-    user: { findFirst: jest.fn().mockResolvedValue(user) },
+    user: { findMany: jest.fn().mockResolvedValue(user ? [user] : []) },
     userBranch: { findFirst: jest.fn().mockResolvedValue({ branchId: 'b1' }) },
     branch: { findFirst: jest.fn().mockResolvedValue({ id: 'b0' }) },
   };
@@ -71,7 +72,10 @@ function setup(opts: Opts = {}) {
   const config = {
     get: jest.fn((k: string) => (k === 'PUBLIC_URL' ? publicUrl : undefined)),
   };
-  const sessions = { revokeAll: jest.fn().mockResolvedValue(1) };
+  const sessions = {
+    revokeAll: jest.fn().mockResolvedValue(1),
+    disconnect: jest.fn(),
+  };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
   const svc = new PasswordResetService(
     prisma as never,
@@ -122,13 +126,8 @@ describe('PasswordResetService', () => {
       const res = await t.svc.request('Ravi@Example.com ', '1.1.1.1');
       await t.svc.idle();
       expect(res).toEqual({ ok: true });
-      expect(t.prisma.user.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            email: { equals: 'ravi@example.com', mode: 'insensitive' },
-            isActive: true,
-          },
-        }),
+      expect(t.prisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining(emailAccountQuery('Ravi@Example.com ')),
       );
       expect(t.tokens.issue).toHaveBeenCalledWith({
         userId: 'u1',
@@ -157,6 +156,35 @@ describe('PasswordResetService', () => {
       );
     });
 
+    it('same email in two restaurants: one link per account, each for its restaurant', async () => {
+      const t = setup();
+      const other = {
+        ...USER,
+        id: 'u2',
+        restaurantId: 'r2',
+        email: 'RAVI@example.com',
+      };
+      t.prisma.user.findMany.mockResolvedValue([USER, other]);
+      t.prisma.userBranch.findFirst
+        .mockResolvedValueOnce({ branchId: 'b1' })
+        .mockResolvedValueOnce({ branchId: 'b2' });
+      await t.svc.request('ravi@EXAMPLE.com', 'ip');
+      await t.svc.idle();
+      expect(
+        t.tokens.issue.mock.calls.map(
+          (c) => (c[0] as { userId: string }).userId,
+        ),
+      ).toEqual(['u1', 'u2']);
+      // The branch decides the restaurant named in each email.
+      expect(t.templates.forBranchAlways.mock.calls).toEqual([
+        ['b1', 'PASSWORD_RESET'],
+        ['b2', 'PASSWORD_RESET'],
+      ]);
+      expect(
+        t.email.send.mock.calls.map((c) => (c[0] as { to: string }).to),
+      ).toEqual(['ravi@example.com', 'RAVI@example.com']);
+    });
+
     it('falls back to the restaurant’s first branch for the template', async () => {
       const t = setup();
       t.prisma.userBranch.findFirst.mockResolvedValue(null);
@@ -182,9 +210,9 @@ describe('PasswordResetService', () => {
     it('answers before any lookup or SMTP work, so timing does not leak', async () => {
       const t = setup();
       let release!: () => void;
-      t.prisma.user.findFirst.mockReturnValue(
+      t.prisma.user.findMany.mockReturnValue(
         new Promise((r) => {
-          release = () => r(USER);
+          release = () => r([USER]);
         }),
       );
       await expect(t.svc.request(USER.email, 'ip')).resolves.toEqual({
@@ -202,7 +230,7 @@ describe('PasswordResetService', () => {
           ok: true,
         });
         await t.svc.idle();
-        expect(t.prisma.user.findFirst).not.toHaveBeenCalled();
+        expect(t.prisma.user.findMany).not.toHaveBeenCalled();
         expect(t.email.send).not.toHaveBeenCalled();
       }
     });
@@ -268,7 +296,11 @@ describe('PasswordResetService', () => {
       );
       // 2FA is kept: an emailed link must not remove the second factor.
       expect(data).not.toHaveProperty('twoFactorEnabled');
-      expect(t.sessions.revokeAll).toHaveBeenCalledWith('u1');
+      // Sessions end in the SAME transaction as the password change and the
+      // token claim; only the live-socket drop happens after the commit.
+      expect(data).toHaveProperty('tokenVersion', { increment: 1 });
+      expect(t.sessions.revokeAll).not.toHaveBeenCalled();
+      expect(t.sessions.disconnect).toHaveBeenCalledWith('u1');
       expect(t.audit.record).toHaveBeenCalledWith(
         expect.objectContaining({
           userId: 'u1',
@@ -277,12 +309,22 @@ describe('PasswordResetService', () => {
       );
     });
 
+    it('if the transaction fails, nothing is half-done', async () => {
+      const t = setup();
+      t.tx.user.update.mockRejectedValue(new Error('pool timeout'));
+      await expect(t.svc.confirm(TOKEN, 'NewPassword9')).rejects.toThrow(
+        'pool timeout',
+      );
+      expect(t.sessions.disconnect).not.toHaveBeenCalled();
+      expect(t.audit.record).not.toHaveBeenCalled();
+    });
+
     it('rejects an invalid, used or expired token with one generic error', async () => {
       const t = setup({ redeemOk: false });
       await expect(t.svc.confirm(TOKEN, 'NewPassword9')).rejects.toThrow(
         BadRequestException,
       );
-      expect(t.sessions.revokeAll).not.toHaveBeenCalled();
+      expect(t.sessions.disconnect).not.toHaveBeenCalled();
     });
 
     it('rejects a deactivated account', async () => {
@@ -291,7 +333,7 @@ describe('PasswordResetService', () => {
         BadRequestException,
       );
       expect(t.tx.user.update).not.toHaveBeenCalled();
-      expect(t.sessions.revokeAll).not.toHaveBeenCalled();
+      expect(t.sessions.disconnect).not.toHaveBeenCalled();
     });
 
     it('enforces the password policy', async () => {

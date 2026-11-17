@@ -15,8 +15,16 @@ import { EmailService } from '../modules/email/email.service';
 import { EmailTemplatesService } from '../modules/email/templates/email-templates.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SessionService } from './session.service';
+import { emailAccountQuery, normaliseEmail } from './account-lookup';
 import { AuthTokensService } from './tokens/auth-tokens.service';
 import { authLink, publicBaseUrl } from './tokens/public-url';
+
+interface AccountRecipient {
+  id: string;
+  restaurantId: string;
+  name: string;
+  email: string | null;
+}
 
 export const PASSWORD_RESET_TTL_MS = 30 * 60_000;
 const PASSWORD_RESET_EXPIRES_IN = '30 minutes';
@@ -80,7 +88,7 @@ export class PasswordResetService {
 
   /** Limits, then queues delivery; never waits for the lookup or SMTP. */
   private accept(rawEmail: string, ip: string): typeof OK {
-    const email = rawEmail.trim().toLowerCase();
+    const email = normaliseEmail(rawEmail);
     const ipWait = this.ipLimiter.hit(
       `ip:${ip}`,
       envLimit('PASSWORD_RESET_IP_LIMIT', RESET_PER_IP_LIMIT),
@@ -127,15 +135,17 @@ export class PasswordResetService {
         });
         // Throwing rolls the claim back; the generic text reveals nothing.
         if (!user) throw new BadRequestException(INVALID_LINK);
+        // Password, tokenVersion (every session ends) and the token claim
+        // commit together or not at all (#224 review).
         await tx.user.update({
           where: { id: user.id },
-          data: { passwordHash },
+          data: { passwordHash, tokenVersion: { increment: 1 } },
         });
         return user.id;
       },
     );
     if (!userId) throw new BadRequestException(INVALID_LINK);
-    await this.sessions.revokeAll(userId);
+    this.sessions.disconnect(userId);
     await this.audit.record({
       userId,
       action: 'auth.password_reset.completed',
@@ -150,18 +160,31 @@ export class PasswordResetService {
     void job.finally(() => this.pending.delete(job));
   }
 
+  /**
+   * One link per active account with this address (the same accounts login
+   * resolves, see account-lookup.ts). Each email is rendered for that
+   * account's restaurant, so it says which restaurant the link is for.
+   */
   private async deliver(email: string): Promise<void> {
+    const base = this.baseUrl;
+    if (!base) return;
+    let users: AccountRecipient[] = [];
     try {
-      const user = await this.prisma.user.findFirst({
-        where: {
-          email: { equals: email, mode: 'insensitive' },
-          isActive: true,
-        },
+      users = await this.prisma.user.findMany({
+        ...emailAccountQuery(email),
         select: { id: true, restaurantId: true, name: true, email: true },
-        orderBy: { createdAt: 'asc' },
       });
-      const base = this.baseUrl;
-      if (!user?.email || !base) return;
+    } catch (err) {
+      this.logFailure(err);
+    }
+    for (const user of users) {
+      await this.deliverTo(user, base);
+    }
+  }
+
+  private async deliverTo(user: AccountRecipient, base: string) {
+    try {
+      if (!user.email) return;
       const branchId = await this.branchFor(user.id, user.restaurantId);
       if (!branchId) return;
       const { token } = await this.tokens.issue({
@@ -187,11 +210,15 @@ export class PasswordResetService {
       });
       await this.email.send({ ...mail, to: user.email });
     } catch (err) {
-      // The error text can echo the address or the link: log only its kind.
-      this.logger.warn(
-        `Password reset email failed: ${err instanceof Error ? err.name : 'unknown error'}`,
-      );
+      this.logFailure(err);
     }
+  }
+
+  /** The error text can echo the address or the link: log only its kind. */
+  private logFailure(err: unknown) {
+    this.logger.warn(
+      `Password reset email failed: ${err instanceof Error ? err.name : 'unknown error'}`,
+    );
   }
 
   /** The user's first branch, else the restaurant's first (for branding). */

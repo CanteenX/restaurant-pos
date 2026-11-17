@@ -31,7 +31,8 @@ export interface TokenClaim {
 
 /**
  * Issues and redeems single-use link tokens (see auth-token.ts). Rules:
- *  - a new token invalidates every outstanding token of that user;
+ *  - a new token invalidates the user's outstanding tokens of the same
+ *    purpose (atomically: transaction + user row lock);
  *  - a token works once, before it expires, for its own purpose only;
  *  - redeeming invalidates the user's other outstanding tokens too.
  * The token itself is returned to the caller once and never stored or logged.
@@ -46,21 +47,27 @@ export class AuthTokensService {
     const now = Date.now();
     const secret = newTokenSecret();
     const expiresAt = new Date(now + input.ttlMs);
-    await this.prisma.authToken.deleteMany({
-      where: { userId: input.userId, usedAt: null },
-    });
-    await this.prisma.authToken.deleteMany({
-      where: { expiresAt: { lt: new Date(now - SWEEP_AFTER_MS) } },
-    });
-    const row = await this.prisma.authToken.create({
-      data: {
-        userId: input.userId,
-        restaurantId: input.restaurantId,
-        purpose: input.purpose,
-        tokenHash: hashSecret(secret),
-        expiresAt,
-        createdById: input.createdById ?? null,
-      },
+    // One transaction, serialised per user by a row lock: two parallel
+    // requests can never both leave a live link. Only the SAME purpose is
+    // replaced, so a reset request cannot revoke a staff invite (#223).
+    const row = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${input.userId} FOR UPDATE`;
+      await tx.authToken.deleteMany({
+        where: { userId: input.userId, purpose: input.purpose, usedAt: null },
+      });
+      await tx.authToken.deleteMany({
+        where: { expiresAt: { lt: new Date(now - SWEEP_AFTER_MS) } },
+      });
+      return tx.authToken.create({
+        data: {
+          userId: input.userId,
+          restaurantId: input.restaurantId,
+          purpose: input.purpose,
+          tokenHash: hashSecret(secret),
+          expiresAt,
+          createdById: input.createdById ?? null,
+        },
+      });
     });
     return { token: toLinkToken(row.id, secret), expiresAt };
   }

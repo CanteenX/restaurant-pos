@@ -28,6 +28,7 @@ import {
   hasAnotherActiveOwner,
 } from '../common/last-owner';
 import { DUMMY_PASSWORD_HASH } from './dummy-hash';
+import { emailAccountQuery } from './account-lookup';
 import { TwoFactorService } from './two-factor.service';
 import {
   effectivePermissions,
@@ -161,17 +162,24 @@ export class AuthService {
     return this.issueSession(user);
   }
 
-  /** Email login: exactly one bcrypt compare, real hash or dummy. */
+  /**
+   * Email login through the shared resolver (account-lookup.ts, also used by
+   * password reset): any case, oldest account first. The same address can
+   * exist in several restaurants; the password decides which one. No match
+   * still costs one bcrypt compare against the dummy hash.
+   */
   private async findEmailCandidate(email: string, password: string) {
-    const u = await this.prisma.user.findFirst({
-      where: { email, isActive: true },
+    const matches = await this.prisma.user.findMany({
+      ...emailAccountQuery(email),
       include: permissionInclude,
     });
-    const ok = await bcrypt.compare(
-      password,
-      u?.passwordHash ?? DUMMY_PASSWORD_HASH,
-    );
-    return u && ok ? u : null;
+    for (const u of matches) {
+      if (await bcrypt.compare(password, u.passwordHash)) return u;
+    }
+    if (matches.length === 0) {
+      await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
+    }
+    return null;
   }
 
   /** Phone-number login: compare real digits, then the password, against every active match. */

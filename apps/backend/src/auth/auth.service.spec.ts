@@ -12,6 +12,7 @@ import {
   PIN_IP_MAX_FAILURES,
 } from './auth.service';
 import { DUMMY_PASSWORD_HASH } from './dummy-hash';
+import { emailAccountQuery } from './account-lookup';
 import { FailureLockout } from './failure-lockout';
 
 // Real bcrypt, but cheap rounds (the dummy hash is cost 12) and a spy-able compare.
@@ -283,7 +284,7 @@ function loginSetup(user: ReturnType<typeof makeLoginUser> | null) {
     audit as unknown as AuditService,
     {} as never,
   );
-  return { svc };
+  return { svc, prisma };
 }
 
 describe('dummy hash', () => {
@@ -322,6 +323,33 @@ describe('AuthService.login timing', () => {
       svc.login({ email: 'asha@x.test', password: 'right-password' }),
     ).resolves.toMatchObject({ token: 'token' });
     expect(loginCompare).toHaveBeenCalledTimes(1);
+  });
+
+  it('email login uses the shared resolver (any case, every restaurant)', async () => {
+    const { svc, prisma } = loginSetup(known);
+    await svc.login({ email: 'ASHA@X.test', password: 'right-password' });
+    expect(prisma.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining(emailAccountQuery('asha@x.test')),
+    );
+    expect(prisma.user.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('same email in two restaurants: the password picks the account', async () => {
+    const a = { ...makeLoginUser(), id: 'ua', restaurantId: 'rA' };
+    const b = {
+      ...makeLoginUser(),
+      id: 'ub',
+      restaurantId: 'rB',
+      passwordHash: bcrypt.hashSync('b-password', 4),
+    };
+    const { svc, prisma } = loginSetup(a);
+    prisma.user.findMany.mockResolvedValue([a, b]);
+    const res = await svc.login({
+      email: 'Asha@x.test',
+      password: 'b-password',
+    });
+    expect(res.user).toMatchObject({ id: 'ub', restaurantId: 'rB' });
+    expect(hashesCompared()).toEqual([a.passwordHash, b.passwordHash]);
   });
 
   it('unknown phone: still compares once against the dummy hash', async () => {

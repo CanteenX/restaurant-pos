@@ -71,9 +71,14 @@ function fakePrisma() {
   };
   const prisma = {
     authToken,
+    $queryRaw: jest.fn().mockResolvedValue([{ id: 'locked' }]),
     $transaction: jest.fn((fn: (tx: unknown) => Promise<unknown>) =>
       fn(prisma),
     ),
+    /** Test helper: put back a snapshot (stands in for a rollback). */
+    restore: (snapshot: Row[]) => {
+      rows = snapshot;
+    },
   };
   return { prisma, rows: () => rows };
 }
@@ -110,7 +115,7 @@ describe('AuthTokensService', () => {
     expect(expiresAt.getTime()).toBe(NOW + 30 * MIN);
   });
 
-  it('a new token invalidates every outstanding token of that user', async () => {
+  it('a new token invalidates the user’s outstanding tokens of that purpose', async () => {
     const { svc, rows } = setup();
     const first = await issueReset(svc);
     await issueReset(svc, 'other-user');
@@ -121,6 +126,64 @@ describe('AuthTokensService', () => {
       null,
     );
     expect(await svc.redeem(second.token, 'PASSWORD_RESET', () => 'ok')).toBe(
+      'ok',
+    );
+  });
+
+  it('a reset request never revokes a staff invite (#223)', async () => {
+    const { svc } = setup();
+    const invite = await svc.issue({
+      userId: 'u1',
+      restaurantId: 'r1',
+      purpose: 'STAFF_INVITE',
+      ttlMs: 72 * 60 * MIN,
+    });
+    await issueReset(svc);
+    await issueReset(svc);
+    expect(await svc.redeem(invite.token, 'STAFF_INVITE', () => 'ok')).toBe(
+      'ok',
+    );
+  });
+
+  it('issues in one transaction, holding a lock on the user row', async () => {
+    const { svc, prisma } = setup();
+    const order: string[] = [];
+    prisma.$queryRaw.mockImplementation(() => {
+      order.push('lock');
+      return Promise.resolve([{ id: 'u1' }]);
+    });
+    prisma.authToken.deleteMany.mockImplementationOnce(() => {
+      order.push('delete');
+      return Promise.resolve({ count: 0 });
+    });
+    await issueReset(svc);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(order.slice(0, 2)).toEqual(['lock', 'delete']);
+    const lockSql = (prisma.$queryRaw.mock.calls[0][0] as string[]).join('?');
+    expect(lockSql).toMatch(/FROM "users" WHERE "id" = \? FOR UPDATE/);
+    expect(prisma.authToken.deleteMany).toHaveBeenCalledWith({
+      where: { userId: 'u1', purpose: 'PASSWORD_RESET', usedAt: null },
+    });
+  });
+
+  it('a failed insert leaves the earlier link usable (all or nothing)', async () => {
+    const { svc, prisma, rows } = setup();
+    const first = await issueReset(svc);
+    const snapshot = rows();
+    // Emulate rollback: the fake applies writes eagerly, so restore on throw.
+    prisma.$transaction.mockImplementationOnce(
+      async (fn: (tx: unknown) => Promise<unknown>) => {
+        try {
+          return await fn(prisma);
+        } catch (err) {
+          prisma.restore(snapshot);
+          throw err;
+        }
+      },
+    );
+    prisma.authToken.create.mockRejectedValueOnce(new Error('insert failed'));
+    await expect(issueReset(svc)).rejects.toThrow('insert failed');
+    expect(await svc.redeem(first.token, 'PASSWORD_RESET', () => 'ok')).toBe(
       'ok',
     );
   });
@@ -138,22 +201,18 @@ describe('AuthTokensService', () => {
     expect(apply).toHaveBeenCalledTimes(1);
   });
 
-  it('using a token invalidates the user’s other outstanding tokens', async () => {
+  it('using a token invalidates all the user’s other outstanding tokens', async () => {
     const { svc, rows } = setup();
-    const reset = await issueReset(svc);
-    // An invite issued by an admin after the reset request.
+    // The password is set either way, so any other live link is moot.
     await svc.issue({
       userId: 'u1',
       restaurantId: 'r1',
       purpose: 'STAFF_INVITE',
       ttlMs: 72 * 60 * MIN,
     });
-    expect(await svc.redeem(reset.token, 'PASSWORD_RESET', () => 1)).toBeNull();
-    const invite = rows().find((r) => r.purpose === 'STAFF_INVITE')!;
-    expect(invite).toBeDefined();
     const other = await issueReset(svc, 'u2');
-    const again = await issueReset(svc);
-    await svc.redeem(again.token, 'PASSWORD_RESET', () => 1);
+    const reset = await issueReset(svc);
+    await svc.redeem(reset.token, 'PASSWORD_RESET', () => 1);
     expect(rows().filter((r) => r.userId === 'u1' && !r.usedAt)).toEqual([]);
     expect(
       await svc.redeem(other.token, 'PASSWORD_RESET', () => 'still ok'),
