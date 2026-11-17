@@ -20,6 +20,7 @@ import {
   type EmailTemplateKey,
   type EmailTemplateUpdateDto,
   type EmailTemplateView,
+  type EmailTestRecipientView,
 } from '@nventra/types';
 import { KeyRateLimiter } from '../../../common/guards/key-rate-limiter';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -374,6 +375,25 @@ export class EmailTemplatesService {
         `Too many test emails. Try again in ${Math.ceil(wait / 60)} minute(s).`,
         HttpStatus.TOO_MANY_REQUESTS,
       );
+  }
+
+  /**
+   * Where a test email would go (the acting user's own address, or null when
+   * the account has none) and whether this server can send email at all, so
+   * the editor can show the address on the "Send test to my email" button.
+   */
+  async testRecipient(
+    restaurantId: string,
+    userId: string,
+  ): Promise<EmailTestRecipientView> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, restaurantId },
+      select: { email: true },
+    });
+    return {
+      email: user?.email?.trim().toLowerCase() || null,
+      configured: this.email.isConfigured(),
+    };
   }
 
   /** Sends the preview to the acting user's own account email. Rate-limited. */

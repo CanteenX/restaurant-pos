@@ -67,6 +67,14 @@ export class EmailTemplatesController {
     return this.templates.updateBranding(user.restaurantId, user.id, body);
   }
 
+  // Read-only: the caller's own address for the "Send test to my email" label.
+  // Declared before ':key' so it is not taken for a template key.
+  @Auth('settings.emailTemplates')
+  @Get('test-recipient')
+  testRecipient(@CurrentUser() user: SessionUser) {
+    return this.templates.testRecipient(user.restaurantId, user.id);
+  }
+
   @Auth('settings.emailTemplates')
   @Get(':key')
   get(

@@ -170,6 +170,13 @@ describe('Email templates (e2e)', () => {
     await staffA.post(`${BASE}/PASSWORD_RESET/preview`).send({}).expect(403);
     await staffA.post(`${BASE}/PASSWORD_RESET/test`).send({}).expect(403);
     await staffA.get(`${BASE}/branding`).expect(403);
+    await staffA.get(`${BASE}/test-recipient`).expect(403);
+  });
+
+  it("shows the caller's own address as the test recipient", async () => {
+    const res = await adminA.get(`${BASE}/test-recipient`).expect(200);
+    expect(res.body.email).toBe(`admin-alpha-${tag}@example.com`);
+    expect(typeof res.body.configured).toBe('boolean');
   });
 
   it('lists the 6 code defaults before anything is saved', async () => {

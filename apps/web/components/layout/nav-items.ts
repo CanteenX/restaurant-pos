@@ -57,3 +57,11 @@ export const NAV_ITEMS: NavItem[] = [
   { labelKey: "nav.attendance", href: "/attendance", icon: Clock },
   { labelKey: "nav.settings", href: "/settings", icon: Settings, permission: "settings.manage" },
 ];
+
+/**
+ * Sub-pages gated by a different permission than their nav entry. The layout
+ * checks these together with NAV_ITEMS (the longest matching href wins).
+ */
+export const EXTRA_ROUTE_GATES: { href: string; permission: string }[] = [
+  { href: "/settings/email-templates", permission: "settings.emailTemplates" },
+];
