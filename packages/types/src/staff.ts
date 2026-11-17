@@ -1,15 +1,51 @@
 import { z } from "zod";
+import { authLinkTokenSchema, newPasswordSchema } from "./auth";
 
-export const createStaffSchema = z.object({
-  name: z.string().min(1),
-  email: z.string().email().optional(),
-  phone: z.string().optional(),
-  password: z.string().min(8),
-  roleId: z.string().min(1),
-  branchIds: z.array(z.string()).min(1),
-  departmentId: z.string().min(1).nullable().optional(),
-});
+/**
+ * Either the owner sets a password now, or (#223) `invite: true` emails the
+ * new staff member a single-use link to set it themselves (needs an email).
+ */
+export const createStaffSchema = z
+  .object({
+    name: z.string().min(1),
+    email: z.string().email().optional(),
+    phone: z.string().optional(),
+    password: z.string().min(8).optional(),
+    invite: z.boolean().optional(),
+    roleId: z.string().min(1),
+    branchIds: z.array(z.string()).min(1),
+    departmentId: z.string().min(1).nullable().optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.invite && !v.email) {
+      ctx.addIssue({ code: "custom", path: ["email"], message: "An email address is needed to send an invite" });
+    }
+    if (v.invite && v.password) {
+      ctx.addIssue({ code: "custom", path: ["password"], message: "Leave the password empty when sending an invite" });
+    }
+    if (!v.invite && !v.password) {
+      ctx.addIssue({ code: "custom", path: ["password"], message: "Set a password or send an invite" });
+    }
+  });
 export type CreateStaffDto = z.infer<typeof createStaffSchema>;
+
+// --- Staff invites (#223) ----------------------------------------------------
+
+export const inviteTokenSchema = z.object({ token: authLinkTokenSchema });
+export type InviteTokenDto = z.infer<typeof inviteTokenSchema>;
+
+export const inviteAcceptSchema = z.object({
+  token: authLinkTokenSchema,
+  password: newPasswordSchema,
+});
+export type InviteAcceptDto = z.infer<typeof inviteAcceptSchema>;
+
+/** What the public accept-invite page shows before the password is set. */
+export interface InviteInfoView {
+  name: string;
+  restaurantName: string;
+  roleLabel: string;
+}
 
 export const updateStaffSchema = z.object({
   name: z.string().min(1).optional(),

@@ -14,7 +14,9 @@ import type {
 } from '@nventra/types';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 import { AuditService } from '../../audit/audit.service';
+import { StaffInviteService } from './staff-invite.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SessionService } from '../../auth/session.service';
 import { PasswordCheckService } from '../../auth/password-check.service';
@@ -82,14 +84,31 @@ export class UsersService {
     private readonly audit: AuditService,
     private readonly sessions: SessionService,
     private readonly passwordCheck: PasswordCheckService,
+    private readonly invites: StaffInviteService,
   ) {}
 
-  list(restaurantId: string) {
-    return this.prisma.user.findMany({
+  /** Staff list; `invitePendingUntil` is set while an invite link is live. */
+  async list(restaurantId: string) {
+    const users = await this.prisma.user.findMany({
       where: { restaurantId },
-      select: SELECT,
+      select: {
+        ...SELECT,
+        authTokens: {
+          where: {
+            purpose: 'STAFF_INVITE',
+            usedAt: null,
+            expiresAt: { gt: new Date() },
+          },
+          select: { expiresAt: true },
+          take: 1,
+        },
+      },
       orderBy: { createdAt: 'asc' },
     });
+    return users.map(({ authTokens, ...u }) => ({
+      ...u,
+      invitePendingUntil: authTokens[0]?.expiresAt.toISOString() ?? null,
+    }));
   }
 
   /**
@@ -134,32 +153,49 @@ export class UsersService {
       }
     }
 
-    const passwordHash = await bcrypt.hash(dto.password, 12);
-    const user = await this.prisma.user.create({
-      data: {
-        restaurantId,
-        name: dto.name,
-        email: dto.email,
-        phone: dto.phone,
-        roleId: dto.roleId,
-        departmentId: dto.departmentId ?? undefined,
-        passwordHash,
-        branches: {
-          create: dto.branchIds.map((branchId) => ({ branchId })),
+    // #223: an invited account starts inactive with a random, never-shared
+    // password; the emailed link sets the real one and activates it.
+    if (dto.invite) this.invites.assertAvailable();
+    const passwordHash = await bcrypt.hash(
+      dto.invite || !dto.password
+        ? randomBytes(32).toString('base64url')
+        : dto.password,
+      12,
+    );
+    const createAccount = async () => {
+      const user = await this.prisma.user.create({
+        data: {
+          restaurantId,
+          name: dto.name,
+          email: dto.email,
+          phone: dto.phone,
+          roleId: dto.roleId,
+          departmentId: dto.departmentId ?? undefined,
+          passwordHash,
+          ...(dto.invite ? { isActive: false } : {}),
+          branches: {
+            create: dto.branchIds.map((branchId) => ({ branchId })),
+          },
         },
-      },
-      select: SELECT,
-    });
+        select: SELECT,
+      });
 
-    await this.audit.record({
-      userId: actor.id,
-      action: 'staff.created',
-      entity: 'User',
-      entityId: user.id,
-      metadata: { name: user.name, email: user.email, roleId: user.roleId },
-    });
-
-    return user;
+      await this.audit.record({
+        userId: actor.id,
+        action: 'staff.created',
+        entity: 'User',
+        entityId: user.id,
+        metadata: {
+          name: user.name,
+          email: user.email,
+          roleId: user.roleId,
+          invited: Boolean(dto.invite),
+        },
+      });
+      return user;
+    };
+    if (!dto.invite) return createAccount();
+    return this.invites.createAndInvite(restaurantId, actor, createAccount);
   }
 
   async update(
@@ -222,7 +258,20 @@ export class UsersService {
           'Cannot disable or change the role of the last active owner',
         );
       }
-      return tx.user.update({
+      if (dto.email !== undefined && id !== me.id) {
+        // A login email is a recovery credential. Compare with its current
+        // value under the same lock used by token issue/redeem; a stale form
+        // must not turn an unchanged-email edit into a credential reset.
+        await tx.$queryRaw`SELECT "id" FROM "users"
+          WHERE "id" = ${id} AND "restaurantId" = ${restaurantId} FOR UPDATE`;
+        const current = await tx.user.findFirst({
+          where: { id, restaurantId },
+          include: updateTargetInclude,
+        });
+        if (!current) throw new NotFoundException('Staff account not found');
+        if (dto.email !== current.email) assertCanResetCredentials(me, current);
+      }
+      const user = await tx.user.update({
         where: { id },
         data: {
           name: dto.name,
@@ -243,6 +292,17 @@ export class UsersService {
         },
         select: SELECT,
       });
+      // The update locks the user row before touching tokens, matching issue
+      // and redeem. Commit identity/credential changes with link revocation,
+      // so an old recipient can never race an administrator's correction.
+      if (
+        dto.email !== undefined ||
+        dto.password ||
+        dto.isActive !== undefined
+      ) {
+        await tx.authToken.deleteMany({ where: { userId: id, usedAt: null } });
+      }
+      return user;
     }, LAST_OWNER_TX_OPTIONS);
 
     // A new password or a disabled account ends every existing session.

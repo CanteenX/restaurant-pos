@@ -47,3 +47,20 @@ and 3 emails per hour per account. Completing a reset signs the user out on
 every device; two-factor authentication stays on. The PASSWORD_RESET email is
 always sent: if a restaurant turns that template off, the built-in wording is
 used instead.
+
+## Staff invites
+With the same setup (SMTP and `PUBLIC_URL`), Add staff offers "Email an invite
+instead of setting a password". The account is created switched off; the
+STAFF_INVITE email carries a single-use link (72 hours) to `/accept-invite`
+where the person sets their password, which switches the account on. Staff
+management shows "Invite pending" with Resend (the old link stops working;
+3 emails per staff member per hour) and Revoke. All actions need
+`users.manage`. Initial account creation may invite within your own access.
+Sending or resending an invite for an existing account resets credentials,
+so it requires strictly more access than that account; an owner may invite
+anyone. Revoking stays within your own access, and only an owner can act on
+an owner. Changing another account's login email also requires the credential-reset
+ceiling; an unchanged email may accompany a harmless edit. Self-email editing
+keeps its existing behavior. Administrative email, password or active-status updates invalidate
+outstanding invite and reset links. Acceptance requires an inactive account.
+Like password reset, the invite email is sent even if its template is off.

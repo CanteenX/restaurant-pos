@@ -26,6 +26,7 @@ import {
 import { useBranch } from "@/hooks/use-branch";
 import { useCreateStaff, useDepartments, useStaffRoles } from "@/hooks/use-staff";
 import { ApiError } from "@/lib/api";
+import { usePasswordResetEnabled } from "@/hooks/use-password-reset";
 
 export function AddStaffDialog() {
   const { t } = useI18n();
@@ -34,6 +35,10 @@ export function AddStaffDialog() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
+  // #223: email a set-your-password link instead (needs SMTP + PUBLIC_URL,
+  // the same server flag that enables password reset).
+  const [invite, setInvite] = useState(false);
+  const canInvite = usePasswordResetEnabled().data?.enabled === true;
   const [roleId, setRoleId] = useState("");
   const [departmentId, setDepartmentId] = useState("");
   const { branches } = useBranch();
@@ -48,6 +53,7 @@ export function AddStaffDialog() {
     setEmail("");
     setPhone("");
     setPassword("");
+    setInvite(false);
     setRoleId("");
     setDepartmentId("");
     setBranchIds([]);
@@ -67,19 +73,29 @@ export function AddStaffDialog() {
       toast.error(t("settings.addStaff.selectBranch"));
       return;
     }
+    if (invite && !email) {
+      toast.error(t("settings.addStaff.inviteNeedsEmail"));
+      return;
+    }
     createStaff.mutate(
       {
         name,
         email: email || undefined,
         phone: phone || undefined,
-        password,
+        ...(invite ? { invite: true } : { password }),
         roleId,
         branchIds,
         departmentId: departmentId || undefined,
       },
       {
-        onSuccess: () => {
-          toast.success(t("settings.addStaff.added", { name }));
+        onSuccess: (created) => {
+          if (created.inviteSent === false) {
+            toast.error(t("settings.addStaff.inviteNotSent", { name }));
+          } else {
+            toast.success(
+              t(invite ? "settings.addStaff.invited" : "settings.addStaff.added", { name }),
+            );
+          }
           setOpen(false);
           reset();
         },
@@ -114,17 +130,34 @@ export function AddStaffDialog() {
             </div>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="s-password">{t("settings.addStaff.password")}</Label>
-            <PasswordInput
-              id="s-password"
-              
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              minLength={8}
-              required
-            />
-          </div>
+          {canInvite && (
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox
+                checked={invite}
+                onCheckedChange={(v) => setInvite(Boolean(v))}
+                aria-describedby="s-invite-hint"
+              />
+              <span className="flex flex-col gap-0.5">
+                {t("settings.addStaff.invite")}
+                <span id="s-invite-hint" className="text-xs text-muted-foreground">
+                  {t("settings.addStaff.inviteHint")}
+                </span>
+              </span>
+            </label>
+          )}
+
+          {!invite && (
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="s-password">{t("settings.addStaff.password")}</Label>
+              <PasswordInput
+                id="s-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                minLength={8}
+                required
+              />
+            </div>
+          )}
 
           <div className="flex flex-col gap-2">
             <Label>{t("settings.addStaff.role")}</Label>

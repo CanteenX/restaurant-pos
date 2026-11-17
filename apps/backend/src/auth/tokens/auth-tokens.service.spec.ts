@@ -71,6 +71,7 @@ function fakePrisma() {
   };
   const prisma = {
     authToken,
+    user: { findFirst: jest.fn().mockResolvedValue({ id: 'u1' }) },
     $queryRaw: jest.fn().mockResolvedValue([{ id: 'locked' }]),
     $transaction: jest.fn((fn: (tx: unknown) => Promise<unknown>) =>
       fn(prisma),
@@ -102,6 +103,50 @@ describe('AuthTokensService', () => {
     jest.useFakeTimers({ now: NOW });
   });
   afterEach(() => jest.useRealTimers());
+
+  it('refuses stale recipient data under the issuance user lock', async () => {
+    const { svc, prisma, rows } = setup();
+    prisma.user.findFirst.mockResolvedValue(null);
+    await expect(
+      svc.issue({
+        userId: 'u1',
+        restaurantId: 'r1',
+        purpose: 'STAFF_INVITE',
+        ttlMs: MIN,
+        expectedInactiveEmail: 'old@example.com',
+      }),
+    ).rejects.toThrow();
+    expect(rows()).toHaveLength(0);
+    expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.user.findFirst.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('checks the intended inactive recipient before creating its invite token', async () => {
+    const { svc, prisma } = setup();
+    await svc.issue({
+      userId: 'u1',
+      restaurantId: 'r1',
+      purpose: 'STAFF_INVITE',
+      ttlMs: MIN,
+      expectedInactiveEmail: 'pending@example.com',
+    });
+    expect(prisma.user.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: 'u1',
+        restaurantId: 'r1',
+        email: 'pending@example.com',
+        isActive: false,
+      },
+      select: { id: true },
+    });
+    expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.user.findFirst.mock.invocationCallOrder[0],
+    );
+    expect(prisma.user.findFirst.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.authToken.create.mock.invocationCallOrder[0],
+    );
+  });
 
   it('issues <id>.<secret> and stores only the secret hash', async () => {
     const { svc, rows } = setup();

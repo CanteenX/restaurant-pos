@@ -23,11 +23,16 @@ import { Auth } from '../../common/decorators/auth.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { UsersService } from './users.service';
+import { StaffInviteService } from './staff-invite.service';
+import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('users')
 @Controller('v1/users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly invites: StaffInviteService,
+  ) {}
 
   @Auth('users.manage')
   @Get()
@@ -71,6 +76,22 @@ export class UsersController {
   @Delete(':id')
   remove(@CurrentUser() user: SessionUser, @Param('id') id: string) {
     return this.usersService.remove(user.restaurantId, user, id);
+  }
+
+  // --- Staff invites (#223) ------------------------------------------------
+  // users.manage here, plus the #229 privilege ceiling in StaffInviteService.
+
+  @Auth('users.manage')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post(':id/invite')
+  sendInvite(@CurrentUser() user: SessionUser, @Param('id') id: string) {
+    return this.invites.send(user.restaurantId, user, id);
+  }
+
+  @Auth('users.manage')
+  @Delete(':id/invite')
+  revokeInvite(@CurrentUser() user: SessionUser, @Param('id') id: string) {
+    return this.invites.revoke(user.restaurantId, user, id);
   }
 
   // --- Departments ---------------------------------------------------------
