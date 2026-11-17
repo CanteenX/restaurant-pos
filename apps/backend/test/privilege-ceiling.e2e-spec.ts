@@ -39,6 +39,7 @@ describe('Privilege ceiling (e2e)', () => {
   let prisma: PrismaService;
   let restaurantId = '';
   let branchId = '';
+  let branch2Id = '';
   const roleId: Record<string, string> = {};
   const userId: Record<string, string> = {};
   const as: Record<string, Agent> = {};
@@ -82,6 +83,13 @@ describe('Privilege ceiling (e2e)', () => {
       })
       .compile();
     app = mod.createNestApplication();
+    // Lets tests pick a client address (X-Forwarded-For) for the
+    // per-address password-check limit.
+    (
+      app.getHttpAdapter().getInstance() as {
+        set: (k: string, v: unknown) => void;
+      }
+    ).set('trust proxy', true);
     app.use(cookieParser());
     app.setGlobalPrefix('api', { exclude: [] });
     await app.init();
@@ -124,8 +132,32 @@ describe('Privilege ceiling (e2e)', () => {
     await makeUser('fullmgr', 'FULL_MGR');
     await makeUser('waiter', 'WAITER');
     await makeUser('high', 'HIGH');
+    // #236 actors.
+    await makeUser('owner2', 'OWNER');
+    await makeUser('selfie', 'STAFF_MGR');
+    await makeUser('tempmgr', 'FULL_MGR');
+    await makeUser('guesser', 'STAFF_MGR');
+    // tempmgr holds reports.access only until tomorrow.
+    await prisma.userPermissionOverride.create({
+      data: {
+        userId: userId.tempmgr,
+        permissionId: permId.get('reports.access')!,
+        effect: 'GRANT',
+        expiresAt: new Date(Date.now() + 86_400_000),
+      },
+    });
+    branch2Id = (
+      await prisma.branch.create({ data: { restaurantId, name: 'Second' } })
+    ).id;
 
-    for (const who of ['owner', 'staffmgr', 'rolemgr', 'fullmgr']) {
+    for (const who of [
+      'owner',
+      'staffmgr',
+      'rolemgr',
+      'fullmgr',
+      'selfie',
+      'tempmgr',
+    ]) {
       as[who] = await login(who);
     }
   });
@@ -341,7 +373,7 @@ describe('Privilege ceiling (e2e)', () => {
         .expect(200);
       await as.staffmgr
         .patch(`/api/v1/users/${userId.peer}`)
-        .send({ password: 'NewPassword123!' })
+        .send({ name: 'Peer' })
         .expect(200);
     });
 
@@ -399,6 +431,238 @@ describe('Privilege ceiling (e2e)', () => {
       await as.owner
         .delete(`/api/v1/users/${(created.body as { id: string }).id}`)
         .expect(200);
+    });
+  });
+
+  // --- #236 follow-ups -----------------------------------------------------
+
+  describe('(e) a temporary grant cannot be made permanent (#236)', () => {
+    it('not through a new role', async () => {
+      const res = await as.tempmgr
+        .post('/api/v1/roles')
+        .send({
+          name: `TEMP_${tag}`,
+          label: 'Temp',
+          permissionKeys: ['reports.access'],
+        })
+        .expect(403);
+      expect(JSON.stringify(res.body)).toContain('reports.access');
+    });
+
+    it('not by adding it to an existing role', async () => {
+      await as.tempmgr
+        .patch(`/api/v1/roles/${roleId.WAITER}`)
+        .send({ permissionKeys: ['orders.create', 'reports.access'] })
+        .expect(403);
+    });
+
+    it('not by assigning a role that holds it', async () => {
+      await as.tempmgr
+        .patch(`/api/v1/users/${userId.waiter}`)
+        .send({ roleId: roleId.HIGH })
+        .expect(403);
+    });
+
+    it('not through an override, with or without an expiry', async () => {
+      const url = `/api/v1/users/${userId.waiter}/permission-overrides`;
+      await as.tempmgr
+        .put(url)
+        .send({
+          overrides: [{ permissionKey: 'reports.access', effect: 'GRANT' }],
+        })
+        .expect(400);
+      await as.tempmgr
+        .put(url)
+        .send({
+          overrides: [
+            {
+              permissionKey: 'reports.access',
+              effect: 'GRANT',
+              expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+            },
+          ],
+        })
+        .expect(400);
+      const rows = await prisma.userPermissionOverride.count({
+        where: { userId: userId.waiter },
+      });
+      expect(rows).toBe(0);
+    });
+
+    it('the holder of a temporary grant can still edit their own record', async () => {
+      await as.tempmgr
+        .patch(`/api/v1/users/${userId.tempmgr}`)
+        .send({ name: 'Temp manager', branchIds: [branchId] })
+        .expect(200);
+    });
+
+    it('permanent permissions can still be granted', async () => {
+      await as.tempmgr
+        .put(`/api/v1/users/${userId.waiter}/permission-overrides`)
+        .send({ overrides: [] })
+        .expect(200);
+    });
+  });
+
+  describe('(f) credential resets need strictly more access (#236)', () => {
+    it("a staff manager cannot reset a same-level peer's password, 2FA or sessions", async () => {
+      await as.staffmgr
+        .patch(`/api/v1/users/${userId.peer}`)
+        .send({ password: 'Hijacked123!' })
+        .expect(403);
+      await as.staffmgr
+        .post(`/api/v1/auth/2fa/reset/${userId.peer}`)
+        .expect(403);
+      await as.staffmgr
+        .post(`/api/v1/auth/sessions/revoke/${userId.peer}`)
+        .expect(403);
+    });
+
+    it('a manager with more access can still reset a lower user', async () => {
+      await as.fullmgr
+        .patch(`/api/v1/users/${userId.waiter}`)
+        .send({ password: 'Waiter123!!' })
+        .expect(200);
+    });
+
+    it('the 403 lists the missing permission keys', async () => {
+      const res = await as.staffmgr
+        .patch(`/api/v1/users/${userId.high}`)
+        .send({ name: 'x' })
+        .expect(403);
+      const body = JSON.stringify(res.body);
+      expect(body).toContain('missing: reports.access');
+      expect(body).not.toContain(userId.high);
+    });
+  });
+
+  describe('(g) self-edit (#236)', () => {
+    const me = () => `/api/v1/users/${userId.selfie}`;
+
+    it('cannot change own branches or active status', async () => {
+      await as.selfie
+        .patch(me())
+        .send({ branchIds: [branchId, branch2Id] })
+        .expect(403);
+      await as.selfie.patch(me()).send({ isActive: false }).expect(403);
+      const branches = await prisma.userBranch.count({
+        where: { userId: userId.selfie },
+      });
+      expect(branches).toBe(1);
+    });
+
+    it('can re-send unchanged branches with a name edit', async () => {
+      await as.selfie
+        .patch(me())
+        .send({ name: 'Selfie', branchIds: [branchId], isActive: true })
+        .expect(200);
+    });
+
+    it('changing own password needs the current password', async () => {
+      await as.selfie
+        .patch(me())
+        .send({ password: 'Brand-new123!' })
+        .expect(400);
+      await as.selfie
+        .patch(me())
+        .send({ password: 'Brand-new123!', currentPassword: 'Wrong-pass1!' })
+        .expect(403);
+      await as.selfie
+        .patch(me())
+        .send({ password: 'Brand-new123!', currentPassword: password })
+        .expect(200);
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: email('selfie'), password: 'Brand-new123!' })
+        .expect(201);
+    });
+  });
+
+  describe('(g2) current-password guessing is rate limited (#236 review)', () => {
+    it('wrong guesses hit 429 within 5 tries, and then even the right password is refused', async () => {
+      // A distinct client address, so earlier tests' attempts don't count.
+      const ip = '10.236.0.1';
+      const guesser = await login('guesser');
+      const url = `/api/v1/users/${userId.guesser}`;
+      const statuses: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const res = await guesser
+          .patch(url)
+          .set('X-Forwarded-For', ip)
+          .send({ password: 'Brand-new123!', currentPassword: `guess-${i}` });
+        statuses.push(res.status);
+      }
+      expect(statuses.slice(0, 5)).toEqual([403, 403, 403, 403, 403]);
+      expect(statuses[5]).toBe(429);
+      await guesser
+        .patch(url)
+        .set('X-Forwarded-For', '10.236.0.2')
+        .send({ password: 'Brand-new123!', currentPassword: password })
+        .expect(429);
+      // The password was never changed.
+      await login('guesser');
+    });
+  });
+
+  // Last: it disables one of the two owners.
+  describe('(h) last-owner check under concurrency (#236)', () => {
+    it('two owners disabling each other at once leaves one active owner', async () => {
+      const ownerIds = [userId.owner, userId.owner2];
+      for (let round = 0; round < 5; round++) {
+        await prisma.user.updateMany({
+          where: { id: { in: ownerIds } },
+          data: { isActive: true },
+        });
+        const [a, b] = [await login('owner'), await login('owner2')];
+        const results = await Promise.all([
+          a.patch(`/api/v1/users/${userId.owner2}`).send({ isActive: false }),
+          b.patch(`/api/v1/users/${userId.owner}`).send({ isActive: false }),
+        ]);
+        // One wins. The other is refused: 400 (last owner), or 401/403 if
+        // the winner disabled its account before it got that far.
+        const [ok, refused] = results.map((r) => r.status).sort();
+        expect(ok).toBe(200);
+        expect([400, 401, 403]).toContain(refused);
+        const active = await prisma.user.count({
+          where: { id: { in: ownerIds }, isActive: true },
+        });
+        expect(active).toBe(1);
+      }
+    });
+
+    it('an owner deleting their own account while disabling the other owner leaves one active owner', async () => {
+      const ownerIds = [userId.owner, userId.owner2];
+      const hash = await bcrypt.hash(password, 4);
+      // 4 rounds: the per-user password-check rate is 5 a minute.
+      for (let round = 0; round < 4; round++) {
+        // DELETE /auth/me scrambles the account; put it back each round.
+        await prisma.user.update({
+          where: { id: userId.owner },
+          data: { isActive: true, email: email('owner'), passwordHash: hash },
+        });
+        await prisma.user.update({
+          where: { id: userId.owner2 },
+          data: { isActive: true },
+        });
+        const a = await login('owner');
+        const ip = `10.236.1.${round}`;
+        const results = await Promise.all([
+          a
+            .delete('/api/v1/auth/me')
+            .set('X-Forwarded-For', ip)
+            .send({ password }),
+          a
+            .patch(`/api/v1/users/${userId.owner2}`)
+            .set('X-Forwarded-For', ip)
+            .send({ isActive: false }),
+        ]);
+        const active = await prisma.user.count({
+          where: { id: { in: ownerIds }, isActive: true },
+        });
+        expect({ round, active }).toEqual({ round, active: 1 });
+        // Exactly one of the two went through.
+        expect(results.filter((r) => r.status === 200)).toHaveLength(1);
+      }
     });
   });
 });

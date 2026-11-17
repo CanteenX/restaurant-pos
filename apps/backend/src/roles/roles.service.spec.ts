@@ -52,12 +52,71 @@ function setup() {
         Promise.resolve(where.key.in.map((key) => ({ id: `p-${key}`, key }))),
       ),
     },
-    user: { count: jest.fn().mockResolvedValue(0) },
+    user: {
+      count: jest.fn().mockResolvedValue(0),
+      // The actor is re-read from the DB (#236).
+      findFirst: jest.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(ACTOR_ROWS[where.id] ?? null),
+      ),
+    },
     $transaction: jest.fn().mockResolvedValue({ id: 'x' }),
   };
   const svc = new RolesService(prisma as never, { record: jest.fn() } as never);
   return { svc, prisma };
 }
+
+const grant = (key: string, expiresAt: Date | null = null) => ({
+  effect: 'GRANT',
+  expiresAt,
+  permission: { key },
+});
+const ACTOR_ROWS: Record<string, unknown> = {
+  rm: {
+    id: 'rm',
+    isActive: true,
+    role: ROLES[1],
+    permissionOverrides: [grant('orders.create')],
+  },
+  // Holds reports.access only until tomorrow.
+  tm: {
+    id: 'tm',
+    isActive: true,
+    role: ROLES[1],
+    permissionOverrides: [
+      grant('reports.access', new Date(Date.now() + 86_400_000)),
+    ],
+  },
+  o: { id: 'o', isActive: true, role: ROLES[0], permissionOverrides: [] },
+};
+const tempMgr: SessionUser = {
+  ...roleMgr,
+  id: 'tm',
+  permissions: ['roles.manage', 'reports.access'],
+};
+
+describe('RolesService temporary grants (#236)', () => {
+  it('cannot create a permanent role from a temporary grant', async () => {
+    const { svc, prisma } = setup();
+    await expect(
+      svc.create('rest', tempMgr, {
+        name: 'X',
+        label: 'X',
+        permissionKeys: ['reports.access'],
+      }),
+    ).rejects.toThrow(/missing: reports\.access/);
+    expect(prisma.role.create).not.toHaveBeenCalled();
+  });
+
+  it('cannot add a temporary grant to an existing role', async () => {
+    const { svc, prisma } = setup();
+    await expect(
+      svc.update('rest', tempMgr, 'r-low', {
+        permissionKeys: ['reports.access'],
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
 
 describe('RolesService privilege ceiling', () => {
   it('cannot create a role with a permission the actor lacks', async () => {

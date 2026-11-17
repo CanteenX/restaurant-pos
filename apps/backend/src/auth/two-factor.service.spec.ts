@@ -25,6 +25,17 @@ const STAFF_MGR_ACTOR = {
   permissions: ['users.manage'],
 };
 
+const actorRow = (id: string, name: string) => ({
+  id,
+  isActive: true,
+  role: ceilingRole(name, ['users.manage']),
+  permissionOverrides: [],
+});
+const ACTOR_ROWS: Record<string, unknown> = {
+  owner: actorRow('owner', 'OWNER'),
+  mgr: actorRow('mgr', 'STAFF_MGR'),
+};
+
 function setup(
   lastStep: number | null = null,
   updateCount = 1,
@@ -42,7 +53,10 @@ function setup(
     user: {
       updateMany: jest.fn().mockResolvedValue({ count: updateCount }),
       update: jest.fn().mockResolvedValue({}),
-      findFirst: jest.fn().mockResolvedValue(target),
+      // Actors are re-read from the DB (#236); anyone else is `target`.
+      findFirst: jest.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(ACTOR_ROWS[where.id] ?? target),
+      ),
     },
   };
   const sessions = { revokeAll: jest.fn().mockResolvedValue(1) };
@@ -55,6 +69,7 @@ function setup(
     config as never,
     { record: jest.fn() } as never,
     sessions as never,
+    { verify: jest.fn().mockResolvedValue(true) } as never,
   );
   const codeAt = (offset = 0) =>
     hotp(base32Decode(secret), stepAt(Date.now()) + offset);
@@ -134,13 +149,57 @@ describe('TwoFactorService.adminReset', () => {
     expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
-  it('a staff manager can reset a same-level user', async () => {
-    const { svc, sessions } = setup(
+  it('a staff manager cannot reset a same-level user (#236)', async () => {
+    const { svc, prisma, sessions } = setup(
       null,
       1,
       staffTarget('STAFF_MGR', ['users.manage']),
     );
+    await expect(svc.adminReset(STAFF_MGR_ACTOR, 'r1', 'u2')).rejects.toThrow(
+      /less access/,
+    );
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(sessions.revokeAll).not.toHaveBeenCalled();
+  });
+
+  it('a staff manager can reset a strictly lower user', async () => {
+    const { svc, sessions } = setup(null, 1, staffTarget('WAITER', []));
     await svc.adminReset(STAFF_MGR_ACTOR, 'r1', 'u2');
     expect(sessions.revokeAll).toHaveBeenCalledWith('u2');
+  });
+
+  it("the owner can reset another owner's 2FA", async () => {
+    const { svc, sessions } = setup(
+      null,
+      1,
+      staffTarget('OWNER', ['users.manage']),
+    );
+    await svc.adminReset(OWNER_ACTOR, 'r1', 'u2');
+    expect(sessions.revokeAll).toHaveBeenCalledWith('u2');
+  });
+});
+
+describe('TwoFactorService.disable password check (#236 review)', () => {
+  it('goes through the rate-limited checker and refuses a wrong password', async () => {
+    const row = { id: 'u1', twoFactorEnabled: true, passwordHash: 'h' };
+    const prisma = {
+      user: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(row),
+        update: jest.fn(),
+      },
+    };
+    const passwordCheck = { verify: jest.fn().mockResolvedValue(false) };
+    const svc = new TwoFactorService(
+      prisma as never,
+      { get: () => KEY, getOrThrow: () => KEY } as never,
+      { record: jest.fn() } as never,
+      { revokeAll: jest.fn() } as never,
+      passwordCheck as never,
+    );
+    await expect(
+      svc.disable('u1', 'guess', '123456', '4.4.4.4'),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(passwordCheck.verify).toHaveBeenCalledWith(row, 'guess', '4.4.4.4');
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 });

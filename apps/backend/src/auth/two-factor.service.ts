@@ -8,10 +8,11 @@ import * as bcrypt from 'bcrypt';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SessionService } from './session.service';
+import { PasswordCheckService } from './password-check.service';
 import {
-  assertCanManage,
+  assertCanResetCredentials,
   ceilingUserInclude,
-  type CeilingActor,
+  loadCeilingActor,
 } from '../common/privilege-ceiling';
 import {
   generateRecoveryCode,
@@ -49,6 +50,7 @@ export class TwoFactorService {
     private readonly config: ConfigService,
     private readonly audit: AuditService,
     private readonly sessions: SessionService,
+    private readonly passwordCheck: PasswordCheckService,
   ) {}
 
   private get keyMaterial() {
@@ -216,13 +218,19 @@ export class TwoFactorService {
   }
 
   /** Turning it off needs the password AND a valid code (or recovery code). */
-  async disable(userId: string, password: string, code: string) {
+  async disable(
+    userId: string,
+    password: string,
+    code: string,
+    ip = 'unknown',
+  ) {
     const u = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
     });
     if (!u.twoFactorEnabled)
       throw new BadRequestException('Two-factor authentication is not on');
-    if (!(await bcrypt.compare(password, u.passwordHash)))
+    // Rate-limited and locked out like login (#236 review).
+    if (!(await this.passwordCheck.verify(u, password, ip)))
       throw new UnauthorizedException('Incorrect password');
     await this.verifyLogin(u, code);
     await this.clear(userId);
@@ -237,7 +245,7 @@ export class TwoFactorService {
 
   /** Lets an owner/admin unlock a staff member who lost their device. */
   async adminReset(
-    actor: CeilingActor,
+    actor: { id: string },
     restaurantId: string,
     targetUserId: string,
   ) {
@@ -246,9 +254,11 @@ export class TwoFactorService {
       include: ceilingUserInclude,
     });
     if (!target) throw new BadRequestException('Staff member not found');
-    // #229: clearing 2FA is a step toward account takeover, so it is capped
-    // at the actor's own access (and an OWNER only by an OWNER).
-    assertCanManage(actor, target);
+    // #229/#236: clearing 2FA is a step toward account takeover, so it needs
+    // strictly more access than the target (an OWNER may reset anyone). That
+    // also stops a non-owner skipping the code check on their own 2FA.
+    const me = await loadCeilingActor(this.prisma, actor, restaurantId);
+    assertCanResetCredentials(me, target);
     await this.clear(targetUserId);
     // Whoever holds the lost device may still be signed in: end those sessions.
     await this.sessions.revokeAll(targetUserId);

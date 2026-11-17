@@ -19,6 +19,8 @@ export const updateStaffSchema = z.object({
   isActive: z.boolean().optional(),
   branchIds: z.array(z.string()).optional(),
   password: z.string().min(8).optional(),
+  // Required when you change your OWN password (#236); ignored otherwise.
+  currentPassword: z.string().min(1).max(200).optional(),
   departmentId: z.string().min(1).nullable().optional(),
 });
 export type UpdateStaffDto = z.infer<typeof updateStaffSchema>;

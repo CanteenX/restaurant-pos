@@ -12,11 +12,24 @@ const ACTOR = {
   permissions: ['users.manage'],
 };
 
+// The actor as re-read from the DB (#236).
+const ACTOR_ROW = {
+  id: 'actor',
+  isActive: true,
+  role: {
+    name: 'STAFF_MGR',
+    permissions: [{ permission: { key: 'users.manage' } }],
+  },
+  permissionOverrides: [],
+};
+
 function setup(found: unknown = target('WAITER', [])) {
   const prisma = {
     user: {
       update: jest.fn().mockResolvedValue({ tokenVersion: 1 }),
-      findFirst: jest.fn().mockResolvedValue(found),
+      findFirst: jest.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(where.id === 'actor' ? ACTOR_ROW : found),
+      ),
     },
   };
   const realtime = { disconnectUser: jest.fn() };
@@ -79,5 +92,19 @@ describe('SessionService', () => {
       expect(prisma.user.update).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     }
+  });
+
+  it('revokeForStaff refuses a same-level peer (#236)', async () => {
+    const { svc, prisma } = setup(target('STAFF_MGR', ['users.manage']));
+    await expect(svc.revokeForStaff(ACTOR, 'r1', 'u2')).rejects.toThrow(
+      /less access/,
+    );
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('revokeForStaff still lets you sign yourself out everywhere', async () => {
+    const { svc, prisma } = setup({ ...ACTOR_ROW });
+    await svc.revokeForStaff(ACTOR, 'r1', 'actor');
+    expect(prisma.user.update).toHaveBeenCalled();
   });
 });

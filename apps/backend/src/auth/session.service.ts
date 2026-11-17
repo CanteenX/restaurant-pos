@@ -3,9 +3,9 @@ import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import {
-  assertCanManage,
+  assertCanResetCredentials,
   ceilingUserInclude,
-  type CeilingActor,
+  loadCeilingActor,
 } from '../common/privilege-ceiling';
 
 /** "Log out of all devices": invalidates every JWT a user holds. */
@@ -34,7 +34,7 @@ export class SessionService {
 
   /** An admin signs a staff member of their own restaurant out everywhere. */
   async revokeForStaff(
-    actor: CeilingActor,
+    actor: { id: string },
     restaurantId: string,
     targetUserId: string,
   ) {
@@ -43,8 +43,13 @@ export class SessionService {
       include: ceilingUserInclude,
     });
     if (!target) throw new NotFoundException('Staff member not found');
-    // #229: no signing out someone with more access than you (or the owner).
-    assertCanManage(actor, target);
+    // #229/#236: signing someone else out everywhere is a credential reset,
+    // so it needs strictly more access than theirs (the owner: anyone).
+    // Signing yourself out everywhere is always allowed.
+    if (targetUserId !== actor.id) {
+      const me = await loadCeilingActor(this.prisma, actor, restaurantId);
+      assertCanResetCredentials(me, target);
+    }
     await this.revokeAll(targetUserId);
     await this.audit.record({
       userId: actor.id,

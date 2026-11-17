@@ -22,6 +22,11 @@ import * as bcrypt from 'bcrypt';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { FailureLockout } from './failure-lockout';
+import { PasswordCheckService } from './password-check.service';
+import {
+  LAST_OWNER_TX_OPTIONS,
+  hasAnotherActiveOwner,
+} from '../common/last-owner';
 import { DUMMY_PASSWORD_HASH } from './dummy-hash';
 import { TwoFactorService } from './two-factor.service';
 import {
@@ -54,6 +59,7 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly twoFactor: TwoFactorService,
     private readonly audit: AuditService,
+    private readonly passwordCheck: PasswordCheckService,
   ) {}
 
   private toSessionUser(user: {
@@ -81,39 +87,36 @@ export class AuthService {
    * stay, because tax records must be kept. The last active owner cannot do
    * this, or the restaurant would be locked out.
    */
-  async deleteOwnAccount(userId: string, password: string) {
+  async deleteOwnAccount(userId: string, password: string, ip = 'unknown') {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: { role: true },
     });
-    if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+    // Rate-limited and locked out like login (#236 review).
+    if (!user || !(await this.passwordCheck.verify(user, password, ip))) {
       throw new UnauthorizedException('Password is incorrect');
-    }
-    if (user.role.name === 'OWNER') {
-      const otherOwners = await this.prisma.user.count({
-        where: {
-          restaurantId: user.restaurantId,
-          isActive: true,
-          id: { not: user.id },
-          role: { name: 'OWNER' },
-        },
-      });
-      if (otherOwners === 0) {
-        throw new ConflictException(
-          'You are the only owner. Make someone else an owner first, or contact support to close the restaurant.',
-        );
-      }
     }
     const scrambled = await bcrypt.hash(
       `${userId}:${Date.now()}:${Math.random()}`,
       10,
     );
-    await this.prisma.$transaction([
-      this.prisma.deviceToken.deleteMany({ where: { userId } }),
-      this.prisma.notification.deleteMany({
+    // The last-owner check runs under the same row lock, in the same
+    // transaction, as the write (#236 review), so an owner closing their
+    // account while the other owner is being disabled cannot leave none.
+    await this.prisma.$transaction(async (tx) => {
+      if (
+        user.role.name === 'OWNER' &&
+        !(await hasAnotherActiveOwner(tx, user.restaurantId, user.id))
+      ) {
+        throw new ConflictException(
+          'You are the only owner. Make someone else an owner first, or contact support to close the restaurant.',
+        );
+      }
+      await tx.deviceToken.deleteMany({ where: { userId } });
+      await tx.notification.deleteMany({
         where: { recipientUserId: userId },
-      }),
-      this.prisma.user.update({
+      });
+      await tx.user.update({
         where: { id: userId },
         data: {
           name: 'Deleted user',
@@ -131,8 +134,8 @@ export class AuthService {
           twoFactorEnabled: false,
           twoFactorRecoveryHashes: [],
         },
-      }),
-    ]);
+      });
+    }, LAST_OWNER_TX_OPTIONS);
     return { ok: true };
   }
 

@@ -137,6 +137,8 @@ export default function StaffPage() {
                     <Switch
                       aria-label={t("settings.staff.activeAria", { name: member.name })}
                       checked={member.isActive}
+                      // Your own active status can't be changed here (#236).
+                      disabled={member.id === currentUser?.user.id}
                       onCheckedChange={(checked) =>
                         updateStaff.mutate(
                           { id: member.id, dto: { isActive: checked } },
