@@ -14,20 +14,23 @@ import {
 const execCalls: string[][] = [];
 jest.mock('node:child_process', () => ({
   ...jest.requireActual<object>('node:child_process'),
-  execFile: (
-    cmd: string,
-    args: string[],
-    cb: (err: Error | null, out: { stdout: string; stderr: string }) => void,
-  ) => {
+  execFile: (cmd: string, args: string[], ...rest: unknown[]) => {
+    const cb = rest[rest.length - 1] as (
+      err: Error | null,
+      out: { stdout: string; stderr: string },
+    ) => void;
     execCalls.push([cmd, ...args]);
     const fileIdx = args.indexOf('--file');
-    const done = () => cb(null, { stdout: '', stderr: '' });
     if (cmd === 'pg_dump' && fileIdx >= 0) {
       jest
         .requireActual<typeof import('node:fs')>('node:fs')
         .writeFileSync(args[fileIdx + 1], 'DUMP-BYTES');
     }
-    done();
+    const stdout =
+      cmd === 'pg_restore' && args.includes('-l')
+        ? '3345; 0 16400 TABLE DATA public Order nventra'
+        : '';
+    cb(null, { stdout, stderr: '' });
   },
 }));
 // No uploads directory, so only the db dump is in play.
@@ -149,6 +152,7 @@ describe('BackupService checksums', () => {
     const res = await service.restore(owner, 'b1', { confirm: 'RESTORE' });
     expect(res).toEqual({ ok: true, restoredFrom: 'b1' });
     expect(execCalls.some(([c]) => c === 'pg_restore')).toBe(true);
+    expect(execCalls.flat().join(' ')).not.toContain('postgresql://');
   });
 
   it('never runs pg_restore on a checksum mismatch and reports why', async () => {
