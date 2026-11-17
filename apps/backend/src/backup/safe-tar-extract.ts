@@ -6,7 +6,9 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 /** Default cap on the total uncompressed size of a restored archive. */
-export const DEFAULT_MAX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024 * 1024;
+export const DEFAULT_MAX_UNCOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024;
+const MAX_ENTRIES = 500_000;
+const MAX_BYTES_ENV = 'NVENTRA_RESTORE_MAX_UNCOMPRESSED_BYTES';
 const LIST_MAX_BUFFER = 256 * 1024 * 1024;
 
 /** Thrown when an archive is refused; the message is safe to show in the UI. */
@@ -42,22 +44,66 @@ async function list(archivePath: string, verbose: boolean): Promise<string[]> {
   }
 }
 
-function checkName(raw: string, expectedRoot: string): void {
+/** Attacker-controlled names are shown escaped and truncated, never raw. */
+function shown(raw: string): string {
+  const clean = [...raw]
+    .map((c) => (c.charCodeAt(0) < 0x20 || c.charCodeAt(0) > 0x7e ? '?' : c))
+    .join('');
+  return clean.length > 40 ? `${clean.slice(0, 40)}...` : clean;
+}
+
+/** Returns the path segments after validating the entry name. */
+function checkName(raw: string, expectedRoot: string): string[] {
   const hasControlChar = [...raw].some((c) => c.charCodeAt(0) < 0x20);
   if (hasControlChar || raw.includes('\\')) {
-    throw new UnsafeArchiveError(`unsafe characters in entry "${raw}"`);
+    throw new UnsafeArchiveError(`unsafe characters in entry "${shown(raw)}"`);
   }
   if (raw.startsWith('/') || /^[A-Za-z]:/.test(raw)) {
-    throw new UnsafeArchiveError(`absolute path "${raw}"`);
+    throw new UnsafeArchiveError(`absolute path "${shown(raw)}"`);
   }
   const segments = raw.split('/').filter((s) => s !== '' && s !== '.');
   if (segments.includes('..')) {
-    throw new UnsafeArchiveError(`path traversal in "${raw}"`);
+    throw new UnsafeArchiveError(`path traversal in "${shown(raw)}"`);
   }
   if (segments.length === 0 || segments[0] !== expectedRoot) {
     throw new UnsafeArchiveError(
-      `entry "${raw}" is not under the single expected root "${expectedRoot}"`,
+      `entry "${shown(raw)}" is not under the single expected root`,
     );
+  }
+  return segments;
+}
+
+function maxBytes(opts: ExtractOptions): number {
+  const fromEnv = Number(process.env[MAX_BYTES_ENV]);
+  if (opts.maxUncompressedBytes !== undefined) return opts.maxUncompressedBytes;
+  return Number.isFinite(fromEnv) && fromEnv > 0
+    ? fromEnv
+    : DEFAULT_MAX_UNCOMPRESSED_BYTES;
+}
+
+/**
+ * Requires the root to be a real directory and every node below it to be a
+ * regular file or directory, and normalises modes so a hostile `000` mode
+ * cannot make the later copy fail halfway through a restore.
+ */
+async function validateAndNormalise(dir: string, isRoot: boolean) {
+  const st = await fs.lstat(dir);
+  if (!st.isDirectory()) {
+    throw new UnsafeArchiveError(
+      isRoot ? 'the top-level entry is not a directory' : 'unexpected entry',
+    );
+  }
+  await fs.chmod(dir, 0o755);
+  for (const name of await fs.readdir(dir)) {
+    const p = path.join(dir, name);
+    const s = await fs.lstat(p);
+    if (s.isDirectory()) {
+      await validateAndNormalise(p, false);
+    } else if (s.isFile()) {
+      await fs.chmod(p, 0o644);
+    } else {
+      throw new UnsafeArchiveError('unexpected non-regular entry');
+    }
   }
 }
 
@@ -69,6 +115,9 @@ function checkName(raw: string, expectedRoot: string): void {
 async function vetArchive(opts: ExtractOptions): Promise<void> {
   const names = await list(opts.archivePath, false);
   const verbose = await list(opts.archivePath, true);
+  if (names.length > MAX_ENTRIES) {
+    throw new UnsafeArchiveError('it has too many entries');
+  }
   if (names.length === 0 || names.length !== verbose.length) {
     throw new UnsafeArchiveError('it is empty or its listing is inconsistent');
   }
@@ -78,20 +127,27 @@ async function vetArchive(opts: ExtractOptions): Promise<void> {
     const kind = line[0];
     if (kind !== '-' && kind !== 'd') {
       throw new UnsafeArchiveError(
-        `"${name}" is a link or special file, which is not allowed`,
+        `"${shown(name)}" is a link or special file, which is not allowed`,
       );
     }
     if (kind === '-' && /\s(->|link to)\s/.test(line)) {
-      throw new UnsafeArchiveError(`"${name}" is a link, which is not allowed`);
+      throw new UnsafeArchiveError(
+        `"${shown(name)}" is a link, which is not allowed`,
+      );
     }
-    checkName(name, opts.expectedRoot);
+    const segments = checkName(name, opts.expectedRoot);
+    if (segments.length === 1 && kind !== 'd') {
+      throw new UnsafeArchiveError('the top-level entry is not a directory');
+    }
     const size = Number(line.trim().split(/\s+/)[2]);
     if (!Number.isFinite(size)) {
-      throw new UnsafeArchiveError(`could not read the size of "${name}"`);
+      throw new UnsafeArchiveError(
+        `could not read the size of "${shown(name)}"`,
+      );
     }
     total += size;
   });
-  const max = opts.maxUncompressedBytes ?? DEFAULT_MAX_UNCOMPRESSED_BYTES;
+  const max = maxBytes(opts);
   if (total > max) {
     throw new UnsafeArchiveError(
       `uncompressed size ${total} bytes exceeds the ${max} byte limit`,
@@ -124,9 +180,12 @@ export async function extractVettedTarball(
       ],
       { cwd: path.dirname(opts.archivePath) },
     );
-  } catch {
+    const root = path.join(opts.destDir, opts.expectedRoot);
+    await validateAndNormalise(root, true);
+    return root;
+  } catch (err) {
     await fs.rm(opts.destDir, { recursive: true, force: true });
+    if (err instanceof UnsafeArchiveError) throw err;
     throw new UnsafeArchiveError('extraction failed');
   }
-  return path.join(opts.destDir, opts.expectedRoot);
 }

@@ -2,13 +2,18 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { extractVettedTarball, UnsafeArchiveError } from './safe-tar-extract';
+import {
+  DEFAULT_MAX_UNCOMPRESSED_BYTES,
+  extractVettedTarball,
+  UnsafeArchiveError,
+} from './safe-tar-extract';
 
 interface Entry {
   name: string;
   type?: string; // tar typeflag: '0' file, '5' dir, '2' symlink, '1' hardlink
   body?: string;
   linkname?: string;
+  mode?: string; // octal, 7 digits
 }
 
 function header(e: Entry): Buffer {
@@ -16,7 +21,8 @@ function header(e: Entry): Buffer {
   const body = Buffer.from(e.body ?? '');
   const type = e.type ?? '0';
   h.write(e.name, 0, 100, 'utf8');
-  h.write((type === '5' ? '0000755' : '0000644') + '\0', 100, 8, 'ascii');
+  const mode = e.mode ?? (type === '5' ? '0000755' : '0000644');
+  h.write(mode + '\0', 100, 8, 'ascii');
   h.write('0000000\0', 108, 8, 'ascii');
   h.write('0000000\0', 116, 8, 'ascii');
   const size = type === '0' ? body.length : 0;
@@ -101,6 +107,36 @@ describe('extractVettedTarball', () => {
       await expect(fs.stat(path.join(work, 'evil.txt'))).rejects.toBeTruthy();
     },
   );
+
+  it('rejects a regular file where the root directory should be', async () => {
+    await expect(run([{ name: 'uploads', body: 'hi' }])).rejects.toBeInstanceOf(
+      UnsafeArchiveError,
+    );
+    await expect(fs.stat(dest)).rejects.toBeTruthy();
+  });
+
+  it('normalises unreadable modes so the tree can be copied', async () => {
+    const root = await run([
+      { name: 'uploads/', type: '5', mode: '0000000' },
+      { name: 'uploads/d/', type: '5', mode: '0000000' },
+      { name: 'uploads/d/f.txt', body: 'x', mode: '0000000' },
+    ]);
+    expect(await fs.readFile(path.join(root, 'd', 'f.txt'), 'utf8')).toBe('x');
+    await fs.cp(root, path.join(work, 'copy'), { recursive: true });
+  });
+
+  it('does not echo raw or oversized entry names in the error', async () => {
+    const evil = 'uploads/../' + 'A'.repeat(90) + '\u0007\u001b[31m';
+    const err = await run([{ name: evil, body: 'x' }]).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(UnsafeArchiveError);
+    const msg = (err as Error).message;
+    expect(msg).not.toContain('\u0007');
+    expect(msg).not.toContain('A'.repeat(90));
+  });
+
+  it('honours the env-configurable size cap default', () => {
+    expect(DEFAULT_MAX_UNCOMPRESSED_BYTES).toBeLessThanOrEqual(5 * 1024 ** 3);
+  });
 
   it('rejects an archive over the size cap', async () => {
     await expect(

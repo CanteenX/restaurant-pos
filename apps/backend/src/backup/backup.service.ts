@@ -27,6 +27,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { uploadsDir } from '../common/upload/image-upload.config';
 import { notifyOwners } from './notify-owners';
+import { swapUploads } from './swap-uploads';
 import { extractVettedTarball, UnsafeArchiveError } from './safe-tar-extract';
 import {
   CHECKSUM_FILE,
@@ -706,22 +707,13 @@ export class BackupService {
       ]);
 
       if (extractedRoot) {
-        // Empty uploadRoot's contents rather than removing the directory
-        // itself: the container's non-root user owns everything inside it
-        // but not necessarily its parent, so an rmdir/mkdir round-trip on
-        // uploadRoot itself can fail with EACCES. tar then recreates the
-        // same tree from the archive, merging into the now-empty
-        // directory (same approach zulivio's restore() uses).
-        const existingEntries = await fs.readdir(uploadRoot).catch(() => []);
-        await Promise.all(
-          existingEntries.map((entry) =>
-            fs.rm(path.join(uploadRoot, entry), {
-              recursive: true,
-              force: true,
-            }),
-          ),
+        // Swapped in LAST, from the already-validated tree; the old uploads
+        // are kept aside and restored if the swap fails.
+        await swapUploads(
+          extractedRoot,
+          uploadRoot,
+          path.join(workDir, 'uploads-old'),
         );
-        await fs.cp(extractedRoot, uploadRoot, { recursive: true });
       }
 
       const completedAt = new Date().toISOString();
