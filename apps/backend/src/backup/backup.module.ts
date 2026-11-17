@@ -5,6 +5,7 @@ import { BackupController } from './backup.controller';
 import { BackupService } from './backup.service';
 import { LocalBackupController } from './local-backup.controller';
 import { LocalBackupService } from './local-backup.service';
+import { RestoreRoleService } from './restore-role';
 
 // PrismaService is provided by the @Global() PrismaModule, so it needs no
 // explicit import here — same pattern RolesModule/TablesModule already
@@ -13,6 +14,6 @@ import { LocalBackupService } from './local-backup.service';
 @Module({
   imports: [AuditModule, NotificationsModule],
   controllers: [LocalBackupController, BackupController],
-  providers: [BackupService, LocalBackupService],
+  providers: [BackupService, LocalBackupService, RestoreRoleService],
 })
 export class BackupModule {}

@@ -63,3 +63,34 @@ the time and reason, the last good backup time is kept, and every Owner gets
 a **Local backup failed** notification. Scheduled retries happen hourly; the
 notification is sent once per outage (and on every failed manual run), not
 every hour.
+
+## 4. Restoring a backup (security model)
+
+A restore is destructive and Owner-only. Backups are untrusted input, so:
+
+- **Limited role.** The database is restored as `nventra_restore` (NOSUPERUSER,
+  NOCREATEROLE, NOCREATEDB, no `pg_*_server_*` roles, no CREATE on the schema,
+  no table ownership or TRIGGER rights; only DML and TRUNCATE on the app tables
+  and USAGE/SELECT/UPDATE on sequences). The backend creates and re-syncs this
+  role at startup and before every restore when it is connected as a superuser
+  (the shipped Docker default). Its password is derived from the database
+  password, so there is nothing to configure.
+- **`DATABASE_RESTORE_URL`** (optional) points restores at a role you manage.
+  The restore is refused unless that role is limited as above, including any
+  roles it is a member of.
+- **`NVENTRA_ALLOW_UNSAFE_SUPERUSER_RESTORE=1` is DANGEROUS.** It lets a restore
+  run as a superuser or otherwise over-privileged role, so a tampered backup in
+  your bucket could execute code on the database host. Only use it for a
+  one-off recovery you fully trust, then unset it.
+- **Data only.** The schema, functions, triggers, roles and extensions in a
+  dump are never executed. The app's migrated schema stays; only table rows and
+  sequence values are replaced, in a single transaction (a failure leaves the
+  current data untouched). The restore script is line-vetted before it reaches
+  `psql`.
+- **Fiscal ledger.** `verifactu_records` is append-only and hash-chained, so a
+  restore never deletes or overwrites it. It is refused if the ledger is not
+  empty; restore into a freshly migrated, empty database in that case.
+- **Uploads.** `uploads.tar.gz` is checked (no links, no `..`, one root, size
+  cap) and extracted into a scratch directory before anything is changed; the
+  old uploads are kept aside until the swap succeeds.
+- The backup must come from the same schema version as the running app.

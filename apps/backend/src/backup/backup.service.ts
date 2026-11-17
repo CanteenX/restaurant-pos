@@ -30,6 +30,8 @@ import { uploadsDir } from '../common/upload/image-upload.config';
 import { notifyOwners } from './notify-owners';
 import { swapUploads, UploadsRollbackError } from './swap-uploads';
 import { extractVettedTarball, UnsafeArchiveError } from './safe-tar-extract';
+import { dumpDatabase, restoreDatabase } from './pg-exec';
+import { RestoreRoleService } from './restore-role';
 import {
   CHECKSUM_FILE,
   DB_FILE,
@@ -375,12 +377,7 @@ export class BackupService {
     try {
       // Custom format: compressed single file, restorable with
       // `pg_restore --clean --if-exists` for a clean overwrite on restore.
-      await execFileAsync('pg_dump', [
-        '--format=custom',
-        '--file',
-        dbDumpPath,
-        process.env.DATABASE_URL!,
-      ]);
+      await dumpDatabase(dbDumpPath);
 
       const uploadsExist = fsSync.existsSync(uploadRoot);
       if (uploadsExist) {
@@ -589,12 +586,7 @@ export class BackupService {
     );
     try {
       const dbDumpPath = path.join(workDir, 'db.dump');
-      await execFileAsync('pg_dump', [
-        '--format=custom',
-        '--file',
-        dbDumpPath,
-        process.env.DATABASE_URL!,
-      ]);
+      await dumpDatabase(dbDumpPath);
       const uploadRoot = uploadsDir();
       let uploadsArchivePath: string | null = null;
       if (fsSync.existsSync(uploadRoot)) {
@@ -717,14 +709,10 @@ export class BackupService {
           throw err;
         }
       }
-      await execFileAsync('pg_restore', [
-        '--clean',
-        '--if-exists',
-        '--no-owner',
-        '--dbname',
-        process.env.DATABASE_URL!,
-        dbDumpPath,
-      ]);
+      // Re-derive and reset the restore role right before every restore, so a
+      // tampered earlier restore cannot leave it with a password it chose.
+      await new RestoreRoleService(this.prisma).ensure();
+      await restoreDatabase(dbDumpPath);
 
       if (extractedRoot) {
         // Swapped in LAST, from the already-validated tree; the old uploads
