@@ -123,6 +123,14 @@ function isPrivateIpv6(bytes: number[]): boolean {
     bytes[3] === 0
   )
     return true; // Teredo 2001::/32
+  if (
+    bytes[0] === 0x20 &&
+    bytes[1] === 0x01 &&
+    bytes[2] === 0x0d &&
+    bytes[3] === 0xb8
+  )
+    return true; // 2001:db8::/32 documentation
+  if (bytes[0] === 0x01 && zero(1, 8)) return true; // 100::/64 discard-only
   if ((bytes[0] & 0xfe) === 0xfc) return true; // fc00::/7 unique-local
   if (bytes[0] === 0xfe && bytes[1] >= 0x80) return true; // fe80::/9 link + site-local
   if (bytes[0] === 0xff) return true; // multicast
