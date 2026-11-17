@@ -161,25 +161,23 @@ export class PasswordResetService {
   }
 
   /**
-   * One link per active account with this address (the same accounts login
-   * resolves, see account-lookup.ts). Each email is rendered for that
+   * One link for exactly the account login resolves for this address (the
+   * shared resolver, account-lookup.ts). The email is rendered for that
    * account's restaurant, so it says which restaurant the link is for.
    */
   private async deliver(email: string): Promise<void> {
     const base = this.baseUrl;
     if (!base) return;
-    let users: AccountRecipient[] = [];
+    let user: AccountRecipient | null = null;
     try {
-      users = await this.prisma.user.findMany({
+      user = await this.prisma.user.findFirst({
         ...emailAccountQuery(email),
         select: { id: true, restaurantId: true, name: true, email: true },
       });
     } catch (err) {
       this.logFailure(err);
     }
-    for (const user of users) {
-      await this.deliverTo(user, base);
-    }
+    if (user) await this.deliverTo(user, base);
   }
 
   private async deliverTo(user: AccountRecipient, base: string) {

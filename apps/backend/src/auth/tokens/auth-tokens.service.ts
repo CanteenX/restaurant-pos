@@ -51,7 +51,7 @@ export class AuthTokensService {
     // requests can never both leave a live link. Only the SAME purpose is
     // replaced, so a reset request cannot revoke a staff invite (#223).
     const row = await this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${input.userId} FOR UPDATE`;
+      await this.lockUser(tx, input.userId);
       await tx.authToken.deleteMany({
         where: { userId: input.userId, purpose: input.purpose, usedAt: null },
       });
@@ -102,6 +102,9 @@ export class AuthTokensService {
       const row = await tx.authToken.findUnique({ where: { id: parsed.id } });
       const claim = this.validClaim(row, parsed.secret, purpose);
       if (!claim) return null;
+      // Same lock order as issue(): the user row first, then token rows,
+      // so a concurrent issue and redeem can never deadlock.
+      await this.lockUser(tx, claim.userId);
       // Atomic claim: of two concurrent redeems only one sees count 1.
       const { count } = await tx.authToken.updateMany({
         where: { id: parsed.id, usedAt: null },
@@ -125,6 +128,14 @@ export class AuthTokensService {
       where: { userId, purpose, usedAt: null },
     });
     return count;
+  }
+
+  /** Row lock on the user; every token write path takes it first. */
+  private async lockUser(
+    tx: Prisma.TransactionClient,
+    userId: string,
+  ): Promise<void> {
+    await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`;
   }
 
   private validClaim(

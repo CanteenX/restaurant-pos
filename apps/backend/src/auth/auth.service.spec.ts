@@ -325,31 +325,26 @@ describe('AuthService.login timing', () => {
     expect(loginCompare).toHaveBeenCalledTimes(1);
   });
 
-  it('email login uses the shared resolver (any case, every restaurant)', async () => {
+  it('email login resolves ONE account through the shared resolver (any case)', async () => {
     const { svc, prisma } = loginSetup(known);
     await svc.login({ email: 'ASHA@X.test', password: 'right-password' });
-    expect(prisma.user.findMany).toHaveBeenCalledWith(
+    expect(prisma.user.findFirst).toHaveBeenCalledWith(
       expect.objectContaining(emailAccountQuery('asha@x.test')),
     );
-    expect(prisma.user.findFirst).not.toHaveBeenCalled();
+    expect(prisma.user.findMany).not.toHaveBeenCalled();
   });
 
-  it('same email in two restaurants: the password picks the account', async () => {
+  it('wrong password costs exactly one compare, however many restaurants share the email', async () => {
+    // findMany would list both; login must not try them one by one, or the
+    // extra bcrypt time reveals that the email exists in 2+ restaurants.
     const a = { ...makeLoginUser(), id: 'ua', restaurantId: 'rA' };
-    const b = {
-      ...makeLoginUser(),
-      id: 'ub',
-      restaurantId: 'rB',
-      passwordHash: bcrypt.hashSync('b-password', 4),
-    };
+    const b = { ...makeLoginUser(), id: 'ub', restaurantId: 'rB' };
     const { svc, prisma } = loginSetup(a);
     prisma.user.findMany.mockResolvedValue([a, b]);
-    const res = await svc.login({
-      email: 'Asha@x.test',
-      password: 'b-password',
-    });
-    expect(res.user).toMatchObject({ id: 'ub', restaurantId: 'rB' });
-    expect(hashesCompared()).toEqual([a.passwordHash, b.passwordHash]);
+    await expect(
+      svc.login({ email: 'Asha@x.test', password: 'wrong' }),
+    ).rejects.toThrow('Invalid login ID or password');
+    expect(hashesCompared()).toEqual([a.passwordHash]);
   });
 
   it('unknown phone: still compares once against the dummy hash', async () => {

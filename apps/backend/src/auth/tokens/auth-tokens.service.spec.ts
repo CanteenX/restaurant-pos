@@ -166,6 +166,27 @@ describe('AuthTokensService', () => {
     });
   });
 
+  it('redeem locks the user row BEFORE touching tokens (same order as issue: no deadlock)', async () => {
+    const { svc, prisma } = setup();
+    const { token } = await issueReset(svc);
+    const order: string[] = [];
+    prisma.$queryRaw.mockImplementation((sql: string[], id: string) => {
+      order.push(`lock:${id}:${sql.join('?')}`);
+      return Promise.resolve([{ id }]);
+    });
+    prisma.authToken.updateMany.mockImplementationOnce(() => {
+      order.push('claim');
+      return Promise.resolve({ count: 1 });
+    });
+    await svc.redeem(token, 'PASSWORD_RESET', () => {
+      order.push('apply');
+    });
+    expect(order[0]).toMatch(
+      /^lock:u1:SELECT "id" FROM "users" WHERE "id" = \? FOR UPDATE$/,
+    );
+    expect(order.slice(1)).toEqual(['claim', 'apply']);
+  });
+
   it('a failed insert leaves the earlier link usable (all or nothing)', async () => {
     const { svc, prisma, rows } = setup();
     const first = await issueReset(svc);

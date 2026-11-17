@@ -279,29 +279,31 @@ describe('Password reset (e2e)', () => {
     expect(await bcrypt.compare(NEW_PASSWORD, b.passwordHash)).toBe(true);
   });
 
-  it('same email in two restaurants (any case): one link each; login and reset agree', async () => {
+  it('same email in two restaurants (any case): login and reset resolve the same single account', async () => {
+    // Both resolve to the OLDEST active account (first restaurant): reset
+    // emails exactly that one, and login reaches exactly that one.
     sent.length = 0;
     await askReset(`  ${dupEmail.replace('dup', 'DuP')}  `).expect(202);
     await resets.idle();
-    expect(sent.map((m) => m.to).sort()).toEqual(
-      [dupEmail, dupEmail.toUpperCase()].sort(),
-    );
-    const forSecond = sent.find((m) => m.to === dupEmail.toUpperCase())!;
-    const forFirst = sent.find((m) => m.to === dupEmail)!;
-    expect(forSecond.text).toContain(`Second Cafe ${tag}`);
-    expect(forFirst.text).toContain(`Reset Bistro ${tag}`);
+    expect(sent.map((m) => m.to)).toEqual([dupEmail]);
+    expect(sent[0].text).toContain(`Reset Bistro ${tag}`);
+    expect(sent[0].text).not.toContain(`Second Cafe ${tag}`);
 
-    // Resetting the second restaurant's account changes only that one, and
-    // login (any case) then reaches it with the new password.
     await http()
       .post(`${BASE}/confirm`)
-      .send({ token: tokenFrom(forSecond), password: NEW_PASSWORD })
+      .send({ token: tokenFrom(sent[0]), password: NEW_PASSWORD })
       .expect(200);
-    const second = await login(dupEmail, NEW_PASSWORD).expect(201);
-    expect(second.body.user.restaurantId).toBe(otherRestaurantId);
-    const first = await login(dupEmail.toUpperCase(), password).expect(201);
+    const first = await login(dupEmail.toUpperCase(), NEW_PASSWORD).expect(201);
     expect(first.body.user.restaurantId).toBe(restaurantId);
+    // The newer account with the same address is untouched and, by design,
+    // not reachable through email login (one constant-cost compare).
     await login(dupEmail, OTHER_PASSWORD).expect(401);
+    const second = await prisma.user.findUniqueOrThrow({
+      where: { id: ids.dup2 },
+    });
+    expect(await bcrypt.compare(OTHER_PASSWORD, second.passwordHash)).toBe(
+      true,
+    );
   });
 
   it('issuing is atomic and per purpose: parallel requests leave one live link; invites survive', async () => {

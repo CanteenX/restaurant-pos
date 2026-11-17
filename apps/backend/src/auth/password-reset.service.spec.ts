@@ -42,7 +42,10 @@ function setup(opts: Opts = {}) {
     },
   };
   const prisma = {
-    user: { findMany: jest.fn().mockResolvedValue(user ? [user] : []) },
+    user: {
+      findFirst: jest.fn().mockResolvedValue(user),
+      findMany: jest.fn().mockResolvedValue(user ? [user] : []),
+    },
     userBranch: { findFirst: jest.fn().mockResolvedValue({ branchId: 'b1' }) },
     branch: { findFirst: jest.fn().mockResolvedValue({ id: 'b0' }) },
   };
@@ -126,7 +129,7 @@ describe('PasswordResetService', () => {
       const res = await t.svc.request('Ravi@Example.com ', '1.1.1.1');
       await t.svc.idle();
       expect(res).toEqual({ ok: true });
-      expect(t.prisma.user.findMany).toHaveBeenCalledWith(
+      expect(t.prisma.user.findFirst).toHaveBeenCalledWith(
         expect.objectContaining(emailAccountQuery('Ravi@Example.com ')),
       );
       expect(t.tokens.issue).toHaveBeenCalledWith({
@@ -156,33 +159,20 @@ describe('PasswordResetService', () => {
       );
     });
 
-    it('same email in two restaurants: one link per account, each for its restaurant', async () => {
+    it('resets exactly the one account login resolves (same resolver), naming its restaurant', async () => {
       const t = setup();
-      const other = {
-        ...USER,
-        id: 'u2',
-        restaurantId: 'r2',
-        email: 'RAVI@example.com',
-      };
-      t.prisma.user.findMany.mockResolvedValue([USER, other]);
-      t.prisma.userBranch.findFirst
-        .mockResolvedValueOnce({ branchId: 'b1' })
-        .mockResolvedValueOnce({ branchId: 'b2' });
       await t.svc.request('ravi@EXAMPLE.com', 'ip');
       await t.svc.idle();
-      expect(
-        t.tokens.issue.mock.calls.map(
-          (c) => (c[0] as { userId: string }).userId,
-        ),
-      ).toEqual(['u1', 'u2']);
-      // The branch decides the restaurant named in each email.
+      expect(t.prisma.user.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining(emailAccountQuery('ravi@example.com')),
+      );
+      expect(t.prisma.user.findMany).not.toHaveBeenCalled();
+      expect(t.tokens.issue).toHaveBeenCalledTimes(1);
+      // The branch decides the restaurant named in the email.
       expect(t.templates.forBranchAlways.mock.calls).toEqual([
         ['b1', 'PASSWORD_RESET'],
-        ['b2', 'PASSWORD_RESET'],
       ]);
-      expect(
-        t.email.send.mock.calls.map((c) => (c[0] as { to: string }).to),
-      ).toEqual(['ravi@example.com', 'RAVI@example.com']);
+      expect(t.email.send).toHaveBeenCalledTimes(1);
     });
 
     it('falls back to the restaurant’s first branch for the template', async () => {
@@ -210,9 +200,9 @@ describe('PasswordResetService', () => {
     it('answers before any lookup or SMTP work, so timing does not leak', async () => {
       const t = setup();
       let release!: () => void;
-      t.prisma.user.findMany.mockReturnValue(
+      t.prisma.user.findFirst.mockReturnValue(
         new Promise((r) => {
-          release = () => r([USER]);
+          release = () => r(USER);
         }),
       );
       await expect(t.svc.request(USER.email, 'ip')).resolves.toEqual({
@@ -230,7 +220,7 @@ describe('PasswordResetService', () => {
           ok: true,
         });
         await t.svc.idle();
-        expect(t.prisma.user.findMany).not.toHaveBeenCalled();
+        expect(t.prisma.user.findFirst).not.toHaveBeenCalled();
         expect(t.email.send).not.toHaveBeenCalled();
       }
     });

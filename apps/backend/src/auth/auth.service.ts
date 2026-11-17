@@ -164,22 +164,19 @@ export class AuthService {
 
   /**
    * Email login through the shared resolver (account-lookup.ts, also used by
-   * password reset): any case, oldest account first. The same address can
-   * exist in several restaurants; the password decides which one. No match
-   * still costs one bcrypt compare against the dummy hash.
+   * password reset): exactly one bcrypt compare, against the resolved
+   * account or the dummy hash, however many restaurants share the address.
    */
   private async findEmailCandidate(email: string, password: string) {
-    const matches = await this.prisma.user.findMany({
+    const u = await this.prisma.user.findFirst({
       ...emailAccountQuery(email),
       include: permissionInclude,
     });
-    for (const u of matches) {
-      if (await bcrypt.compare(password, u.passwordHash)) return u;
-    }
-    if (matches.length === 0) {
-      await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
-    }
-    return null;
+    const ok = await bcrypt.compare(
+      password,
+      u?.passwordHash ?? DUMMY_PASSWORD_HASH,
+    );
+    return u && ok ? u : null;
   }
 
   /** Phone-number login: compare real digits, then the password, against every active match. */
