@@ -1,7 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { swapUploads } from './swap-uploads';
+import { swapUploads, UploadsRollbackError } from './swap-uploads';
 
 describe('swapUploads', () => {
   let work: string;
@@ -23,6 +23,29 @@ describe('swapUploads', () => {
   it('replaces the live contents with the new tree', async () => {
     await swapUploads(fresh, live, path.join(work, 'aside'));
     expect(await fs.readdir(live)).toEqual(['new.txt']);
+  });
+
+  it('keeps the set-aside copy and reports its path when rollback fails', async () => {
+    const aside = path.join(work, 'aside');
+    let calls = 0;
+    const flaky = (src: string, dst: string) => {
+      calls += 1;
+      // 1: set-aside copy, 2: new tree, 3: rollback
+      if (calls > 1) return Promise.reject(new Error('ENOSPC'));
+      return fs.cp(src, dst, { recursive: true });
+    };
+    const err = await swapUploads(fresh, live, aside, flaky).catch(
+      (e: Error) => e,
+    );
+    expect(err).toBeInstanceOf(UploadsRollbackError);
+    expect((err as Error).message).toContain(aside);
+    expect(await fs.readFile(path.join(aside, 'old.txt'), 'utf8')).toBe('old');
+  });
+
+  it('removes the set-aside copy after a successful swap', async () => {
+    const aside = path.join(work, 'aside');
+    await swapUploads(fresh, live, aside);
+    await expect(fs.stat(aside)).rejects.toBeTruthy();
   });
 
   it('puts the old uploads back when the copy fails', async () => {

@@ -1,7 +1,13 @@
 import { execFile } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { createReadStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
+import { Writable } from 'node:stream';
 import { promisify } from 'node:util';
+import { createGunzip } from 'node:zlib';
+
+const TAR_ENTRY_OVERHEAD = 1024;
 
 const execFileAsync = promisify(execFile);
 
@@ -86,7 +92,11 @@ function maxBytes(opts: ExtractOptions): number {
  * regular file or directory, and normalises modes so a hostile `000` mode
  * cannot make the later copy fail halfway through a restore.
  */
-async function validateAndNormalise(dir: string, isRoot: boolean) {
+async function validateAndNormalise(
+  dir: string,
+  isRoot: boolean,
+): Promise<number> {
+  let bytes = 0;
   const st = await fs.lstat(dir);
   if (!st.isDirectory()) {
     throw new UnsafeArchiveError(
@@ -98,13 +108,15 @@ async function validateAndNormalise(dir: string, isRoot: boolean) {
     const p = path.join(dir, name);
     const s = await fs.lstat(p);
     if (s.isDirectory()) {
-      await validateAndNormalise(p, false);
+      bytes += await validateAndNormalise(p, false);
     } else if (s.isFile()) {
+      bytes += s.size;
       await fs.chmod(p, 0o644);
     } else {
       throw new UnsafeArchiveError('unexpected non-regular entry');
     }
   }
+  return bytes;
 }
 
 /**
@@ -113,6 +125,12 @@ async function validateAndNormalise(dir: string, isRoot: boolean) {
  * a sane total size. Returns nothing; throws UnsafeArchiveError.
  */
 async function vetArchive(opts: ExtractOptions): Promise<void> {
+  const max = maxBytes(opts);
+  const inflated = await countInflated(
+    opts.archivePath,
+    max + MAX_ENTRIES * TAR_ENTRY_OVERHEAD,
+    max,
+  );
   const names = await list(opts.archivePath, false);
   const verbose = await list(opts.archivePath, true);
   if (names.length > MAX_ENTRIES) {
@@ -121,7 +139,6 @@ async function vetArchive(opts: ExtractOptions): Promise<void> {
   if (names.length === 0 || names.length !== verbose.length) {
     throw new UnsafeArchiveError('it is empty or its listing is inconsistent');
   }
-  let total = 0;
   names.forEach((name, i) => {
     const line = verbose[i];
     const kind = line[0];
@@ -139,20 +156,46 @@ async function vetArchive(opts: ExtractOptions): Promise<void> {
     if (segments.length === 1 && kind !== 'd') {
       throw new UnsafeArchiveError('the top-level entry is not a directory');
     }
-    const size = Number(line.trim().split(/\s+/)[2]);
-    if (!Number.isFinite(size)) {
-      throw new UnsafeArchiveError(
-        `could not read the size of "${shown(name)}"`,
-      );
-    }
-    total += size;
   });
-  const max = maxBytes(opts);
-  if (total > max) {
-    throw new UnsafeArchiveError(
-      `uncompressed size ${total} bytes exceeds the ${max} byte limit`,
-    );
+  // Sizes are NOT read from `tar -tv` columns (owner/group names may contain
+  // spaces and shift them). Inflated bytes include a 512-byte header plus up
+  // to 511 bytes of padding per entry, so subtract that allowance.
+  // GNU tar also pads the archive to 10 KiB records; allow 20 KiB.
+  const payload = inflated - names.length * TAR_ENTRY_OVERHEAD - 20480;
+  if (payload > max) {
+    throw sizeError(payload, max);
   }
+}
+
+function sizeError(bytes: number, max: number): UnsafeArchiveError {
+  return new UnsafeArchiveError(
+    `uncompressed size ${bytes} bytes exceeds the ${max} byte limit`,
+  );
+}
+
+/**
+ * Inflates the gzip stream through a byte counter and aborts as soon as it
+ * passes `hardLimit`, so a decompression bomb never reaches the disk.
+ */
+async function countInflated(
+  archivePath: string,
+  hardLimit: number,
+  max: number,
+): Promise<number> {
+  let count = 0;
+  const sink = new Writable({
+    write(chunk: Buffer, _enc, cb) {
+      count += chunk.length;
+      cb(count > hardLimit ? sizeError(count, max) : null);
+    },
+  });
+  try {
+    await pipeline(createReadStream(archivePath), createGunzip(), sink);
+  } catch (err) {
+    if (err instanceof UnsafeArchiveError) throw err;
+    throw new UnsafeArchiveError('it could not be read as a tar.gz archive');
+  }
+  return count;
 }
 
 /**
@@ -181,7 +224,9 @@ export async function extractVettedTarball(
       { cwd: path.dirname(opts.archivePath) },
     );
     const root = path.join(opts.destDir, opts.expectedRoot);
-    await validateAndNormalise(root, true);
+    // Defence in depth: the real bytes on disk must also respect the cap.
+    const onDisk = await validateAndNormalise(root, true);
+    if (onDisk > maxBytes(opts)) throw sizeError(onDisk, maxBytes(opts));
     return root;
   } catch (err) {
     await fs.rm(opts.destDir, { recursive: true, force: true });

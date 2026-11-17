@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -27,7 +28,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { uploadsDir } from '../common/upload/image-upload.config';
 import { notifyOwners } from './notify-owners';
-import { swapUploads } from './swap-uploads';
+import { swapUploads, UploadsRollbackError } from './swap-uploads';
 import { extractVettedTarball, UnsafeArchiveError } from './safe-tar-extract';
 import {
   CHECKSUM_FILE,
@@ -83,6 +84,7 @@ function mask(value: string): string {
 @Injectable()
 export class BackupService {
   private readonly logger = new Logger(BackupService.name);
+  private restoreInFlight = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -632,6 +634,24 @@ export class BackupService {
    * the plan's Phase 4 addition.
    */
   async restore(user: SessionUser, id: string, dto: RestoreBackupDto) {
+    // Single-flight: the backend is one process, so a flag is enough to stop
+    // two restores interleaving their pg_restore and uploads swap.
+    if (this.restoreInFlight) {
+      throw new ConflictException('A restore is already in progress');
+    }
+    this.restoreInFlight = true;
+    try {
+      return await this.runRestore(user, id, dto);
+    } finally {
+      this.restoreInFlight = false;
+    }
+  }
+
+  private async runRestore(
+    user: SessionUser,
+    id: string,
+    dto: RestoreBackupDto,
+  ) {
     this.requireOwner(user);
     if (dto.confirm !== 'RESTORE') {
       throw new BadRequestException(
@@ -712,7 +732,9 @@ export class BackupService {
         await swapUploads(
           extractedRoot,
           uploadRoot,
-          path.join(workDir, 'uploads-old'),
+          // Outside workDir: if the rollback fails this copy must survive
+          // the `finally` cleanup below.
+          path.join(os.tmpdir(), `nventra-uploads-aside-${Date.now()}`),
         );
       }
 
@@ -735,6 +757,9 @@ export class BackupService {
       return { ok: true, restoredFrom: record.id };
     } catch (err) {
       const failureReason = (err as Error).message;
+      if (err instanceof UploadsRollbackError) {
+        this.logger.error(failureReason);
+      }
       await this.audit.record({
         userId: user.id,
         action: 'backup.restore_failed',

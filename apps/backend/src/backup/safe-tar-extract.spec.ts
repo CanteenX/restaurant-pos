@@ -14,6 +14,8 @@ interface Entry {
   body?: string;
   linkname?: string;
   mode?: string; // octal, 7 digits
+  uname?: string;
+  gname?: string;
 }
 
 function header(e: Entry): Buffer {
@@ -33,6 +35,8 @@ function header(e: Entry): Buffer {
   if (e.linkname) h.write(e.linkname, 157, 100, 'utf8');
   h.write('ustar\0', 257, 6, 'ascii');
   h.write('00', 263, 2, 'ascii');
+  if (e.uname) h.write(e.uname, 265, 32, 'utf8');
+  if (e.gname) h.write(e.gname, 297, 32, 'utf8');
   let sum = 0;
   for (const b of h) sum += b;
   h.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 8, 'ascii');
@@ -138,9 +142,27 @@ describe('extractVettedTarball', () => {
     expect(DEFAULT_MAX_UNCOMPRESSED_BYTES).toBeLessThanOrEqual(5 * 1024 ** 3);
   });
 
+  it('enforces the size cap even when a group name contains a space', async () => {
+    await expect(
+      run(
+        [
+          { name: 'uploads/', type: '5' },
+          {
+            name: 'uploads/big.bin',
+            body: 'x'.repeat(50000),
+            uname: 'x:1',
+            gname: 'g 0:2',
+          },
+        ],
+        1000,
+      ),
+    ).rejects.toThrow(/uncompressed size/);
+    await expect(fs.stat(dest)).rejects.toBeTruthy();
+  });
+
   it('rejects an archive over the size cap', async () => {
     await expect(
-      run([{ name: 'uploads/big.bin', body: 'x'.repeat(2000) }], 1000),
+      run([{ name: 'uploads/big.bin', body: 'x'.repeat(50000) }], 1000),
     ).rejects.toThrow(/uncompressed size/);
   });
 

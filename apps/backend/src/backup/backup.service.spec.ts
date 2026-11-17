@@ -1,6 +1,6 @@
 import * as fs from 'node:fs/promises';
 import { Readable } from 'node:stream';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { S3Client } from '@aws-sdk/client-s3';
 import type { SessionUser } from '@nventra/types';
 import { BackupService } from './backup.service';
@@ -127,6 +127,20 @@ describe('BackupService checksums', () => {
     expect(sums['db.dump']).toBe(sha256Hex(Buffer.from('DUMP-BYTES')));
     expect(done.sha256).toBe(sums['db.dump']);
     expect(done.status).toBe('VERIFIED');
+  });
+
+  it('refuses a second restore while one is running, then allows another', async () => {
+    const { service } = makeService();
+    await service.triggerManual(owner);
+    const first = service.restore(owner, 'b1', { confirm: 'RESTORE' });
+    const second = await service
+      .restore(owner, 'b1', { confirm: 'RESTORE' })
+      .catch((e: unknown) => e);
+    expect(second).toBeInstanceOf(ConflictException);
+    await expect(first).resolves.toEqual({ ok: true, restoredFrom: 'b1' });
+    await expect(
+      service.restore(owner, 'b1', { confirm: 'RESTORE' }),
+    ).resolves.toEqual({ ok: true, restoredFrom: 'b1' });
   });
 
   it('restores when the checksum matches', async () => {
