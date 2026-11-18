@@ -5,6 +5,7 @@ import { controlPermissionSatisfied } from '@nventra/types/dist/permissions';
 import { ApiError, call, pagePath, useRequestScope, type Page, type Session } from './api';
 import { OutletPlans } from './outlet-plans';
 import { BusinessBilling, OverdueInvoices, UpcomingRenewals, type BillingAttempts } from './business-billing';
+import { BusinessTicketHistory, HostedAccess, PortalContacts } from './business-access';
 
 type Business = { id: string; displayName: string; legalName: string; archived: boolean };
 type Outlet = { id: string; displayName: string; timeZone: string; archived: boolean };
@@ -144,6 +145,11 @@ export function Dashboard({ session, onExpired, billingAttempts }: { session: Se
           {can('cc.plan.read') && <OutletPlans key={outlet.id} outletId={outlet.id} onError={onError} onSaved={() => { setNotice(''); setRenewalRefresh((value) => value + 1); }}
             allowManage={!business?.archived && !outlet.archived && can('cc.plan.manage')} verifiedAt={session.verifiedAt} />}
         </> : business ? <><h2>{business.displayName}</h2><p>{business.legalName}</p><p>Choose an outlet to see its service plan.</p></> : <p>Choose a business to find its outlets.</p>}
+        {business && can('cc.hosted.read') && <HostedAccess key={'access-' + business.id} id={business.id} name={business.displayName}
+          manage={can('cc.hosted.manage') && !business.archived} onError={onError} />}
+        {business && can('cc.portal.read') && <PortalContacts key={'contacts-' + business.id} id={business.id}
+          manage={can('cc.portal.manage') && !business.archived} onError={onError} />}
+        {business && can('cc.ticket.read') && <BusinessTicketHistory key={'tickets-' + business.id} id={business.id} onError={onError} />}
         {business && canReadBilling && <BusinessBilling key={business.id} id={business.id} attempts={billingAttempts}
           manage={can('cc.billing.manage') && !business.archived} onError={onError} onReadError={onBillingReadError}
           onChanged={() => setBillingRefresh((value) => value + 1)} />}
