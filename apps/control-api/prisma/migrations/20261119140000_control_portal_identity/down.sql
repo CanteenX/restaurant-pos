@@ -7,6 +7,8 @@ DO $$ BEGIN
 END $$;
 DROP TRIGGER portal_credentials_changed ON control.portal_account;
 DROP FUNCTION control.clear_portal_sessions();
+DROP FUNCTION control.portal_activate(text,text,text),control.portal_login_verifier(text),
+  control.portal_open_session(uuid,text,text),control.portal_lock_session(text),control.portal_logout(text);
 DROP TABLE control.portal_session, control.portal_account, control.portal_auth_limit;
 UPDATE control.staff SET grants = array_remove(array_remove(grants,'cc.portal.read'),'cc.portal.manage')
 WHERE grants && ARRAY['cc.portal.read','cc.portal.manage'];

@@ -5,7 +5,7 @@ import { openPortalDatabase } from './portal-database.js';
 import { portalDigest, portalToken, type readPortalConfig } from './portal-identity-policy.js';
 
 export type PortalPrincipal = { accountId: string; businessId: string; email: string };
-type AccountCredential = { id: string; passwordHash: string | null; status: string };
+type AccountCredential = { id: string; passwordHash: string };
 
 export class PortalAuth {
   private constructor(private readonly db: PrismaClient, private readonly key: string,
@@ -37,55 +37,38 @@ export class PortalAuth {
     }
   }
 
-  private async newSession(tx: Prisma.TransactionClient, principal: PortalPrincipal) {
-    const token = portalToken(), digest = portalDigest(this.key, 'session', token);
-    await tx.$executeRaw`INSERT INTO control.portal_session(digest, account_id, expires_at)
-      VALUES (${digest}, ${principal.accountId}::uuid, clock_timestamp() + interval '8 hours')`;
-    return { token, principal };
+  private sessionToken() {
+    const token = portalToken();
+    return { token, digest: portalDigest(this.key, 'session', token) };
   }
 
   async activate(code: string, password: string, peer: string) {
     await this.limit('activation', peer, code);
     const verifier = await hash(password, 12);
-    return this.db.$transaction(async (tx) => {
-      const [principal] = await tx.$queryRaw<PortalPrincipal[]>`
-        UPDATE control.portal_account SET status = 'active', password_hash = ${verifier},
-          activation_digest = NULL, activation_expires_at = NULL
-        WHERE activation_digest = ${this.activationDigest(code)} AND status = 'pending'
-          AND activation_expires_at > clock_timestamp()
-        RETURNING id AS "accountId", business_id AS "businessId", email`;
-      if (!principal) throw new UnauthorizedException();
-      return this.newSession(tx, principal);
-    });
+    const { token, digest } = this.sessionToken();
+    const [principal] = await this.db.$queryRaw<PortalPrincipal[]>`
+      SELECT * FROM control.portal_activate(${this.activationDigest(code)},${verifier},${digest})`;
+    if (!principal) throw new UnauthorizedException();
+    return { token, principal };
   }
 
   async login(email: string, password: string, peer: string) {
     await this.limit('login', peer, email);
     const [account] = await this.db.$queryRaw<AccountCredential[]>`
-      SELECT id, password_hash AS "passwordHash", status FROM control.portal_account WHERE email = ${email}`;
+      SELECT * FROM control.portal_login_verifier(${email})`;
     const valid = await compare(password, account?.passwordHash ?? this.dummyHash);
-    if (!valid || account?.status !== 'active' || !account.passwordHash) throw new UnauthorizedException();
-
-    return this.db.$transaction(async (tx) => {
-      const [principal] = await tx.$queryRaw<PortalPrincipal[]>`SELECT id AS "accountId", business_id AS "businessId", email
-        FROM control.portal_account WHERE id = ${account.id}::uuid AND status = 'active'
-          AND password_hash = ${account.passwordHash} FOR SHARE`;
-      if (!principal) throw new UnauthorizedException();
-      return this.newSession(tx, principal);
-    });
+    if (!valid || !account) throw new UnauthorizedException();
+    const { token, digest } = this.sessionToken();
+    const [principal] = await this.db.$queryRaw<PortalPrincipal[]>`
+      SELECT * FROM control.portal_open_session(${account.id}::uuid,${account.passwordHash},${digest})`;
+    if (!principal) throw new UnauthorizedException();
+    return { token, principal };
   }
 
   withSession<T>(token: string, use: (tx: Prisma.TransactionClient, principal: PortalPrincipal) => Promise<T>) {
     const digest = portalDigest(this.key, 'session', token);
     return this.db.$transaction(async (tx) => {
-      const [session] = await tx.$queryRaw<{ id: string }[]>`
-        SELECT account_id AS id FROM control.portal_session WHERE digest = ${digest}`;
-      if (!session) throw new UnauthorizedException();
-      await tx.$queryRaw`SELECT id FROM control.portal_account WHERE id = ${session.id}::uuid FOR SHARE`;
-      const [principal] = await tx.$queryRaw<PortalPrincipal[]>`SELECT a.id AS "accountId", a.business_id AS "businessId", a.email
-        FROM control.portal_session s JOIN control.portal_account a ON a.id = s.account_id
-        WHERE s.digest = ${digest} AND a.id = ${session.id}::uuid AND a.status = 'active'
-          AND s.expires_at > clock_timestamp()`;
+      const [principal] = await tx.$queryRaw<PortalPrincipal[]>`SELECT * FROM control.portal_lock_session(${digest})`;
       if (!principal) throw new UnauthorizedException();
       await tx.$queryRaw`SELECT pg_catalog.set_config('control.portal_business_id', ${principal.businessId}, true),
         pg_catalog.set_config('control.portal_account_id', ${principal.accountId}, true)`;
@@ -94,6 +77,6 @@ export class PortalAuth {
   }
 
   async logout(token: string) {
-    await this.db.$executeRaw`DELETE FROM control.portal_session WHERE digest = ${portalDigest(this.key, 'session', token)}`;
+    await this.db.$executeRaw`SELECT control.portal_logout(${portalDigest(this.key, 'session', token)})`;
   }
 }

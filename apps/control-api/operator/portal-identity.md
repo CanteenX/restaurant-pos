@@ -1,6 +1,6 @@
 # Customer portal identity
 
-Apply the Control database migrations with the migration login. To enable portal authentication, have the database administrator create the `control_portal_runtime` NOLOGIN group and grant it to a dedicated login that inherits its privileges. Apply [portal-runtime-grants.sql](portal-runtime-grants.sql) as the migration owner in the Control database. The portal login needs no owner, staff, operator, mail worker or PostgreSQL administrative group membership.
+Apply the Control database migrations with the migration login. To enable portal authentication, have the database administrator create the `control_portal_runtime` NOLOGIN group and grant it to a dedicated login that inherits its privileges. Apply [portal-runtime-grants.sql](portal-runtime-grants.sql) as the migration owner in the Control database. The portal login uses specific authentication functions to access credentials and sessions. The portal login needs no owner, staff, operator, mail worker or PostgreSQL administrative group membership.
 
 Configure `CONTROL_PORTAL_DATABASE_URL` with that login and a distinct 64-hex-character `CONTROL_PORTAL_AUTH_KEY` using the existing secret store. Reuse the staff application's exact HTTPS `CONTROL_ORIGIN`. Keep driver and network debugging disabled. Both portal settings can be omitted for a staff-only process. Partial settings or an unsuitable portal login prevent startup. Preserve the auth key across restarts. Rotating it makes outstanding activation codes and session cookies unusable.
 

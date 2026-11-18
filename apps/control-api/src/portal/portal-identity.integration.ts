@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import type { TestContext } from 'node:test';
 import type { PrismaClient } from '../../node_modules/.prisma/control-client/index.js';
+import { Prisma } from '../../node_modules/.prisma/control-client/index.js';
 import { createControlApi } from '../bootstrap.js';
 import { openPortalDatabase } from './portal-database.js';
 
@@ -27,6 +28,44 @@ export async function portalIdentityCases(t: TestContext, db: PrismaClient, fixt
         has_any_column_privilege('cc325_portal_fixture','control.staff','SELECT,UPDATE') AS "portalStaff",
         has_column_privilege('control_runtime','control.portal_account','password_hash','SELECT') AS "staffVerifier"`;
     assert.deepEqual(grants, { portalBusiness: false, portalStaff: false, staffVerifier: false });
+  });
+
+  await t.test('denies direct reads and writes of stored portal credentials and sessions', async () => {
+    const restricted = [
+      Prisma.sql`SELECT activation_digest FROM control.portal_account WHERE false`,
+      Prisma.sql`SELECT password_hash FROM control.portal_account WHERE false`,
+      Prisma.sql`UPDATE control.portal_account SET status = 'revoked', password_hash = NULL, activation_digest = NULL,
+        activation_expires_at = NULL WHERE false`,
+      Prisma.sql`SELECT digest FROM control.portal_session WHERE false`,
+      Prisma.sql`INSERT INTO control.portal_session(digest,account_id,expires_at)
+        SELECT repeat('a',64), gen_random_uuid(), clock_timestamp() WHERE false`,
+      Prisma.sql`DELETE FROM control.portal_session WHERE false`,
+    ];
+    const states = [];
+    for (const operation of restricted) {
+      try {
+        await db.$transaction(async (tx) => {
+          await tx.$executeRaw`SET LOCAL ROLE control_portal_runtime`;
+          await tx.$executeRaw(operation);
+        });
+        states.push('allowed');
+      } catch (error) {
+        states.push(error instanceof Prisma.PrismaClientKnownRequestError ? error.meta?.code : 'unexpected');
+      }
+    }
+    assert.deepEqual(states, restricted.map(() => '42501'));
+  });
+
+  await t.test('grants only the dedicated role five pinned auth functions', async () => {
+    const [functions] = await db.$queryRaw<{ count: number; secured: boolean }[]>`
+      SELECT count(*)::int, bool_and(p.prosecdef AND p.proconfig = ARRAY['search_path=pg_catalog, pg_temp']
+        AND pg_catalog.has_function_privilege('control_portal_runtime',p.oid,'EXECUTE')
+        AND NOT pg_catalog.has_function_privilege('control_runtime',p.oid,'EXECUTE')
+        AND NOT pg_catalog.has_function_privilege('control_audit_ungranted',p.oid,'EXECUTE')) AS secured
+      FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+      WHERE n.nspname='control' AND p.proname IN ('portal_activate','portal_login_verifier',
+        'portal_open_session','portal_lock_session','portal_logout')`;
+    assert.deepEqual(functions, { count: 5, secured: true });
   });
 
   const { app } = await createControlApi({ CONTROL_API_PORT: '4002', CONTROL_DATABASE_URL: staffUrl.toString(),

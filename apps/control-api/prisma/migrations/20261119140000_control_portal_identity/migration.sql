@@ -37,6 +37,62 @@ CREATE TRIGGER portal_credentials_changed AFTER UPDATE OF status,password_hash,a
 FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status OR OLD.password_hash IS DISTINCT FROM NEW.password_hash
   OR OLD.activation_digest IS DISTINCT FROM NEW.activation_digest) EXECUTE FUNCTION control.clear_portal_sessions();
 
+CREATE FUNCTION control.portal_activate(p_proof text,p_password text,p_session text)
+RETURNS TABLE("accountId" uuid,"businessId" uuid,email text)
+LANGUAGE plpgsql SECURITY DEFINER STRICT SET search_path = pg_catalog, pg_temp AS $function$
+BEGIN
+  IF p_password !~ '^[$]2b[$]12[$][./A-Za-z0-9]{53}$' THEN RETURN; END IF;
+  UPDATE control.portal_account a SET status='active',password_hash=p_password,
+    activation_digest=NULL,activation_expires_at=NULL
+  WHERE a.activation_digest=p_proof AND a.status='pending' AND a.activation_expires_at > clock_timestamp()
+  RETURNING a.id,a.business_id,a.email::text INTO "accountId","businessId",email;
+  IF NOT FOUND THEN RETURN; END IF;
+  INSERT INTO control.portal_session(digest,account_id,expires_at)
+    VALUES (p_session,"accountId",clock_timestamp() + interval '8 hours');
+  RETURN NEXT;
+END $function$;
+
+CREATE FUNCTION control.portal_login_verifier(p_email text)
+RETURNS TABLE(id uuid,"passwordHash" text)
+LANGUAGE sql STABLE SECURITY DEFINER STRICT SET search_path = pg_catalog, pg_temp AS $function$
+  SELECT a.id,a.password_hash FROM control.portal_account a WHERE a.email=p_email AND a.status='active'
+$function$;
+
+CREATE FUNCTION control.portal_open_session(p_account uuid,p_verified text,p_session text)
+RETURNS TABLE("accountId" uuid,"businessId" uuid,email text)
+LANGUAGE plpgsql SECURITY DEFINER STRICT SET search_path = pg_catalog, pg_temp AS $function$
+BEGIN
+  SELECT a.id,a.business_id,a.email::text INTO "accountId","businessId",email FROM control.portal_account a
+  WHERE a.id=p_account AND a.status='active' AND a.password_hash=p_verified FOR SHARE OF a;
+  IF NOT FOUND THEN RETURN; END IF;
+  INSERT INTO control.portal_session(digest,account_id,expires_at)
+    VALUES (p_session,"accountId",clock_timestamp() + interval '8 hours');
+  RETURN NEXT;
+END $function$;
+
+CREATE FUNCTION control.portal_lock_session(p_session text)
+RETURNS TABLE("accountId" uuid,"businessId" uuid,email text)
+LANGUAGE plpgsql SECURITY DEFINER STRICT SET search_path = pg_catalog, pg_temp AS $function$
+DECLARE account uuid;
+BEGIN
+  SELECT s.account_id INTO account FROM control.portal_session s WHERE s.digest=p_session;
+  IF NOT FOUND THEN RETURN; END IF;
+  -- Existing-account staff writes lock this same row before touching the business or sessions.
+  PERFORM a.id FROM control.portal_account a WHERE a.id=account FOR SHARE;
+  RETURN QUERY SELECT a.id,a.business_id,a.email::text FROM control.portal_session s
+  JOIN control.portal_account a ON a.id=s.account_id
+  WHERE s.digest=p_session AND a.id=account AND a.status='active' AND s.expires_at > clock_timestamp();
+END $function$;
+
+CREATE FUNCTION control.portal_logout(p_session text) RETURNS void
+LANGUAGE sql SECURITY DEFINER STRICT SET search_path = pg_catalog, pg_temp AS $function$
+  DELETE FROM control.portal_session s WHERE s.digest=p_session
+$function$;
+
+REVOKE ALL ON FUNCTION control.portal_activate(text,text,text),control.portal_login_verifier(text),
+  control.portal_open_session(uuid,text,text),control.portal_lock_session(text),control.portal_logout(text)
+  FROM PUBLIC,control_runtime;
+
 REVOKE ALL ON control.portal_account,control.portal_session,control.portal_auth_limit FROM PUBLIC,control_runtime;
 GRANT SELECT (id,business_id,email,status,activation_expires_at),
   INSERT (id,business_id,email,status,activation_digest,activation_expires_at),
