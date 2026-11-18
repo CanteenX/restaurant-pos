@@ -54,6 +54,11 @@ export async function operatorCases(t: TestContext, db: PrismaClient, fixtureUrl
         p.prosecdef AND p.proconfig = ARRAY['search_path=pg_catalog, pg_temp'] AS fixed
       FROM pg_proc p WHERE p.oid='control.provision_staff(text,text,text,text[],bytea)'::regprocedure`;
     assert.deepEqual(row, { permitted: false, direct: false, fixed: true });
+    const access = await db.$queryRaw<{ exposed: boolean }[]>`SELECT
+      has_any_column_privilege(role_name, 'control.staff_proof_issuance','SELECT,INSERT,UPDATE')
+      OR has_table_privilege(role_name, 'control.staff_proof_issuance','DELETE,TRUNCATE') AS exposed
+      FROM (VALUES ('control_runtime'), ('cc295_operator_fixture')) AS roles(role_name)`;
+    assert.deepEqual(access, [{ exposed: false }, { exposed: false }]);
     await assert.rejects(db.$transaction(async (tx) => {
       await tx.$executeRaw`SET LOCAL ROLE control_runtime`;
       await tx.$executeRaw`SELECT control.provision_staff('rotate', ${email}, NULL, NULL, NULL)`;
@@ -105,7 +110,7 @@ export async function operatorCases(t: TestContext, db: PrismaClient, fixtureUrl
     try {
       const root = (await app.getUrl()) + '/api/control/v1/staff/';
       const post = (path: string, body: unknown) => fetch(root + path, { method: 'POST',
-        headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        headers: { origin, connection: 'close', 'content-type': 'application/json' }, body: JSON.stringify(body) });
       const begin = (enrollmentProof?: string) => post('session/challenge', { email, password, enrollmentProof });
       type Challenge = { challenge: string; enrollmentSecret: string };
       const enroll = (x: Challenge) => post('enrollment', { challenge: x.challenge,
@@ -116,16 +121,23 @@ export async function operatorCases(t: TestContext, db: PrismaClient, fixtureUrl
       failure(run(rotate, operator.toString())); // retry cannot extend the lifetime of an outstanding proof
       assert.equal((await enroll(first)).status, 401);
       assert.equal((await begin(proof)).status, 401);
-      const enrolled = await enroll(await (await begin(fresh)).json() as Challenge);
+      const current = await (await begin(fresh)).json() as Challenge;
+      failure(run(rotate, operator.toString())); // previously consumed, challenge is still usable
+      assert.equal((await begin(fresh)).status, 401);
+      const enrolled = await enroll(current);
       assert.equal(enrolled.status, 200);
       const cookie = enrolled.headers.get('set-cookie')!.split(';')[0];
-      const session = () => fetch(root + 'session', { headers: { cookie } });
+      const session = () => fetch(root + 'session', { headers: { cookie, connection: 'close' } });
       assert.equal((await session()).status, 200);
       failure(run(rotate, operator.toString()));
       await db.$executeRaw`UPDATE control.staff SET encrypted_seed = NULL, recovery_digests = '{}', last_step = NULL,
         credential_version = credential_version + 1 WHERE email = ${email}`;
       assert.equal((await session()).status, 401);
       assert.equal((await begin()).status, 401);
+      sqlFile('uninstall.sql');
+      sqlFile('install.sql');
+      failure(run({ ...rotate, proof }, operator.toString()));
+      failure(run(rotate, operator.toString()));
       ok({ ...rotate, proof: resetProof });
       assert.equal((await begin(fresh)).status, 401);
       assert.equal((await begin(resetProof)).status, 200);

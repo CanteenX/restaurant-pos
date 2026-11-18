@@ -1,7 +1,17 @@
 BEGIN;
 -- Apply as the Control migration owner after the DBA creates the dedicated NOLOGIN group.
 GRANT USAGE ON SCHEMA control TO control_staff_operator;
-CREATE FUNCTION control.provision_staff(op text, address text, verifier text, initial_grants text[], proof_digest bytea)
+-- Keep issued digests even after consumption, factor reset, or removal of the command.
+CREATE TABLE IF NOT EXISTS control.staff_proof_issuance (
+  staff_id uuid NOT NULL,
+  digest bytea NOT NULL CHECK (octet_length(digest) = 32),
+  PRIMARY KEY (staff_id, digest)
+);
+REVOKE ALL ON control.staff_proof_issuance FROM PUBLIC, control_runtime, control_staff_operator;
+LOCK TABLE control.staff_enrollment_proof IN SHARE MODE;
+INSERT INTO control.staff_proof_issuance (staff_id, digest)
+  SELECT staff_id, digest FROM control.staff_enrollment_proof ON CONFLICT DO NOTHING;
+CREATE OR REPLACE FUNCTION control.provision_staff(op text, address text, verifier text, initial_grants text[], proof_digest bytea)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   target uuid;
@@ -20,16 +30,19 @@ BEGIN
     INSERT INTO control.staff (id, email, password_hash, grants) VALUES (target, address, verifier, initial_grants);
     audit_action := 'staff.provision';
   ELSIF op = 'rotate' AND verifier IS NULL AND initial_grants IS NULL THEN
-    -- The credential-version trigger retires pending challenges, old proofs and sessions.
     SELECT id INTO STRICT target FROM control.staff
       WHERE email = address AND enabled AND encrypted_seed IS NULL FOR UPDATE;
-    IF EXISTS (SELECT FROM control.staff_enrollment_proof WHERE staff_id = target AND digest = proof_digest) THEN
-      RAISE EXCEPTION 'Replacement proof must be fresh';
-    END IF;
-    UPDATE control.staff SET credential_version = credential_version + 1 WHERE id = target;
     audit_action := 'staff.issueProof';
   ELSE
     RAISE EXCEPTION 'Invalid provisioning request';
+  END IF;
+  INSERT INTO control.staff_proof_issuance (staff_id, digest) VALUES (target, proof_digest) ON CONFLICT DO NOTHING;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Proof has already been issued';
+  END IF;
+  IF op = 'rotate' THEN
+    -- The credential-version trigger retires pending challenges, old proofs and sessions.
+    UPDATE control.staff SET credential_version = credential_version + 1 WHERE id = target;
   END IF;
   INSERT INTO control.staff_enrollment_proof (staff_id, digest, expires_at)
     VALUES (target, proof_digest, clock_timestamp() + interval '10 minutes');
