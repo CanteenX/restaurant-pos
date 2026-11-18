@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+node --test e2e/control-seed.test.cjs
 docker info --format '{{.ServerVersion}}' >/dev/null
 work="$(mktemp -d)"
 pg=''
@@ -41,7 +42,7 @@ export CONTROL_ORIGIN='https://localhost:4172' CONTROL_API_PORT=4173
 export CONTROL_API_ORIGIN='http://127.0.0.1:4173' NEXT_TELEMETRY_DISABLED=1
 docker exec "$pg" psql -U fixture -d fixture -v ON_ERROR_STOP=1 -c 'CREATE ROLE control_runtime NOLOGIN' >/dev/null
 pnpm --filter @nventra/control-api exec prisma migrate deploy
-node e2e/control/seed.cjs
+node e2e/control/seed.cjs "${binding#127.0.0.1:}"
 export CONTROL_DATABASE_URL="${CONTROL_DATABASE_URL}?options=-c%20role%3Dcontrol_runtime"
 node -e 'void require("./apps/control-api/dist/bootstrap.js").createControlApi(process.env).then(({app,port}) => app.listen(port,"127.0.0.1"))' >"$work/control-api.log" 2>&1 & api=$!
 node apps/control/node_modules/next/dist/bin/next dev apps/control -H localhost -p 4172 >"$work/control-web.log" 2>&1 & web=$!

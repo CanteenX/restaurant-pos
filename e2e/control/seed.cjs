@@ -1,9 +1,22 @@
+function fail() {
+  process.stderr.write('Control browser fixture seed failed.\n');
+  process.exitCode = 1;
+}
+
+// The launcher passes the dynamic port from its own disposable Docker container.
+const port = process.argv[2];
+const fixtureUrl = 'postgresql://fixture:fixture@127.0.0.1:' + port + '/fixture';
+if (process.argv.length !== 3 || !/^[0-9]{5}$/.test(port) || Number(port) < 32768 ||
+    Number(port) > 65535 || process.env.CONTROL_DATABASE_URL !== fixtureUrl) {
+  fail();
+  return;
+}
 const { createHash, randomUUID } = require('node:crypto');
 const apiModules = '../../apps/control-api/node_modules/';
 const { PrismaClient } = require(apiModules + '.prisma/control-client');
 const { hash } = require(apiModules + 'bcrypt');
 const { sealSecret } = require('../../packages/types/dist/node/totp');
-const db = new PrismaClient();
+const db = new PrismaClient({ datasourceUrl: fixtureUrl });
 
 async function seed() {
   const passwordHash = await hash('browser fixture passphrase', 12);
@@ -22,7 +35,4 @@ async function seed() {
   await db.outlet.create({ data: { id: randomUUID(), businessId: business.id, displayName: 'Market Outlet', timeZone: 'UTC' } });
 }
 
-void seed().finally(() => db.$disconnect()).catch(() => {
-  process.stderr.write('Control browser fixture seed failed.\n');
-  process.exitCode = 1;
-});
+void seed().finally(() => db.$disconnect()).catch(fail);
