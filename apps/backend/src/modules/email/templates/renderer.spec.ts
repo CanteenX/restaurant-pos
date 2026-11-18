@@ -1,5 +1,8 @@
+import { createHash } from 'node:crypto';
+
 import {
   DEFAULT_EMAIL_PRIMARY_COLOR,
+  type EmailTemplateKey,
   EMAIL_TEMPLATE_KEYS,
   emailTemplateUpdateSchema,
   unknownEmailPlaceholders,
@@ -220,6 +223,44 @@ describe('defaults for all 6 keys', () => {
       expect(out.html).not.toMatch(/\{\{\s*[\w.]+\s*\}\}/);
       expect(out.text).not.toMatch(/\{\{|\}\}/);
       expect(out.text.length).toBeGreaterThan(20);
+    },
+  );
+});
+
+// Freeze the rendered output from the public preview data before moving the
+// renderer. Keep HTML formatting and text intact apart from HTML line endings.
+const DEFAULT_RENDER_DIGESTS: Readonly<Record<EmailTemplateKey, string>> = {
+  MARKETING_CAMPAIGN:
+    '2556ad67f69d099713662261c1eaa07233481a21834abf1e2ced92fa9607fee6',
+  REPORT_SCHEDULED:
+    'ac22aecaa7bbb5e6fe61f7d964cb3308d3df767588f998e540c215c3e23b8575',
+  STOCK_ALERT:
+    '0cf2920cdba5cc51609e89df462a67cf6f9721c6b400afb1f6a0bcb67fde9071',
+  RECEIPT: '29186c62129b55a43ef1aa867c8ca145196665e471b0919b493cdae3bf9c5ca4',
+  STAFF_INVITE:
+    'f968195eb15fe8cec5edce484c98e320ac246603a0a903135eedd349b4a07e94',
+  PASSWORD_RESET:
+    '760415fc69986ca938a3171e80b0502af9986263f6bfc89f9e7a736aca2a9561',
+};
+
+describe('default email render baselines', () => {
+  it.each(EMAIL_TEMPLATE_KEYS)(
+    '%s preserves its subject, HTML and text',
+    (key) => {
+      const { subject, html, text } = renderEmail({
+        key,
+        template: EMAIL_TEMPLATE_DEFAULTS[key],
+        branding,
+        values: EMAIL_SAMPLE_DATA[key],
+      });
+      const output = JSON.stringify({
+        subject,
+        html: html.replace(/\r\n/g, '\n'),
+        text,
+      });
+      const digest = createHash('sha256').update(output, 'utf8').digest('hex');
+
+      expect(digest).toBe(DEFAULT_RENDER_DIGESTS[key]);
     },
   );
 });
