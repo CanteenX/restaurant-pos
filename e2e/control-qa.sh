@@ -47,8 +47,9 @@ export CONTROL_DATABASE_URL="postgresql://fixture:fixture@$binding/fixture"
 export CONTROL_AUTH_KEY='a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5'
 export CONTROL_ORIGIN='https://localhost:4172' CONTROL_API_PORT=4173
 export CONTROL_API_ORIGIN='http://127.0.0.1:4173' NEXT_TELEMETRY_DISABLED=1
-docker exec "$pg" psql -U fixture -d fixture -v ON_ERROR_STOP=1 -c 'CREATE ROLE control_runtime NOLOGIN' >/dev/null
+docker exec "$pg" psql -U fixture -d fixture -v ON_ERROR_STOP=1 -c 'CREATE ROLE control_runtime NOLOGIN; CREATE ROLE control_mail_worker NOLOGIN' >/dev/null
 pnpm --filter @nventra/control-api exec prisma migrate deploy
+docker exec -i "$pg" psql -U fixture -d fixture -v ON_ERROR_STOP=1 < apps/control-api/operator/mail-worker-grants.sql >/dev/null
 node e2e/control/seed.cjs "${binding#127.0.0.1:}"
 export CONTROL_DATABASE_URL="${CONTROL_DATABASE_URL}?options=-c%20role%3Dcontrol_runtime"
 node -e 'void require("./apps/control-api/dist/bootstrap.js").createControlApi(process.env).then(({app,port}) => app.listen(port,"127.0.0.1"))' >"$work/control-api.log" 2>&1 & api=$!
@@ -62,4 +63,4 @@ for _ in {1..60}; do
   sleep 1
 done
 ready || { echo 'Control fixture failed to start.' >&2; exit 1; }
-node e2e/node_modules/@playwright/test/cli.js test -c e2e/playwright.control.config.ts "$@"
+CONTROL_QA_DB_PORT="${binding#127.0.0.1:}" node e2e/node_modules/@playwright/test/cli.js test -c e2e/playwright.control.config.ts "$@"

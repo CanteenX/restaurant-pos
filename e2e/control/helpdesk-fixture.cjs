@@ -6,6 +6,8 @@ module.exports = async function seedHelpdesk(db, passwordHash) {
     ['support@example.test', ['cc.business.read', 'cc.ticket.read', 'cc.ticket.manage']],
     ['ticket-reader@example.test', ['cc.business.read', 'cc.ticket.read']],
     ['reply-staff@example.test', ['cc.ticket.read', 'cc.ticket.reply']],
+    ['roundtrip-staff@example.test', ['cc.ticket.read', 'cc.ticket.manage', 'cc.ticket.reply']],
+    ['roundtrip-reader@example.test', ['cc.ticket.read']],
   ];
   await db.staff.createMany({ data: staff.map(([email, grants]) => {
     const id = randomUUID();
