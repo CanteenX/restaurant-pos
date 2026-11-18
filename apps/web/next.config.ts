@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { buildContentSecurityPolicy } from "./lib/csp.ts";
 
 // Browser only ever talks to ONE origin (this Next.js server) — API calls
 // are proxied server-side to the backend. Same reasoning as nodedr-pos:
@@ -8,11 +9,18 @@ import type { NextConfig } from "next";
 // from a build ARG, not a runtime env var (see nodedr-pos memory).
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:4001";
 
-// Baseline response headers for every page. A Content-Security-Policy is
-// intentionally NOT set here: a strict script-src without a per-request nonce
-// silently stops Next.js hydrating in production, so CSP needs a nonce
-// middleware of its own. camera=(self) is kept for the order-ticket QR scanner.
+// Baseline response headers for every page. The Content-Security-Policy comes
+// from lib/csp.ts, which documents why it allows inline scripts (no per-request
+// nonce: this app has no middleware, and a nonce would force dynamic rendering
+// of every route). camera=(self) is kept for the order-ticket QR scanner.
 const SECURITY_HEADERS = [
+  {
+    key: "Content-Security-Policy",
+    value: buildContentSecurityPolicy({
+      dev: process.env.NODE_ENV !== "production",
+      wsUrl: process.env.NEXT_PUBLIC_WS_URL,
+    }),
+  },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "SAMEORIGIN" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },

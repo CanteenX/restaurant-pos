@@ -8,6 +8,7 @@ import type { Driver } from "@/hooks/use-delivery";
 import { REALTIME_EVENTS, realtimeInvalidations } from "@/lib/realtime-keys";
 import { setRealtimeState } from "@/lib/realtime-status";
 import { resolveWsUrl } from "@/lib/ws-url";
+import { socketOptions } from "@/lib/socket-options";
 
 // One socket connection per mounted consumer, joined to the branch's room
 // server-side (see backend RealtimeGateway). Invalidates the relevant
@@ -24,7 +25,7 @@ export function useRealtime(branchId: string | null) {
   useEffect(() => {
     if (!branchId) return;
 
-    const socket = io(resolveWsUrl(), { query: { branchId }, withCredentials: true });
+    const socket = io(resolveWsUrl(), socketOptions(branchId));
     let wasDown = false;
 
     socket.on("connect", () => {
