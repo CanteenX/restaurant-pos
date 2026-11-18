@@ -2,8 +2,7 @@ import {
   DEFAULT_EMAIL_PRIMARY_COLOR,
   type EmailBrandingView,
   type EmailTemplateKey,
-} from '@nventra/types';
-import type { EmailTemplateFields } from './defaults';
+} from '../../email-templates';
 import { escapeHtml } from './escape';
 import { BODY_STYLES, FOOTER_STYLES, renderLayout } from './layout';
 import {
@@ -16,12 +15,25 @@ import {
   type TemplateValues,
 } from './markdown';
 
-export interface RenderInput {
-  key: EmailTemplateKey;
+export interface EmailTemplateFields {
+  subject: string;
+  heading: string;
+  body: string;
+  buttonText: string | null;
+  buttonUrl: string | null;
+  footer: string | null;
+  enabled: boolean;
+}
+
+interface RenderContent {
   template: Omit<EmailTemplateFields, 'enabled'> & { enabled?: boolean };
   branding: EmailBrandingView;
   /** Placeholder values (raw text; escaped here). */
   values: TemplateValues;
+}
+
+export interface RenderInput extends RenderContent {
+  key: EmailTemplateKey;
 }
 
 export interface RenderedEmail {
@@ -36,7 +48,7 @@ const PREHEADER_MAX = 120;
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
 
 /** Footer pieces, in order: template footer, branding footer, name + address. */
-function footerParts(input: RenderInput) {
+function footerParts(input: RenderContent) {
   const { template, branding, values } = input;
   const markdown = [template.footer, branding.footerText].filter(
     (s): s is string => !!s?.trim(),
@@ -54,12 +66,12 @@ function unsubscribeLink(input: RenderInput): string | null {
 }
 
 function renderText(
-  input: RenderInput,
+  input: RenderContent,
   button: { text: string; url: string } | null,
+  unsubscribe: string | null,
 ): string {
   const { template, branding, values } = input;
   const { markdown, contact } = footerParts(input);
-  const unsubscribe = unsubscribeLink(input);
   const sections = [
     oneLine(branding.headerText || values['restaurant.name'] || ''),
     oneLine(fillPlaceholders(template.heading, values)),
@@ -74,7 +86,7 @@ function renderText(
   return `${sections.join('\n\n')}\n\n—\n${footer.join('\n')}\n`;
 }
 
-function resolveButton(input: RenderInput) {
+function resolveButton(input: RenderContent) {
   const { buttonText, buttonUrl } = input.template;
   if (!buttonText || !buttonUrl) return null;
   const url = resolveSafeLink(buttonUrl, input.values);
@@ -82,17 +94,18 @@ function resolveButton(input: RenderInput) {
   return url && text ? { text, url } : null;
 }
 
-/** Renders one email (subject, HTML and plain text) from its template fields. */
-export function renderEmail(input: RenderInput): RenderedEmail {
+function renderTemplate(
+  input: RenderContent,
+  unsubscribe: string | null,
+): RenderedEmail {
   const { template, branding, values } = input;
   const subject = oneLine(fillPlaceholders(template.subject, values)).slice(
     0,
     SUBJECT_MAX,
   );
   const button = resolveButton(input);
-  const text = renderText(input, button);
+  const text = renderText(input, button, unsubscribe);
   const { markdown, contact } = footerParts(input);
-  const unsubscribe = unsubscribeLink(input);
   const footerLinesHtml = [
     ...markdown.map((m) => renderInlineHtml(m, values, FOOTER_STYLES)),
     contact ? escapeHtml(contact) : '',
@@ -122,4 +135,44 @@ export function renderEmail(input: RenderInput): RenderedEmail {
     footerLinesHtml,
   });
   return { subject, html, text };
+}
+
+/** Renders one POS email from its template fields. */
+export function renderEmail(input: RenderInput): RenderedEmail {
+  return renderTemplate(input, unsubscribeLink(input));
+}
+
+export interface TicketReplyInput {
+  subject: string;
+  customerName: string;
+  body: string;
+}
+
+/** Renders a ticket reply with literal message and customer content. */
+export function renderTicketReply(input: TicketReplyInput): RenderedEmail {
+  return renderTemplate(
+    {
+      template: {
+        subject: '{{reply.subject}}',
+        heading: 'Support reply',
+        body: 'Hi {{customer.name}},\n\n{{reply.body}}',
+        buttonText: null,
+        buttonUrl: null,
+        footer: null,
+      },
+      branding: {
+        primaryColor: DEFAULT_EMAIL_PRIMARY_COLOR,
+        headerText: 'Nventra Support',
+        footerText: null,
+        logoUrl: null,
+        replyTo: null,
+      },
+      values: {
+        'reply.subject': input.subject,
+        'customer.name': input.customerName,
+        'reply.body': input.body,
+      },
+    },
+    null,
+  );
 }

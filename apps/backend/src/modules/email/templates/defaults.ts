@@ -1,16 +1,8 @@
 import type { EmailTemplateKey } from '@nventra/types';
 import type { TemplateValues } from './markdown';
+import type { EmailTemplateFields } from './renderer';
 
-/** The editable parts of one email. */
-export interface EmailTemplateFields {
-  subject: string;
-  heading: string;
-  body: string;
-  buttonText: string | null;
-  buttonUrl: string | null;
-  footer: string | null;
-  enabled: boolean;
-}
+export type { EmailTemplateFields } from './renderer';
 
 const fields = (
   f: Omit<

@@ -15,7 +15,7 @@ import {
   EMAIL_PLACEHOLDER_PATTERN,
   isAllowedTemplateLink,
   isSafeEmailLink,
-} from '@nventra/types';
+} from '../../email-templates';
 import { escapeHtml } from './escape';
 
 export type TemplateValues = Readonly<Record<string, string>>;
