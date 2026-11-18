@@ -94,7 +94,38 @@ model Outlet {
   displayName String   @map("display_name") @db.VarChar(160)
   timeZone    String   @map("time_zone") @db.VarChar(64)
   archived    Boolean  @default(false)
+  serviceTerms OutletServiceTerm[]
   @@unique([businessId, id])
   @@map("outlet")
+  @@schema("control")
+}
+
+model ServicePlanVersion {
+  code    String @db.VarChar(32)
+  version Int
+  label   String @db.VarChar(80)
+  terms   OutletServiceTerm[]
+  @@id([code, version])
+  @@map("service_plan_version")
+  @@schema("control")
+}
+
+model OutletServiceTerm {
+  id          String   @id @db.Uuid
+  businessId  String   @map("business_id") @db.Uuid
+  outletId    String   @map("outlet_id") @db.Uuid
+  outlet      Outlet   @relation(fields: [businessId, outletId], references: [businessId, id], onDelete: Restrict, onUpdate: NoAction)
+  revision    Int
+  requestKey  String   @map("request_key") @db.Uuid
+  operation   String   @db.VarChar(6)
+  planCode    String?  @map("plan_code") @db.VarChar(32)
+  planVersion Int?     @map("plan_version")
+  plan        ServicePlanVersion? @relation(fields: [planCode, planVersion], references: [code, version], onDelete: Restrict, onUpdate: NoAction)
+  startsAt    DateTime? @map("starts_at") @db.Timestamptz(3)
+  endsAt      DateTime? @map("ends_at") @db.Timestamptz(3)
+  recordedAt  DateTime  @default(now()) @map("recorded_at") @db.Timestamptz(3)
+  @@unique([outletId, revision])
+  @@unique([outletId, requestKey])
+  @@map("outlet_service_term")
   @@schema("control")
 }
