@@ -165,6 +165,7 @@ model TicketMessage {
   direction  String   @default(dbgenerated("'internal'::character varying")) @db.VarChar(8)
   visibility String   @default(dbgenerated("'staff'::character varying")) @db.VarChar(6)
   createdAt  DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  replyOutbox TicketReplyOutbox?
   receipt    InboundReceipt?
   @@unique([id, direction])
   @@unique([ticketId, sequence])
@@ -213,5 +214,35 @@ model MailboxDelivery {
   receipt InboundReceipt @relation(fields: [mailbox,providerId], references: [mailbox,providerId], onDelete: NoAction, onUpdate: NoAction)
   @@id([mailbox,uidValidity,uid])
   @@map("mailbox_delivery")
+  @@schema("control")
+}
+
+model TicketReplyOutbox {
+  messageRowId String @id @map("message_row_id") @db.Uuid
+  messageDirection String @default("outbound") @map("message_direction") @db.VarChar(8)
+  message TicketMessage @relation(fields: [messageRowId,messageDirection], references: [id,direction], onDelete: NoAction, onUpdate: NoAction)
+  messageId String @unique @map("message_id") @db.VarChar(254)
+  inReplyTo String? @map("in_reply_to") @db.VarChar(254)
+  recipient String @db.VarChar(254)
+  subject String @db.VarChar(250)
+  renderedText String @map("rendered_text")
+  renderedHtml String @map("rendered_html")
+  acknowledgedUnverified Boolean @map("acknowledged_unverified")
+  state String @default("queued") @db.VarChar(8)
+  attempts Int @default(0)
+  availableAt DateTime @default(dbgenerated("clock_timestamp()")) @map("available_at") @db.Timestamptz(6)
+  leaseToken String? @map("lease_token") @db.Uuid
+  leaseUntil DateTime? @map("lease_until") @db.Timestamptz(6)
+  @@unique([messageRowId,messageDirection])
+  @@index([state,availableAt,messageRowId], map: "outbox_available_idx")
+  @@index([state,leaseUntil], map: "outbox_lease_idx")
+  @@map("ticket_reply_outbox")
+  @@schema("control")
+}
+
+model OutboxDailyQuota {
+  day DateTime @id @db.Date
+  attempts Int
+  @@map("outbox_daily_quota")
   @@schema("control")
 }

@@ -119,7 +119,7 @@ export async function intakeCases(t: TestContext, db: PrismaClient, worker: Pris
       [['invalid',null,null],['many',null,null],['mismatched',sender,null],['single','Buyer@example.test',null]]);
     await assert.rejects(db.$transaction(async (tx) => {
       await tx.$executeRaw`SET LOCAL ROLE control_runtime`;
-      await tx.$queryRaw`SELECT claimed_sender FROM control.inbound_receipt`;
+      await tx.$queryRaw`SELECT claimed_sender,provider_id FROM control.inbound_receipt`;
     }), (e: unknown) => (e as { meta?: { code?: string } }).meta?.code === '42501');
   });
   await t.test('quarantines unsafe text and rejects malformed windows before advancing', async () => {
