@@ -36,7 +36,7 @@ jobs:
   gate:
     name: ci-gate
     if: github.event.pull_request.draft != true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Keep Playwright 1.56.1 on a supported runner.
     timeout-minutes: 20
     services:
       postgres:
