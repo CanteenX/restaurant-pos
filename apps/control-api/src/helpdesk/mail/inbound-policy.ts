@@ -73,6 +73,7 @@ export function checkInboundMailBudget(
 }
 
 const measurements = Object.keys(INBOUND_MAIL_BUDGETS) as InboundMailMeasurement[];
+const requiredMeasurements = ['wireBytes', 'mimeParts', 'mimeDepth'] as const;
 
 /**
  * Apply the completed parse policy before passing plain text to ticket intake.
@@ -85,6 +86,18 @@ export function classifyInboundMail(
   for (const measurement of measurements) {
     const rejection = checkInboundMailBudget(measurement, measured[measurement]);
     if (rejection) return rejection;
+  }
+
+
+  const missingMeasurement = requiredMeasurements.find((measurement) => measured[measurement] === 0);
+  const invalidStructure = missingMeasurement ??
+    (measured.mimeDepth > measured.mimeParts ? 'mimeDepth' : undefined);
+  if (invalidStructure) {
+    return {
+      disposition: 'quarantine',
+      reason: 'invalid-measurement',
+      measurement: invalidStructure,
+    };
   }
 
   const { attachmentCount, mimeParts } = measured;

@@ -112,3 +112,34 @@ void test('ignores raw mail headers and returns attachment omission counts only'
     disposition: 'accept', reason: 'attachments-omitted', omittedAttachments: 4,
   });
 });
+
+for (const measurement of ['wireBytes', 'mimeParts', 'mimeDepth'] as const) {
+  void test(`requires positive ${measurement} for a completed parse`, () => {
+    assert.equal(checkInboundMailBudget(measurement, 0), null);
+    assert.deepEqual(classifyInboundMail({}, { ...ordinary, [measurement]: 0 }), {
+      disposition: 'quarantine', reason: 'invalid-measurement', measurement,
+    });
+  });
+}
+
+void test('requires a counted MIME part at every measured depth', () => {
+  assert.deepEqual(classifyInboundMail({}, { ...ordinary, mimeParts: 2, mimeDepth: 3 }), {
+    disposition: 'quarantine', reason: 'invalid-measurement', measurement: 'mimeDepth',
+  });
+});
+
+void test('accepts a minimal MIME message with no decoded text', () => {
+  const minimal = {
+    wireBytes: 1,
+    decodedTextBytes: 0,
+    mimeParts: 1,
+    mimeDepth: 1,
+    processingMs: 0,
+  };
+  assert.deepEqual(classifyInboundMail({}, { ...minimal, attachmentCount: 0 }), {
+    disposition: 'accept', reason: 'accepted', omittedAttachments: 0,
+  });
+  assert.deepEqual(classifyInboundMail({}, { ...minimal, attachmentCount: 1 }), {
+    disposition: 'accept', reason: 'attachments-omitted', omittedAttachments: 1,
+  });
+});
