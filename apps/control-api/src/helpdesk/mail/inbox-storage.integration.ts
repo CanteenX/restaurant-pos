@@ -46,6 +46,27 @@ export async function inboxStorageCases(t: TestContext, db: PrismaClient, url: s
     assert.equal(response.status, 200);
     assert.deepEqual(detail.messages.items.map((m) => [m.id, m.direction, m.visibility, m.authorId]), [[message, 'inbound', 'public', null]]);
   });
+  await t.test('accepts inbound message references and rejects a staff note as a receipt target', async () => {
+    const address = 'receipt-kind@example.test', noteId = randomUUID();
+    const actor = await db.staff.findUniqueOrThrow({ where: { email: 'inbox-reader@example.test' }, select: { id: true } });
+    await runtime((tx) => tx.ticketMessage.create({ data: { id: noteId, ticketId: ticket, sequence: 2,
+      requestKey: randomUUID(), authorId: actor.id, text: 'Synthetic internal note' }, select: { id: true } }));
+    const lease = await acquireMailbox(worker, address);
+    assert.ok(lease);
+    await releaseMailbox(worker, lease);
+    const accept = (providerId: string, messageRowId: string) => worker.inboundReceipt.create({
+      data: { mailbox: address, providerId, outcome: 'accept', reason: 'accepted', messageRowId }, select: { providerId: true },
+    });
+    assert.deepEqual(await accept('public-message', message), { providerId: 'public-message' });
+    await assert.rejects(accept('staff-note', noteId), (err: unknown) =>
+      err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003');
+    await assert.rejects(worker.$executeRaw`INSERT INTO control.inbound_receipt
+      (mailbox,provider_id,outcome,reason,message_row_id,message_direction)
+      VALUES (${address},'wrong-kind','accept','accepted',${noteId}::uuid,'internal')`, denied('23514'));
+    await assert.rejects(accept('second-receipt', message), (err: unknown) =>
+      err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002');
+    assert.equal(await worker.inboundReceipt.count({ where: { mailbox: address } }), 1);
+  });
   await t.test('fences concurrent leases, rollback, expiry, cross-mailbox and cursor rewinds', async () => {
     const pair = await Promise.all([acquireMailbox(worker, mailbox), acquireMailbox(worker, mailbox)]);
     assert.equal(pair.filter(Boolean).length, 1);

@@ -13,7 +13,7 @@ DO $$ BEGIN
   END IF;
 END $$;
 DROP TABLE control.mailbox_delivery, control.inbound_receipt, control.mailbox_cursor;
-ALTER TABLE control.ticket_message DROP CONSTRAINT message_kind,
+ALTER TABLE control.ticket_message DROP CONSTRAINT message_kind, DROP CONSTRAINT ticket_message_id_direction_key,
   ALTER COLUMN visibility TYPE varchar(5), ALTER COLUMN text TYPE varchar(4000), ALTER COLUMN author_id SET NOT NULL, ALTER COLUMN request_key SET NOT NULL,
   ADD CONSTRAINT ticket_message_direction_check CHECK (direction = 'internal'),
   ADD CONSTRAINT ticket_message_visibility_check CHECK (visibility = 'staff');

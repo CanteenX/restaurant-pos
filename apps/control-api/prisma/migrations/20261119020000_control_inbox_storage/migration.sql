@@ -2,6 +2,7 @@ BEGIN;
 ALTER TABLE control.ticket_message
   DROP CONSTRAINT ticket_message_direction_check, DROP CONSTRAINT ticket_message_visibility_check,
   ALTER COLUMN visibility TYPE varchar(6), ALTER COLUMN text TYPE text, ALTER COLUMN author_id DROP NOT NULL, ALTER COLUMN request_key DROP NOT NULL,
+  ADD CONSTRAINT ticket_message_id_direction_key UNIQUE (id, direction),
   ADD CONSTRAINT message_kind CHECK (
     (direction = 'internal' AND visibility = 'staff' AND author_id IS NOT NULL AND request_key IS NOT NULL AND length(text) <= 4000)
     OR (direction = 'inbound' AND visibility = 'public' AND author_id IS NULL AND request_key IS NULL AND octet_length(text) <= 65536)
@@ -20,7 +21,10 @@ CREATE TABLE control.inbound_receipt (
   outcome varchar(10) NOT NULL CHECK (outcome IN ('accept','skip','quarantine')),
   reason varchar(64) NOT NULL CHECK (reason ~ '^[a-z][a-z-]*$'),
   omitted_attachments smallint NOT NULL DEFAULT 0 CHECK (omitted_attachments BETWEEN 0 AND 32),
-  message_row_id uuid UNIQUE REFERENCES control.ticket_message(id),
+  message_row_id uuid,
+  message_direction varchar(8) NOT NULL DEFAULT 'inbound' CHECK (message_direction = 'inbound'),
+  UNIQUE (message_row_id, message_direction),
+  FOREIGN KEY (message_row_id, message_direction) REFERENCES control.ticket_message(id, direction),
   rfc_message_id varchar(254), verified_sender varchar(254),
   CHECK ((outcome = 'accept') = (message_row_id IS NOT NULL)),
   CHECK (outcome = 'accept' OR (rfc_message_id IS NULL AND verified_sender IS NULL)),
