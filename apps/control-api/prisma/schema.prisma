@@ -27,3 +27,40 @@ model AuditEvent {
   @@map("audit_event")
   @@schema("control")
 }
+
+model Staff {
+  id                 String    @id @db.Uuid
+  email              String    @unique
+  passwordHash       String    @map("password_hash")
+  enabled            Boolean   @default(true)
+  encryptedSeed      String?   @map("encrypted_seed")
+  lastStep           Int?      @map("last_step")
+  recoveryDigests    String[]  @default([]) @map("recovery_digests")
+  challengeDigest    String?   @unique @map("challenge_digest")
+  challengeExpiresAt DateTime? @db.Timestamptz @map("challenge_expires_at")
+  pendingSeed        String?   @map("pending_seed")
+  sessions           StaffSession[]
+  @@map("staff")
+  @@schema("control")
+}
+
+model StaffSession {
+  digest     String   @id
+  staffId    String   @db.Uuid @map("staff_id")
+  staff      Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  verifiedAt DateTime @db.Timestamptz @map("verified_at")
+  expiresAt  DateTime @db.Timestamptz @map("expires_at")
+  @@index([expiresAt], map: "staff_session_expiry")
+  @@index([staffId], map: "staff_session_staff")
+  @@map("staff_session")
+  @@schema("control")
+}
+
+model AuthLimit {
+  bucket    String   @id
+  attempts  Int
+  expiresAt DateTime @db.Timestamptz @map("expires_at")
+  @@index([expiresAt], map: "auth_limit_expiry")
+  @@map("auth_limit")
+  @@schema("control")
+}

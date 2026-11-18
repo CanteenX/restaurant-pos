@@ -35,3 +35,31 @@ Audit integration tests require a disposable local PostgreSQL instance with a da
 `control_audit_test`, passed through `CONTROL_AUDIT_TEST_DATABASE_URL`. The
 ci-gate uses its existing disposable PostgreSQL service and creates a separate
 database for these tests; it keeps the POS schema and migration history separate.
+
+## Staff authentication
+
+Staff routes require a dedicated runtime connection in `CONTROL_DATABASE_URL`, a
+64-hex-character `CONTROL_AUTH_KEY` from the operator's secret store, and the
+exact HTTPS browser origin in `CONTROL_ORIGIN`. Preserve the key across restarts
+and backups. Changing it invalidates outstanding credentials and requires factor
+re-enrollment. With all three settings absent the bootstrap serves health only.
+Partial configuration prevents startup.
+
+An operator with provisioning privileges adds each eligible staff row, including
+the owner, to the Control database with a UUID, normalized email and a bcrypt
+password hash (cost 12, maximum 72 UTF-8 bytes). The API's runtime role cannot
+create or enable staff accounts. There is no public signup or owner bypass.
+
+POST `/staff/session/challenge` with email and password. A new challenge
+supersedes the staff member's previous challenge and expires after five minutes.
+First-time staff receive a base32 authenticator seed. Confirm it with the
+challenge and six-digit code at `/staff/enrollment` and save the returned
+recovery codes. Later logins use `/staff/session/verify` with the challenge and
+TOTP or one unused recovery code. Both endpoints issue an eight-hour secure
+host-only HttpOnly session cookie after verification. GET `/staff/session`
+returns the current staff ID and verification time. POST `/staff/session/logout`
+revokes that session. Browser POSTs require the configured Origin.
+
+Rate limits use shared PostgreSQL counters per staff account and socket peer.
+A reverse proxy shares its peer quota across users. Forwarded address headers
+are ignored. Deploy behind a reviewed TLS endpoint and restrict direct access.

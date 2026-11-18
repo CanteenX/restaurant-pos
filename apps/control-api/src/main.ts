@@ -8,7 +8,7 @@ async function main() {
 
 void main().catch(() => {
   process.stderr.write(
-    'Control API failed to start. Check CONTROL_API_PORT and listener availability.\n',
+    'Control API failed to start. Check CONTROL_API_PORT, staff configuration and listener availability.\n',
   );
   process.exitCode = 1;
 });

@@ -50,3 +50,10 @@ void test('the production entry point exits with a redacted diagnostic', () => {
   assert.ok(!result.stderr.includes(value));
   assert.equal(result.stdout, '');
 });
+
+void test('partial staff configuration fails closed without echoing secret material', async () => {
+  await assert.rejects(
+    createControlApi({ CONTROL_API_PORT: '4002', CONTROL_AUTH_KEY: 'invalid-fixture-input' }),
+    /^Error: Invalid Control staff authentication configuration$/,
+  );
+});
