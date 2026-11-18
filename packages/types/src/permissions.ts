@@ -175,7 +175,11 @@ export interface ControlStaffGrantScope {
 }
 
 function isCanonicalStaffId(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && value === value.trim();
+  return (
+    typeof value === "string" &&
+    value.length === 36 &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)
+  );
 }
 
 /** Compare canonical staff IDs and grant snapshots loaded by the caller. */

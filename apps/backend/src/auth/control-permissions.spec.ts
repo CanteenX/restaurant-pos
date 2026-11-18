@@ -9,10 +9,13 @@ import {
 } from '@nventra/types';
 
 const actor = {
-  staffId: 'actor',
+  staffId: '111111aa-1111-4111-8111-111111111111',
   grants: ['cc.staff.manage', 'cc.business.read', 'cc.ticket.read'],
 };
-const subject = { staffId: 'subject', grants: ['cc.business.read'] };
+const subject = {
+  staffId: '222222bb-2222-4222-8222-222222222222',
+  grants: ['cc.business.read'],
+};
 
 describe('Control permission registry', () => {
   it('registers only explicit Control keys separately from the POS catalog', () => {
@@ -121,6 +124,25 @@ describe('Control staff grant ceiling', () => {
     expect(canManageControlStaff({ ...actor, staffId: '' }, subject, [])).toBe(
       false,
     );
+  });
+
+  it.each([
+    ['non-UUID actor ID', 'actor', subject.staffId],
+    ['non-UUID subject ID', actor.staffId, 'subject'],
+    [
+      'uppercase spelling of the actor UUID',
+      actor.staffId,
+      actor.staffId.toUpperCase(),
+    ],
+    ['UUID with a trailing newline', actor.staffId, subject.staffId + '\n'],
+  ])('rejects %s', (_reason, actorId, subjectId) => {
+    expect(
+      canManageControlStaff(
+        { ...actor, staffId: actorId },
+        { ...subject, staffId: subjectId },
+        [],
+      ),
+    ).toBe(false);
   });
 
   it('denies peer, superior and incomparable scopes regardless of duplicate entries', () => {
