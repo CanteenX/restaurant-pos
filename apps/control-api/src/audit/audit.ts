@@ -46,7 +46,7 @@ function hashEvent(event: AuditEvent): string {
   const fields = [
     event.sequence, event.occurredAtMs, event.actorType, event.actorId, event.businessId ?? '',
     event.action, event.subjectType, event.subjectId ?? '', event.requestId, event.outcome,
-    event.changedFields.join(','), event.previousHash,
+    JSON.stringify(event.changedFields), event.previousHash,
   ];
   return createHash('sha256').update(fields.join('|'), 'utf8').digest('hex');
 }

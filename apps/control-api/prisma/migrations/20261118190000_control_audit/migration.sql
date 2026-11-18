@@ -15,7 +15,8 @@ CREATE TABLE control.audit_event (
   outcome text NOT NULL CHECK (outcome IN ('succeeded', 'denied', 'failed')),
   changed_fields text[] NOT NULL DEFAULT ARRAY[]::text[] CHECK (
     cardinality(changed_fields) <= 24 AND
-    array_position(changed_fields, NULL) IS NULL AND
+    -- Array equality also checks its dimensions and lower bounds.
+    changed_fields = string_to_array(array_to_string(changed_fields, ','), ',') AND
     array_to_string(changed_fields, ',') ~ '^([A-Za-z][A-Za-z0-9._]{0,63}(,[A-Za-z][A-Za-z0-9._]{0,63})*)?$'
   ),
   previous_hash text NOT NULL CHECK (previous_hash ~ '^[a-f0-9]{64}$'),
@@ -29,7 +30,7 @@ CREATE FUNCTION control.append_audit_event(
   event_request_id uuid, event_outcome text, event_changed_fields text[]
 ) RETURNS bigint
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER
-SET search_path = pg_catalog
+SET search_path = pg_catalog, pg_temp
 AS $function$
 DECLARE
   tip control.audit_event%ROWTYPE;
@@ -50,7 +51,7 @@ BEGIN
     next_sequence::text, occurred_at::text, event_actor_type, event_actor_id::text,
     COALESCE(event_business_id::text, ''), event_action, event_subject_type,
     COALESCE(event_subject_id::text, ''), event_request_id::text, event_outcome,
-    array_to_string(event_changed_fields, ','), previous_digest
+    array_to_json(event_changed_fields)::text, previous_digest
   ], '|'), 'UTF8')), 'hex');
 
   INSERT INTO control.audit_event (

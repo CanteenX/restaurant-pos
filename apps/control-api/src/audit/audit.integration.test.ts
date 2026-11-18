@@ -19,7 +19,7 @@ const event = {
   subjectId: '00000000-0000-4000-8000-000000000002',
   requestId: '00000000-0000-4000-8000-000000000003',
   outcome: 'succeeded',
-  changedFields: ['displayName'],
+  changedFields: ['displayName', 'timezone'],
 } as const;
 
 void test('PostgreSQL 16 Control audit storage', { skip: !ci && !testUrl }, async (t) => {
@@ -115,6 +115,51 @@ void test('PostgreSQL 16 Control audit storage', { skip: !ci && !testUrl }, asyn
     const snapshot = await captureAuditCheckpoint(db);
     assert.equal(await verifyAuditCheckpoint(db, { ...snapshot, sequence: 'broken' }), false);
     assert.equal(await verifyAuditCheckpoint(db, { ...snapshot, sequence: '9999999999999999999' }), false);
+  });
+
+
+  await t.test('accepts only canonical field arrays at the database boundary', async () => {
+    const invalidFields = [
+      Prisma.sql`ARRAY['displayName,timezone']`,
+      Prisma.sql`'[0:1]={displayName,timezone}'::text[]`,
+      Prisma.sql`ARRAY[ARRAY['displayName'], ARRAY['timezone']]`,
+      Prisma.sql`ARRAY['displayName', NULL]`,
+    ];
+    for (const fields of invalidFields) {
+      await assert.rejects(runtime(async (tx) => {
+        await tx.$queryRaw`
+          SELECT control.append_audit_event(
+            'staff', ${event.actorId}::uuid, NULL, 'business.updated', 'business', NULL,
+            ${event.requestId}::uuid, 'succeeded', ${fields}
+          )
+        `;
+        throw new Error('roll back invalid fixture');
+      }), (error: unknown) => error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.meta?.code === '23514');
+    }
+  });
+
+  await t.test('binds field-array element boundaries to the retained checkpoint', async () => {
+    const snapshot = await captureAuditCheckpoint(db);
+    await assert.rejects(db.$transaction(async (tx) => {
+      // Simulate storage corruption using the fixture's database owner.
+      await tx.$executeRaw`
+        ALTER TABLE control.audit_event DROP CONSTRAINT audit_event_changed_fields_check
+      `;
+      await tx.$executeRaw`
+        UPDATE control.audit_event SET changed_fields = ARRAY['displayName,timezone'] WHERE sequence = 1
+      `;
+      assert.equal(await verifyAuditCheckpoint(tx, snapshot), false);
+      throw new Error('restore the fixture');
+    }), /restore the fixture/);
+  });
+
+  await t.test('resolves catalog names ahead of temporary objects in the append function', async () => {
+    const [{ proconfig }] = await db.$queryRaw<{ proconfig: string[] }[]>`
+      SELECT proconfig FROM pg_catalog.pg_proc
+      WHERE oid = 'control.append_audit_event(text,uuid,uuid,text,text,uuid,uuid,text,text[])'::regprocedure
+    `;
+    assert.deepEqual(proconfig, ['search_path=pg_catalog, pg_temp']);
   });
 
   await t.test('detects data and chain tampering against an independently retained checkpoint', async () => {
