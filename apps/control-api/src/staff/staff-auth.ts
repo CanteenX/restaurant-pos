@@ -113,12 +113,13 @@ export class StaffAuth {
   }
 
   async session(value: string) {
+    const now = new Date();
     const record = await this.db.staffSession.findFirst({
-      where: { digest: this.digest('session', value), expiresAt: { gt: new Date() }, staff: { enabled: true } },
-      select: { staffId: true, verifiedAt: true },
+      where: { digest: this.digest('session', value), expiresAt: { gt: now }, verifiedAt: { lte: now }, staff: { enabled: true } },
+      select: { staffId: true, verifiedAt: true, staff: { select: { grants: true } } },
     });
     if (!record) throw new UnauthorizedException();
-    return record;
+    return { staffId: record.staffId, verifiedAt: record.verifiedAt, grants: record.staff.grants };
   }
 
   async logout(value: string) {
