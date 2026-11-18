@@ -88,7 +88,7 @@ test('sign-in and ticket creation use only same-origin public portal paths and r
   await page.getByLabel('Subject').fill('Printer support');
   await page.getByLabel('Message', { exact: true }).fill('<b>Fixture note</b>');
   await page.getByRole('button', { name: 'Raise ticket' }).click();
-  expect(state.ticket()).toEqual({ subject: 'Printer support', text: '<b>Fixture note</b>',
+  await expect.poll(state.ticket).toEqual({ subject: 'Printer support', text: '<b>Fixture note</b>',
     requestKey: expect.stringMatching(/^[a-f0-9-]{36}$/) });
   await page.getByRole('button', { name: 'Printer support' }).click();
   const message = page.getByText('<b>Fixture note</b>', { exact: true });
