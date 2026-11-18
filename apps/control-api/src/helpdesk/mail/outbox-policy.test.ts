@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { OUTBOX_ATTEMPT_LIMIT, OUTBOX_DAILY_LIMIT, resolveOutboxDelivery } from './outbox-policy.ts';
+import { resolveOutboxDelivery } from './outbox-policy.ts';
 
 const id = '<stable@fixture.example.test>';
 
@@ -13,10 +13,8 @@ void test('accepts only positive delivery evidence for the expected stable messa
 
 void test('backs off only after positive retryable 4xx rejections, up to the attempt cap', () => {
   const rejection = { status: 'rejected', responseCode: 451, retryable: true } as const;
-  assert.equal(OUTBOX_ATTEMPT_LIMIT, 3);
-  assert.equal(OUTBOX_DAILY_LIMIT, 100);
-  assert.deepEqual(resolveOutboxDelivery(rejection, 1, id), { state: 'queued', retryAfterSeconds: 60 });
-  assert.deepEqual(resolveOutboxDelivery(rejection, 2, id), { state: 'queued', retryAfterSeconds: 300 });
+  assert.deepEqual(resolveOutboxDelivery(rejection, 1, id), { state: 'queued' });
+  assert.deepEqual(resolveOutboxDelivery(rejection, 2, id), { state: 'queued' });
   assert.deepEqual(resolveOutboxDelivery(rejection, 3, id), { state: 'failed' });
 });
 

@@ -32,6 +32,12 @@ export async function outboxCases(t: TestContext, db: PrismaClient, worker: Pris
     await assert.rejects(worker.$queryRaw`SELECT recipient FROM control.ticket_reply_outbox`, denied);
     await assert.rejects(runtime(tx => tx.$queryRaw`SELECT rendered_text FROM control.ticket_reply_outbox`), denied);
     await assert.rejects(runtime(tx => tx.$queryRaw`SELECT * FROM control.claim_ticket_reply()`), denied);
+    const grants = await db.$queryRaw<{ column_name: string }[]>`SELECT column_name::text FROM information_schema.column_privileges
+      WHERE grantee='control_runtime' AND table_schema='control' AND table_name='inbound_receipt' AND privilege_type='SELECT' ORDER BY column_name`;
+    assert.deepEqual(grants.map(g => g.column_name), ['claimed_sender','message_row_id','outcome','rfc_message_id','verified_sender']);
+    await runtime(tx => tx.$queryRaw`SELECT message_row_id,outcome,claimed_sender,verified_sender,rfc_message_id FROM control.inbound_receipt`);
+    await assert.rejects(runtime(tx => tx.$queryRaw`SELECT mailbox FROM control.inbound_receipt`), denied);
+    await assert.rejects(runtime(tx => tx.$queryRaw`SELECT uid FROM control.mailbox_delivery`), denied);
     await runtime(tx => tx.$queryRaw`SELECT message_row_id,state,acknowledged_unverified FROM control.ticket_reply_outbox`);
   });
   await db.ticket.create({ data: { id: ticket, subject: 'Synthetic outbox' } });
@@ -64,14 +70,26 @@ export async function outboxCases(t: TestContext, db: PrismaClient, worker: Pris
         text: 'Rendered text', html: '<p>Rendered text</p>' });
       assert.deepEqual(await state(id), { state: 'sending', attempts: ++calls });
       assert.equal(await quota(), calls);
-      return calls === 1 ? { status: 'rejected', responseCode: 451, retryable: true } as const : { status: 'sent', messageId } as const;
+      return calls < 3 ? { status: 'rejected', responseCode: 451, retryable: true } as const : { status: 'sent', messageId } as const;
     };
+    const stamp = async () => (await db.$queryRaw<{ at: Date }[]>`SELECT clock_timestamp() AS at`)[0].at;
+    const checkDelay = async (since: Date, seconds: number) => {
+      const [row] = await db.$queryRaw<{ expected: boolean }[]>`SELECT available_at - make_interval(secs => ${seconds}::int)
+        BETWEEN ${since}::timestamptz AND clock_timestamp() AS expected FROM control.ticket_reply_outbox WHERE message_row_id=${id}::uuid`;
+      assert.equal(row.expected, true);
+    };
+    const firstStart = await stamp();
     const pair = await Promise.all([dispatchOutbox(worker,{ send },signal),dispatchOutbox(worker,{ send },signal)]);
     assert.deepEqual(pair.sort(), ['idle','queued']);
+    await checkDelay(firstStart,60);
     assert.equal(await dispatchOutbox(worker,{ send },signal), 'idle');
     await db.$executeRaw`UPDATE control.ticket_reply_outbox SET available_at=now() WHERE message_row_id=${id}::uuid`;
+    const secondStart = await stamp();
+    assert.equal(await dispatchOutbox(worker,{ send },signal), 'queued');
+    await checkDelay(secondStart,300);
+    await db.$executeRaw`UPDATE control.ticket_reply_outbox SET available_at=now() WHERE message_row_id=${id}::uuid`;
     assert.equal(await dispatchOutbox(worker,{ send },signal), 'sent');
-    assert.deepEqual(await state(id), { state: 'sent', attempts: 2 });
+    assert.deepEqual(await state(id), { state: 'sent', attempts: 3 });
   });
   await t.test('holds cancelled, ambiguous and expired sends; a stale token cannot finish', async () => {
     const id = await queue(), cancel = new AbortController();
