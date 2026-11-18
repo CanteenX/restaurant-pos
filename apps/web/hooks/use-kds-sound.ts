@@ -5,6 +5,7 @@ import { io } from "socket.io-client";
 import { useNotificationMute } from "./use-notification-mute";
 import { playNotificationFeedback } from "@/lib/notification-feedback";
 import { resolveWsUrl } from "@/lib/ws-url";
+import { socketOptions } from "@/lib/socket-options";
 
 // Kitchen-specific sound alert for a new ticket (`kot.created`) and for an
 // incoming order that is waiting to be accepted (`order.created` with
@@ -30,7 +31,7 @@ export function useKdsSound(branchId: string | null) {
   useEffect(() => {
     if (!branchId) return;
 
-    const socket = io(resolveWsUrl(), { query: { branchId }, withCredentials: true });
+    const socket = io(resolveWsUrl(), socketOptions(branchId));
     const chime = () => {
       if (!mutedRef.current) playNotificationFeedback();
     };
