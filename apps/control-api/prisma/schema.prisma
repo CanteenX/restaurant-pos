@@ -40,6 +40,7 @@ model Staff {
   challengeExpiresAt DateTime? @db.Timestamptz @map("challenge_expires_at")
   pendingSeed        String?   @map("pending_seed")
   sessions           StaffSession[]
+  enrollmentProof    StaffEnrollmentProof?
   @@map("staff")
   @@schema("control")
 }
@@ -62,5 +63,14 @@ model AuthLimit {
   expiresAt DateTime @db.Timestamptz @map("expires_at")
   @@index([expiresAt], map: "auth_limit_expiry")
   @@map("auth_limit")
+  @@schema("control")
+}
+
+model StaffEnrollmentProof {
+  staffId   String   @id @db.Uuid @map("staff_id")
+  staff     Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  digest    Bytes
+  expiresAt DateTime @db.Timestamptz @map("expires_at")
+  @@map("staff_enrollment_proof")
   @@schema("control")
 }
