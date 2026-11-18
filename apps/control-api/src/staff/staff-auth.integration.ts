@@ -1,3 +1,4 @@
+import { ticketCases } from '../helpdesk/tickets/tickets.integration.js';
 import { planCases } from '../plans/plans.integration.js';
 import { businessCases } from '../business/business.integration.js';
 import { staffAccessCases } from './staff-access.integration.js';
@@ -161,4 +162,5 @@ export async function staffAuthCases(t: TestContext, db: PrismaClient, datasourc
   await staffAccessCases(t, db, root, origin, password, verifier);
   await businessCases(t, db, new URL('../businesses', root).href, origin);
   await planCases(t, db, new URL('../', root).href, origin);
+  await ticketCases(t, db, new URL('../tickets', root).href, origin);
 }

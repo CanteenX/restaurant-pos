@@ -43,6 +43,8 @@ model Staff {
   pendingSeed        String?   @map("pending_seed")
   sessions           StaffSession[]
   enrollmentProof    StaffEnrollmentProof?
+  ownedTickets       Ticket[]
+  authoredNotes      TicketMessage[]
   @@map("staff")
   @@schema("control")
 }
@@ -83,6 +85,7 @@ model Business {
   displayName String   @map("display_name") @db.VarChar(160)
   archived    Boolean  @default(false)
   outlets     Outlet[]
+  tickets     Ticket[]
   @@map("business")
   @@schema("control")
 }
@@ -96,6 +99,7 @@ model Outlet {
   archived    Boolean  @default(false)
   serviceTerms OutletServiceTerm[]
   @@unique([businessId, id])
+  tickets     Ticket[]
   @@map("outlet")
   @@schema("control")
 }
@@ -127,5 +131,42 @@ model OutletServiceTerm {
   @@unique([outletId, revision])
   @@unique([outletId, requestKey])
   @@map("outlet_service_term")
+  @@schema("control")
+}
+
+model Ticket {
+  id         String          @id @db.Uuid
+  subject    String          @db.VarChar(240)
+  businessId String?         @map("business_id") @db.Uuid
+  business   Business?       @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  outletId   String?         @map("outlet_id") @db.Uuid
+  outlet     Outlet?         @relation(fields: [businessId, outletId], references: [businessId, id], onDelete: Restrict, onUpdate: NoAction)
+  ownerId    String?         @map("owner_id") @db.Uuid
+  owner      Staff?          @relation(fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  status     String          @default("open") @db.VarChar(8)
+  priority   String          @default("normal") @db.VarChar(6)
+  createdAt  DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime        @default(now()) @map("updated_at") @db.Timestamptz(3)
+  messages   TicketMessage[]
+  @@index([status, id])
+  @@map("ticket")
+  @@schema("control")
+}
+
+model TicketMessage {
+  id         String   @id @db.Uuid
+  ticketId   String   @map("ticket_id") @db.Uuid
+  ticket     Ticket   @relation(fields: [ticketId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  sequence   Int
+  requestKey String   @map("request_key") @db.Uuid
+  authorId   String   @map("author_id") @db.Uuid
+  author     Staff    @relation(fields: [authorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  text       String   @db.VarChar(4000)
+  direction  String   @default(dbgenerated("'internal'::character varying")) @db.VarChar(8)
+  visibility String   @default(dbgenerated("'staff'::character varying")) @db.VarChar(5)
+  createdAt  DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  @@unique([ticketId, sequence])
+  @@unique([ticketId, requestKey])
+  @@map("ticket_message")
   @@schema("control")
 }
