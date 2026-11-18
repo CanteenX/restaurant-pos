@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { controlPermissionSatisfied } from '@nventra/types/dist/permissions';
 import { Dashboard } from './dashboard';
+import { AuditLog } from './audit-log';
 import { Helpdesk } from './helpdesk';
 import { call, ApiError, type Session } from './api';
 
@@ -14,10 +15,12 @@ export default function ControlCenter() {
   const [codes, setCodes] = useState<string[]>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [showHelpdesk, setShowHelpdesk] = useState(false);
-  const canReadTickets = controlPermissionSatisfied(session?.grants, 'cc.ticket.read');
-  const canReadBusinesses = controlPermissionSatisfied(session?.grants, 'cc.business.read');
-  const helpdeskActive = canReadTickets && (showHelpdesk || !canReadBusinesses);
+  const [workspace, setWorkspace] = useState('Client operations');
+  const views = [
+    ['Client operations','cc.business.read'], ['Helpdesk','cc.ticket.read'], ['Audit log','cc.audit.read'],
+  ] as const;
+  const available = views.filter(([,grant]) => controlPermissionSatisfied(session?.grants, grant));
+  const active = available.find(([name]) => name === workspace)?.[0] ?? available[0]?.[0];
 
   const expire = useCallback(() => setSession(null), []);
 
@@ -80,11 +83,12 @@ export default function ControlCenter() {
         <ul className="codes">{codes.map((code) => <li key={code}><code>{code}</code></li>)}</ul>
         <button className="primary" onClick={() => setCodes(undefined)}>Done</button>
       </section> : session ? <>
-        {canReadTickets && canReadBusinesses && <nav className="actions staff-workspace-nav" aria-label="Staff workspace">
-          <button type="button" aria-pressed={!helpdeskActive} onClick={() => setShowHelpdesk(false)}>Client operations</button>
-          <button type="button" aria-pressed={helpdeskActive} onClick={() => setShowHelpdesk(true)}>Helpdesk</button>
+        {available.length > 1 && <nav className="actions staff-workspace-nav" aria-label="Staff workspace">
+          {available.map(([name]) => <button key={name} type="button" aria-pressed={active === name}
+            onClick={() => setWorkspace(name)}>{name}</button>)}
         </nav>}
-        {helpdeskActive ? <Helpdesk session={session} onExpired={expire} /> : <Dashboard session={session} onExpired={expire} />}
+        {active === 'Audit log' ? <AuditLog onExpired={expire} /> : active === 'Helpdesk'
+          ? <Helpdesk session={session} onExpired={expire} /> : <Dashboard session={session} onExpired={expire} />}
       </> : session === null ?
         <section className="signin"><h1>{challenge ? 'Two-factor verification' : 'Staff sign-in'}</h1>
           <form method="post" key={challenge ? 'factor' : 'credentials'} onSubmit={signIn}>
