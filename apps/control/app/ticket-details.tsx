@@ -4,18 +4,18 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { call, pagePath, useRequestScope, type Page } from './api';
 import { ticketPatch } from '@nventra/types/dist/control-ticket';
 
-export const ticketStatus = ticketPatch.shape.status.unwrap();
-export const statuses = ticketStatus.options;
-export type TicketStatus = (typeof statuses)[number];
-export type Ticket = { id: string; subject: string; status: TicketStatus; priority: string };
+export const statuses = ticketPatch.shape.status.unwrap().options;
+const priorities = ticketPatch.shape.priority.unwrap().options;
+export type Ticket = { id: string; subject: string; status: (typeof statuses)[number]; priority: (typeof priorities)[number] };
+export type TicketTriage = Pick<Ticket, 'status' | 'priority'>;
 export const label = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
 type Message = { id: string; direction: string; visibility: string; text: string };
 type Detail = Ticket & { messages: Page<Message> };
 
-export function TicketDetails({ id, manage, report, clearError, onStatusChange }: {
+export function TicketDetails({ id, manage, report, clearError, onTriageChange }: {
   id: string; manage: boolean; report: (failure: unknown) => void; clearError: () => void;
-  onStatusChange: (id: string, status: TicketStatus) => void;
+  onTriageChange: (id: string, triage: TicketTriage) => void;
 }) {
   const path = 'tickets/' + id;
   const [ticket, setTicket] = useState<Detail | null>();
@@ -43,16 +43,22 @@ export function TicketDetails({ id, manage, report, clearError, onStatusChange }
     finally { if (!scope.aborted) setBusy(false); }
   }
 
-  function saveStatus(event: FormEvent<HTMLFormElement>) {
+  function saveTriage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const parsed = ticketStatus.safeParse(new FormData(event.currentTarget).get('status'));
-    if (!parsed.success) return;
-    const status = parsed.data;
+    const values = new FormData(event.currentTarget);
+    const parsed = ticketPatch.safeParse({ status: values.get('status'), priority: values.get('priority') });
+    if (!ticket || !parsed.success || !parsed.data.status || !parsed.data.priority) return;
+    const { status, priority } = parsed.data;
+    const changed = { ...(status !== ticket.status && { status }), ...(priority !== ticket.priority && { priority }) };
+    if (Object.keys(changed).length === 0) return;
     void change(async (scope) => {
-      await call(path, { status }, undefined, 'PATCH');
+      await call(path, changed, undefined, 'PATCH');
       if (scope.aborted) return;
-      setTicket((current) => current && { ...current, status });
-      onStatusChange(id, status);
+      const { status: savedStatus, priority: savedPriority } = await call<Detail>(path, undefined, scope);
+      if (scope.aborted) return;
+      const triage = { status: savedStatus, priority: savedPriority };
+      setTicket((current) => current && { ...current, ...triage });
+      onTriageChange(id, triage);
     });
   }
 
@@ -69,7 +75,7 @@ export function TicketDetails({ id, manage, report, clearError, onStatusChange }
       const refreshed = await call<Detail>(path, undefined, scope);
       if (scope.aborted) return;
       setTicket(refreshed);
-      onStatusChange(id, refreshed.status);
+      onTriageChange(id, { status: refreshed.status, priority: refreshed.priority });
       noteAttempt.current = undefined;
       form.reset();
       setNotice('Internal note added.');
@@ -92,12 +98,15 @@ export function TicketDetails({ id, manage, report, clearError, onStatusChange }
   return <section className="detail ticket-detail">
     <h2>{ticket.subject}</h2>
     <p>{label(ticket.status)} · {label(ticket.priority)} priority</p>
-    {manage && <form key={ticket.status} onSubmit={saveStatus}>
+    {manage && <form key={ticket.status + ticket.priority} onSubmit={saveTriage}>
       <fieldset className="ticket-status" disabled={busy}>
         <label>Status<select name="status" defaultValue={ticket.status}>
           {statuses.map((status) => <option key={status} value={status}>{label(status)}</option>)}
         </select></label>
-        <button className="primary" type="submit">Save status</button>
+        <label>Priority<select name="priority" defaultValue={ticket.priority}>
+          {priorities.map((priority) => <option key={priority} value={priority}>{label(priority)}</option>)}
+        </select></label>
+        <button className="primary" type="submit">Save status and priority</button>
       </fieldset>
     </form>}
     <h3>Conversation</h3>

@@ -29,9 +29,20 @@ test('support staff read plain text, update ticket status and add a private note
   const original = page.getByText('<b>Receipt printer offline</b>', { exact: false });
   await expect(original).toBeVisible();
   await expect(original.locator('b')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Printer support.*Open/ })).toBeVisible();
+  const priority = page.getByRole('combobox', { name: 'Priority', exact: true });
+  await expect(priority).toHaveValue('high');
   await page.getByRole('combobox', { name: 'Status', exact: true }).selectOption('pending');
-  await page.getByRole('button', { name: 'Save status' }).click();
+  await priority.selectOption('urgent');
+  const savedTriage = page.waitForResponse((response) => response.request().method() === 'PATCH' &&
+    response.url().includes('/tickets/'));
+  await page.getByRole('button', { name: 'Save status and priority' }).click();
+  const triage = await savedTriage;
+  expect(triage.status()).toBe(200);
+  expect(triage.request().postDataJSON()).toEqual({ status: 'pending', priority: 'urgent' });
   await expect(page.getByRole('button', { name: /Printer support.*Pending/ })).toBeVisible();
+  await expect(page.getByText('Pending · Urgent priority', { exact: true })).toBeVisible();
+  await expect(priority).toHaveValue('urgent');
 
   await page.getByLabel('Internal note', { exact: true }).fill('Ask technician to check toner.');
   const saved = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith('/notes'));
@@ -50,10 +61,11 @@ test('read-only staff see ticket details while management actions stay unavailab
   await openTicket(page, 'ticket-reader@example.test');
   await expect(page.getByText('Customer message', { exact: true })).toBeVisible();
   await expect(page.getByRole('combobox', { name: 'Status', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('combobox', { name: 'Priority', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Add internal note' })).toHaveCount(0);
   const { items: [ticket] } = await (await page.request.get(prefix + '/tickets')).json();
   const endpoint = prefix + '/tickets/' + ticket.id;
-  expect((await page.request.patch(endpoint, { headers: { origin }, data: { status: 'closed' } })).status()).toBe(403);
+  expect((await page.request.patch(endpoint, { headers: { origin }, data: { status: 'closed', priority: 'normal' } })).status()).toBe(403);
   expect((await page.request.post(endpoint + '/notes', { headers: { origin },
     data: { requestKey: crypto.randomUUID(), text: 'Read-only note attempt' } })).status()).toBe(403);
 });

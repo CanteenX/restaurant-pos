@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { controlPermissionSatisfied } from '@nventra/types/dist/permissions';
 import { ApiError, call, pagePath, useRequestScope, type Page, type Session } from './api';
-import { TicketDetails, label, statuses, type Ticket, type TicketStatus } from './ticket-details';
+import { TicketDetails, label, statuses, type Ticket, type TicketTriage } from './ticket-details';
 
 export function Helpdesk({ session, onExpired }: { session: Session; onExpired: () => void }) {
   const [filter, setFilter] = useState('');
@@ -53,12 +53,12 @@ function TicketQueue({ filter, manage, onExpired }: { filter: string; manage: bo
     } catch (failure) { if (!scope.aborted) report(failure); } finally { if (!scope.aborted) setLoading(false); }
   }
 
-  function statusChanged(id: string, status: TicketStatus) {
+  function triageChanged(id: string, triage: TicketTriage) {
     setPage((current) => current && {
-      ...current, items: current.items.map((ticket) => ticket.id === id ? { ...ticket, status } : ticket)
+      ...current, items: current.items.map((ticket) => ticket.id === id ? { ...ticket, ...triage } : ticket)
         .filter((ticket) => !filter || ticket.status === filter),
     });
-    if (filter && filter !== status) setSelected(undefined);
+    if (filter && filter !== triage.status) setSelected(undefined);
   }
 
   return <>
@@ -70,13 +70,13 @@ function TicketQueue({ filter, manage, onExpired }: { filter: string; manage: bo
         {page && !page.items.length && <p>No tickets found.</p>}
         <ul>{page?.items.map((ticket) => <li key={ticket.id}>
           <button aria-pressed={selected === ticket.id} onClick={() => { setSelected(ticket.id); setError(''); }}>
-            {ticket.subject}<small>{label(ticket.status)}</small>
+            {ticket.subject}<small>{label(ticket.status)} · {label(ticket.priority)}</small>
           </button>
         </li>)}</ul>
         {page?.nextCursor && <button disabled={loading} onClick={more}>More tickets</button>}
       </section>
       {selected ? <TicketDetails key={selected} id={selected} manage={manage} report={report}
-        clearError={() => setError('')} onStatusChange={statusChanged} /> :
+        clearError={() => setError('')} onTriageChange={triageChanged} /> :
         <section className="detail"><p>Choose a ticket to view its conversation.</p></section>}
     </div>
   </>;
