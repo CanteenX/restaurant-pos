@@ -9,8 +9,8 @@ name: CI
 #   - PRs only (no extra run on push to staging), docs-only PRs skipped
 #   - one runner, pnpm store cached, superseded runs cancelled
 #   - backend e2e (Postgres) only when backend/types/prisma files change
-# Browser QA (docker compose + Playwright) runs inside the Claude cloud agent
-# VMs, which cost no Actions minutes; e2e.yml runs it here once a night only.
+#   - Control browser QA only when Control or shared inputs change
+# POS browser QA stays in the separate scheduled e2e.yml workflow.
 
 on:
   pull_request:
@@ -36,7 +36,7 @@ jobs:
   gate:
     name: ci-gate
     if: github.event.pull_request.draft != true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Keep Playwright 1.56.1 on a supported runner.
     timeout-minutes: 20
     services:
       postgres:
@@ -65,6 +65,19 @@ jobs:
               - "apps/backend/**"
               - "packages/types/**"
               - "pnpm-lock.yaml"
+            control:
+              - "apps/control/**"
+              - "apps/control-api/**"
+              - "packages/types/**"
+              - "pnpm-lock.yaml"
+              - "e2e/control/**"
+              - "e2e/control-qa.sh"
+              - "e2e/control-seed.test.cjs"
+              - "e2e/playwright.control.config.ts"
+              - "e2e/package.json"
+              - "e2e/package-lock.json"
+              - "pnpm-workspace.yaml"
+              - ".github/workflows/ci.yml"
 
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
@@ -93,3 +106,9 @@ jobs:
         if: steps.changes.outputs.backend == 'true'
         working-directory: apps/backend
         run: pnpm exec prisma migrate deploy && pnpm test:e2e
+
+      - name: Control Playwright (only when Control changed)
+        if: steps.changes.outputs.control == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          CONTROL_QA_INSTALL_CHROMIUM: "1"
+        run: bash e2e/control-qa.sh

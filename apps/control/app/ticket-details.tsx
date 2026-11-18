@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { call, pagePath, useRequestScope, type Page } from './api';
+import { ApiError, call, pagePath, useRequestScope, type Page } from './api';
 import { ticketPatch } from '@nventra/types/dist/control-ticket';
+import { TicketReply, type ReplyTarget } from './ticket-reply';
 
 export const statuses = ticketPatch.shape.status.unwrap().options;
 const priorities = ticketPatch.shape.priority.unwrap().options;
@@ -10,16 +11,20 @@ export type Ticket = { id: string; subject: string; status: (typeof statuses)[nu
 export type TicketTriage = Pick<Ticket, 'status' | 'priority'>;
 export const label = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
-type Message = { id: string; direction: string; visibility: string; text: string };
-type Detail = Ticket & { messages: Page<Message> };
+const deliveryLabels = new Map([
+  ['queued', 'Queued'], ['sending', 'Sending'], ['held', 'Held for review'], ['sent', 'Sent'], ['failed', 'Delivery failed'],
+]);
+type Message = { id: string; direction: string; visibility: string; text: string; deliveryState?: string };
+type Detail = Ticket & { messages: Page<Message>; replyTarget?: ReplyTarget | null };
 
-export function TicketDetails({ id, manage, report, clearError, onTriageChange }: {
-  id: string; manage: boolean; report: (failure: unknown) => void; clearError: () => void;
+export function TicketDetails({ id, manage, reply, report, clearError, onTriageChange }: {
+  id: string; manage: boolean; reply: boolean; report: (failure: unknown) => void; clearError: () => void;
   onTriageChange: (id: string, triage: TicketTriage) => void;
 }) {
   const path = 'tickets/' + id;
   const [ticket, setTicket] = useState<Detail | null>();
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
   const [notice, setNotice] = useState('');
   const requests = useRequestScope();
   const noteAttempt = useRef<{ text: string; key: string }>(undefined);
@@ -27,20 +32,32 @@ export function TicketDetails({ id, manage, report, clearError, onTriageChange }
   useEffect(() => {
     const scope = requests.current;
     if (!scope) return;
-    void call<Detail>(path, undefined, scope).then(setTicket).catch((failure: unknown) => {
+    void call<Detail>(path, undefined, scope).then((detail) => {
+      if (!scope.aborted) setTicket(detail);
+    }).catch((failure: unknown) => {
       if (!scope.aborted) { setTicket(null); report(failure); }
     });
   }, [path, report, requests]);
 
   async function change(action: (scope: AbortSignal) => Promise<void>) {
     const scope = requests.current;
-    if (!scope || scope.aborted) return;
+    if (!scope || scope.aborted || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setNotice('');
     clearError();
     try { await action(scope); }
-    catch (failure) { if (!scope.aborted) report(failure); }
-    finally { if (!scope.aborted) setBusy(false); }
+    catch (failure) {
+      if (scope.aborted) return;
+      if (failure instanceof ApiError && failure.status === 403) {
+        setTicket(null);
+        noteAttempt.current = undefined;
+      }
+      report(failure);
+    } finally {
+      inFlight.current = false;
+      if (!scope.aborted) setBusy(false);
+    }
   }
 
   function saveTriage(event: FormEvent<HTMLFormElement>) {
@@ -54,11 +71,10 @@ export function TicketDetails({ id, manage, report, clearError, onTriageChange }
     void change(async (scope) => {
       await call(path, changed, undefined, 'PATCH');
       if (scope.aborted) return;
-      const { status: savedStatus, priority: savedPriority } = await call<Detail>(path, undefined, scope);
+      const refreshed = await call<Detail>(path, undefined, scope);
       if (scope.aborted) return;
-      const triage = { status: savedStatus, priority: savedPriority };
-      setTicket((current) => current && { ...current, ...triage });
-      onTriageChange(id, triage);
+      setTicket((current) => current && { ...refreshed, messages: current.messages });
+      onTriageChange(id, { status: refreshed.status, priority: refreshed.priority });
     });
   }
 
@@ -82,18 +98,31 @@ export function TicketDetails({ id, manage, report, clearError, onTriageChange }
     });
   }
 
+  async function refreshConversation(scope: AbortSignal) {
+    const refreshed = await call<Detail>(path, undefined, scope);
+    if (!scope.aborted) {
+      setTicket(refreshed);
+      onTriageChange(id, { status: refreshed.status, priority: refreshed.priority });
+    }
+  }
+
   function more() {
     const cursor = ticket?.messages.nextCursor;
     if (!cursor) return;
     void change(async (scope) => {
       const next = await call<Detail>(pagePath(path, cursor), undefined, scope);
-      if (!scope.aborted) setTicket((current) => current && {
-        ...current, messages: { items: [...current.messages.items, ...next.messages.items], nextCursor: next.messages.nextCursor },
+      if (scope.aborted) return;
+      setTicket((current) => current && {
+        ...next, messages: { items: [...current.messages.items, ...next.messages.items], nextCursor: next.messages.nextCursor },
       });
+      onTriageChange(id, { status: next.status, priority: next.priority });
     });
   }
 
-  if (!ticket) return <section className="detail"><p role="status">{ticket === null ? 'Ticket unavailable.' : 'Loading ticket…'}</p></section>;
+  if (!ticket) return <section className="detail">
+    <p role="status">{ticket === null ? 'Ticket unavailable.' : 'Loading ticket…'}</p>
+    {ticket === null && <button type="button" disabled={busy} onClick={() => void change(refreshConversation)}>Retry ticket</button>}
+  </section>;
 
   return <section className="detail ticket-detail">
     <h2>{ticket.subject}</h2>
@@ -110,19 +139,31 @@ export function TicketDetails({ id, manage, report, clearError, onTriageChange }
       </fieldset>
     </form>}
     <h3>Conversation</h3>
+    <button type="button" disabled={busy} onClick={() => void change(refreshConversation)}>Refresh conversation</button>
     {!ticket.messages.items.length && <p>No messages yet.</p>}
-    <ol className="ticket-thread">{ticket.messages.items.map((message) => <li key={message.id}>
-      <article className={message.visibility === 'staff' ? 'ticket-note' : 'ticket-message'}>
-        <strong>{message.visibility === 'staff' ? 'Internal note' : 'Customer message'}</strong>
-        <p>{message.text}</p>
-      </article>
-    </li>)}</ol>
+    <ol className="ticket-thread">{ticket.messages.items.map((message) => {
+      const outbound = message.visibility === 'public' && message.direction === 'outbound';
+      const status = outbound && deliveryLabels.get(message.deliveryState ?? '');
+      const title = message.visibility === 'staff' ? 'Internal note' : outbound ? 'Email reply' : 'Customer message';
+      return <li key={message.id}>
+        <article className={message.visibility === 'staff' ? 'ticket-note' : 'ticket-message'}>
+          <strong>{title}</strong>
+          {status && <small>{status}</small>}
+          <p>{message.text}</p>
+        </article>
+      </li>;
+    })}</ol>
     {ticket.messages.nextCursor && <button disabled={busy} onClick={more}>More messages</button>}
     {manage && <form onSubmit={addNote}><fieldset disabled={busy}>
       <label>Internal note<textarea name="note" maxLength={4000} required rows={3} /></label>
       <small>Visible only to staff.</small>
       <button className="primary" type="submit">Add internal note</button>
     </fieldset></form>}
+    {reply && (ticket.replyTarget ?
+      <TicketReply key={ticket.replyTarget.address + ':' + ticket.replyTarget.verified}
+        path={path} target={ticket.replyTarget} busy={busy} change={change}
+        refresh={refreshConversation} queued={() => setNotice('Reply queued.')} /> :
+      <p>No reply address is available for this ticket.</p>)}
     {notice && <p role="status">{notice}</p>}
   </section>;
 }
