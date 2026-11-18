@@ -1,5 +1,6 @@
 import type { IncomingMessage } from 'node:http';
-import { BadRequestException, Body, Controller, Get, Inject, Param, Post, Query, Req, UseFilters } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Inject, NotFoundException,
+  Param, Post, Query, Req, UseFilters } from '@nestjs/common';
 import { controlCursorPage, controlResourceId, ticketMessagePage } from '@nventra/types';
 import { portalTicketOpen, portalTicketStaffReply } from '@nventra/types/dist/control-portal-ticket';
 import type { z } from 'zod';
@@ -8,7 +9,7 @@ import { portalTokenFromRequest } from '../../portal/portal-auth.controller.js';
 import { portalBusiness } from '../../portal/portal-read.js';
 import { StaffAuth } from '../../staff/staff-auth.js';
 import { sessionCookie, StaffExceptionFilter } from '../../staff/staff.controller.js';
-import { listPortalTickets, openPortalTicket, publishPortalReply, readPortalTicket } from './portal-ticket-store.js';
+import { listPortalTickets, openPortalTicket, ownsPortalTicket, publishPortalReply, readPortalTicket } from './portal-ticket-store.js';
 
 function input<T>(schema: z.ZodType<T>, value: unknown): T {
   const parsed = schema.safeParse(value);
@@ -35,7 +36,11 @@ export class PortalTicketsController {
     const id = input(controlResourceId, rawId);
     const page = input(ticketMessagePage, query);
     return this.auth.withSession(portalTokenFromRequest(req), async (tx, { businessId }) => {
-      await portalBusiness(tx, businessId, true);
+      const business = await portalBusiness(tx, businessId);
+      if (business.hostedStatus !== 'active') {
+        if (!await ownsPortalTicket(tx, id)) throw new NotFoundException();
+        throw new ForbiddenException();
+      }
       return readPortalTicket(tx, id, page);
     });
   }

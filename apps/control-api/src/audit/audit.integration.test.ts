@@ -167,11 +167,15 @@ void test('PostgreSQL 16 Control audit storage', { skip: !ci && !testUrl }, asyn
 
   await t.test('detects data and chain tampering against an independently retained checkpoint', async () => {
     const snapshot = await captureAuditCheckpoint(db);
-    await db.$executeRaw`UPDATE control.audit_event SET action = 'business.deleted' WHERE sequence = 1`;
-    assert.equal(await verifyAuditCheckpoint(db, snapshot), false);
-    await db.$executeRaw`UPDATE control.audit_event SET action = 'business.updated' WHERE sequence = 1`;
-    await db.$executeRaw`DELETE FROM control.audit_event WHERE sequence = 2`;
-    assert.equal(await verifyAuditCheckpoint(db, snapshot), false);
+    await assert.rejects(db.$transaction(async (tx) => {
+      await tx.$executeRaw`UPDATE control.audit_event SET action = 'business.deleted' WHERE sequence = 1`;
+      assert.equal(await verifyAuditCheckpoint(tx, snapshot), false);
+      await tx.$executeRaw`UPDATE control.audit_event SET action = ${event.action} WHERE sequence = 1`;
+      await tx.$executeRaw`DELETE FROM control.audit_event WHERE sequence = 2`;
+      assert.equal(await verifyAuditCheckpoint(tx, snapshot), false);
+      throw new Error('restore the fixture');
+    }), /restore the fixture/);
+    assert.ok(await verifyAuditCheckpoint(db, snapshot));
   });
 
   await t.test('staff runtime cannot issue enrollment proofs or provision identities', async () => {

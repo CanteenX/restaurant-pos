@@ -18,6 +18,7 @@ import { readPortalResources } from './portal/portal-downloads.js';
 import { PortalReadController, portalResourceConfig } from './portal/portal-read.controller.js';
 import { readPortalConfig } from './portal/portal-identity-policy.js';
 import { TicketsController } from './helpdesk/tickets/tickets.controller.js';
+import { PortalTicketReplyController, PortalTicketsController } from './helpdesk/portal/portal-tickets.controller.js';
 import { StaffController } from './staff/staff.controller.js';
 
 @Controller('health')
@@ -39,8 +40,8 @@ export async function createControlApi(env: NodeJS.ProcessEnv) {
   const app = await NestFactory.create<NestExpressApplication>({
     module: ControlApiModule,
     controllers: auth ? [StaffController, BusinessController, PlansController, TicketsController,
-      AuditReadController, BillingController, HostedAccessController,
-      ...(portal ? [PortalAccountsController, PortalAuthController, PortalReadController] : [])] : [],
+      AuditReadController, BillingController, HostedAccessController, PortalTicketReplyController,
+      ...(portal ? [PortalAccountsController, PortalAuthController, PortalReadController, PortalTicketsController] : [])] : [],
     providers: [
       ...(auth ? [{ provide: StaffAuth, useValue: auth }] : []),
       ...(resources ? [{ provide: portalResourceConfig, useValue: resources }] : []),

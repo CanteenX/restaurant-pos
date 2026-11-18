@@ -3,6 +3,7 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { portalReadCases } from './portal-read.integration.js';
+import { portalTicketCases } from '../helpdesk/portal/portal-tickets.integration.js';
 import { execFileSync } from 'node:child_process';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import type { TestContext } from 'node:test';
@@ -32,6 +33,12 @@ export async function portalIdentityCases(t: TestContext, db: PrismaClient, fixt
       await assert.rejects(openPortalDatabase(portalUrl.toString()), /^Error: Invalid Control portal database identity$/);
     } finally {
       await db.$executeRaw`REVOKE SELECT (description) ON control.billing_invoice FROM cc325_portal_fixture`;
+    }
+    await db.$executeRaw`GRANT SELECT (subject) ON control.ticket TO cc325_portal_fixture`;
+    try {
+      await assert.rejects(openPortalDatabase(portalUrl.toString()), /^Error: Invalid Control portal database identity$/);
+    } finally {
+      await db.$executeRaw`REVOKE SELECT (subject) ON control.ticket FROM cc325_portal_fixture`;
     }
     const [grants] = await db.$queryRaw<{ portalBusiness: boolean; portalStaff: boolean; staffVerifier: boolean }[]>`
       SELECT has_any_column_privilege('cc325_portal_fixture','control.business','SELECT,UPDATE') AS "portalBusiness",
@@ -194,4 +201,5 @@ export async function portalIdentityCases(t: TestContext, db: PrismaClient, fixt
     assert.equal(await limited.text(), '');
   });
   await portalReadCases(t, db, root, 'a6'.repeat(32));
+  await portalTicketCases(t, db, root, origin, 'a6'.repeat(32));
 }

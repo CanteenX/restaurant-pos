@@ -69,6 +69,12 @@ async function findTicket(tx: Prisma.TransactionClient, id: string, lock = false
   return ticket;
 }
 
+async function hasPortalScope(tx: Prisma.TransactionClient, id: string) {
+  const [row] = await tx.$queryRaw<{ locked: boolean }[]>`
+    SELECT EXISTS (SELECT ticket_id FROM control.portal_ticket WHERE ticket_id=${id}::uuid) AS locked`;
+  return row?.locked === true;
+}
+
 export class TicketService {
   constructor(private readonly staff: StaffAccess) {}
 
@@ -106,8 +112,11 @@ export class TicketService {
       const items = messages.slice(0, limit).map(messageWithState);
       const canReply = controlPermissionSatisfied(actor.grants, 'cc.ticket.reply');
       const canManage = controlPermissionSatisfied(actor.grants, 'cc.ticket.manage');
-      const origin = canReply || canManage ? await firstAcceptedOrigin(tx, id) : null;
-      return { ...ticket, replyTarget: canReply ? replyTarget(origin) : null, needsBusinessLinkConfirmation: canManage && origin !== null,
+      const scopeLocked = await hasPortalScope(tx, id);
+      const origin = !scopeLocked && (canReply || canManage) ? await firstAcceptedOrigin(tx, id) : null;
+      const target = canReply ? replyTarget(origin) : null;
+      const replyChannel = canReply && scopeLocked ? 'portal' : target ? 'email' : null;
+      return { ...ticket, scopeLocked, replyChannel, replyTarget: target, needsBusinessLinkConfirmation: canManage && origin !== null,
         messages: { items, nextCursor: messages.length > limit ? items[items.length - 1].sequence : null } };
     });
   }
@@ -122,6 +131,7 @@ export class TicketService {
       const next = { businessId, outletId, ownerId, status: change.status ?? current.status, priority: change.priority ?? current.priority };
       const fields = (Object.keys(next) as (keyof typeof next)[]).filter((key) => next[key] !== current[key]);
       if (fields.length === 0) return { id };
+      if ((fields.includes('businessId') || fields.includes('outletId')) && await hasPortalScope(tx, id)) throw new ConflictException();
       const needsConfirmation = fields.includes('businessId') && businessId && await firstAcceptedOrigin(tx, id);
       if (needsConfirmation && !change.confirmedBusinessLink) throw new BadRequestException();
 
@@ -152,6 +162,7 @@ export class TicketService {
     const acknowledged = acknowledgeUnverified === true;
     return this.staff.withPermission(cookie, 'cc.ticket.reply', async (tx, actor) => {
       const ticket = await findTicket(tx, id, true);
+      if (await hasPortalScope(tx, id)) throw new ConflictException();
       const previous = await tx.ticketMessage.findUnique({
         where: { ticketId_requestKey: { ticketId: id, requestKey } },
         select: { ...noteFields, replyOutbox: { select: { state: true, acknowledgedUnverified: true } } },

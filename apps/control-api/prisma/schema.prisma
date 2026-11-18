@@ -205,6 +205,7 @@ model Ticket {
   createdAt  DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt  DateTime        @default(now()) @map("updated_at") @db.Timestamptz(3)
   messages   TicketMessage[]
+  @@unique([id, businessId], map: "ticket_portal_scope_key")
   @@index([status, id])
   @@map("ticket")
   @@schema("control")

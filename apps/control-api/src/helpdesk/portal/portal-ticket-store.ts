@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { z } from 'zod';
 import type { portalTicketOpen, portalTicketStaffReply } from '@nventra/types/dist/control-portal-ticket';
 import { Prisma } from '../../../node_modules/.prisma/control-client/index.js';
@@ -33,10 +32,16 @@ export async function readPortalTicket(tx: Tx, id: string, { limit, cursor }: { 
   return { ...ticket, messages: { items, nextCursor: rows.length > limit ? items[limit - 1].sequence : null } };
 }
 
+export async function ownsPortalTicket(tx: Tx, id: string) {
+  const [row] = await tx.$queryRaw<{ owned: boolean }[]>`SELECT control.portal_owns_ticket(${id}::uuid) AS owned`;
+  return row?.owned === true;
+}
+
 function requestError(error: unknown): never {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.meta?.code === 'NV400') throw new BadRequestException();
     if (error.meta?.code === 'NV409') throw new ConflictException();
+    if (error.meta?.code === 'NV403') throw new ForbiddenException();
   }
   throw error;
 }
@@ -44,8 +49,7 @@ function requestError(error: unknown): never {
 export async function openPortalTicket(tx: Tx, draft: z.infer<typeof portalTicketOpen>) {
   try {
     const [{ id }] = await tx.$queryRaw<{ id: string }[]>`SELECT control.portal_open_ticket(
-      ${randomUUID()}::uuid, ${randomUUID()}::uuid, ${draft.requestKey}::uuid,
-      ${draft.outletId ?? null}::uuid, ${draft.subject}, ${draft.text}) AS id`;
+      ${draft.requestKey}::uuid, ${draft.outletId ?? null}::uuid, ${draft.subject}, ${draft.text}) AS id`;
     return { id };
   } catch (error) { return requestError(error); }
 }
@@ -53,7 +57,7 @@ export async function openPortalTicket(tx: Tx, draft: z.infer<typeof portalTicke
 export async function publishPortalReply(tx: Tx, ticketId: string, actorId: string, reply: z.infer<typeof portalTicketStaffReply>) {
   try {
     const [{ id }] = await tx.$queryRaw<{ id: string | null }[]>`SELECT control.publish_portal_ticket_reply(
-      ${ticketId}::uuid, ${randomUUID()}::uuid, ${actorId}::uuid, ${reply.requestKey}::uuid, ${reply.text}) AS id`;
+      ${ticketId}::uuid, ${actorId}::uuid, ${reply.requestKey}::uuid, ${reply.text}) AS id`;
     if (!id) throw new NotFoundException();
     return { id };
   } catch (error) { return requestError(error); }

@@ -1,26 +1,39 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import type { TestContext } from 'node:test';
 import type { PrismaClient } from '../../../node_modules/.prisma/control-client/index.js';
+import { portalDigest } from '../../portal/portal-identity-policy.js';
+import { captureAuditCheckpoint, verifyAuditCheckpoint } from '../../audit/audit.js';
 
-type Principal = { accountId: string; businessId: string; cookie: string; outletId: string };
-type Fixtures = {
-  root: string;
-  origin: string;
-  opener: Principal;
-  sameBusinessOtherAccount: Principal;
-  differentBusiness: Principal;
-  inboxReader: string;
-  replier: string;
-  setSuspended: (businessId: string, suspended: boolean) => Promise<void>;
-};
 type Ticket = { id: string; subject: string };
 type Thread = { messages: { items: { id: string; text: string }[] } };
 
-export async function portalTicketCases(t: TestContext, db: PrismaClient, fixture: Fixtures) {
-  const { root, origin, opener, sameBusinessOtherAccount, differentBusiness, inboxReader, replier } = fixture;
-  const req = (route: string, cookie = opener.cookie, body?: object, from = origin) => fetch(root + route, {
-    method: body ? 'POST' : 'GET', headers: { cookie, origin: from, 'content-type': 'application/json' }, body: JSON.stringify(body),
+export async function portalTicketCases(t: TestContext, db: PrismaClient, root: string, origin: string, key: string) {
+  const business = () => db.business.create({ data: { id: randomUUID(), legalName: 'Support fixture', displayName: 'Support fixture' } });
+  const [a, b] = await Promise.all([business(), business()]);
+  async function portal(businessId: string) {
+    const accountId = randomUUID(), token = randomBytes(32).toString('base64url');
+    const outlet = await db.outlet.create({ data: { id: randomUUID(), businessId, displayName: 'Fixture', timeZone: 'UTC' } });
+    await db.$executeRaw`INSERT INTO control.portal_account(id,business_id,email,status,password_hash)
+      VALUES (${accountId}::uuid,${businessId}::uuid,${accountId + '@example.test'},'active','fixture')`;
+    await db.$executeRaw`INSERT INTO control.portal_session(digest,account_id,expires_at)
+      VALUES (${portalDigest(key,'session',token)},${accountId}::uuid,clock_timestamp()+interval '10 minutes')`;
+    return { accountId, businessId, outletId: outlet.id, cookie: '__Host-control_portal=' + token };
+  }
+  async function staff(grants: string[]) {
+    const id = randomUUID(), token = randomBytes(32).toString('base64url');
+    await db.staff.create({ data: { id, email: id + '@example.test', grants, passwordHash: 'fixture' } });
+    const digest = createHmac('sha256','a5'.repeat(32)).update('session\0' + token).digest('hex');
+    await db.staffSession.create({ data: { staffId: id, digest, verifiedAt: new Date(), expiresAt: new Date(Date.now() + 600_000) } });
+    return { id, cookie: '__Host-control_staff=' + token };
+  }
+  const [opener, sameBusinessOtherAccount, differentBusiness, reader, writer] = await Promise.all([
+    portal(a.id), portal(a.id), portal(b.id), staff(['cc.ticket.read']), staff(['cc.ticket.read','cc.ticket.manage','cc.ticket.reply']),
+  ]);
+  const inboxReader = reader.cookie, replier = writer.cookie;
+  const req = (route: string, cookie = opener.cookie, body?: object, from = origin, method = body ? 'POST' : 'GET') =>
+    fetch(new URL(route.slice(1), root), {
+      method, headers: { cookie, origin: from, 'content-type': 'application/json' }, body: JSON.stringify(body),
   });
   const draft = { subject: 'Portal printer check', text: 'Please check the printer. <b>Thanks</b>', requestKey: randomUUID() };
   let id = '';
@@ -45,6 +58,7 @@ export async function portalTicketCases(t: TestContext, db: PrismaClient, fixtur
     assert.equal(event[0].actorId, opener.accountId);
     assert.equal(event[0].businessId, opener.businessId);
     assert.equal(await db.ticketMessage.count({ where: { ticketId: id } }), 1);
+    assert.ok(await verifyAuditCheckpoint(db, await captureAuditCheckpoint(db)));
   });
 
   await t.test('scopes detail and queue to the opener, including other customers in the same business', async () => {
@@ -53,6 +67,16 @@ export async function portalTicketCases(t: TestContext, db: PrismaClient, fixtur
     assert.equal(yours.status, 200);
     assert.equal(yours.headers.get('cache-control'), 'no-store');
     assert.equal((await yours.json() as Thread).messages.items[0].text, draft.text);
+    const second = await req('/portal/tickets', opener.cookie, { ...draft, requestKey: randomUUID() });
+    assert.equal(second.status, 201);
+    const list = '/portal/tickets?limit=1';
+    type Page = { items: Ticket[]; nextCursor: string | null };
+    const firstPage = await (await req(list)).json() as Page;
+    assert.ok(firstPage.nextCursor);
+    const lastPage = await (await req(list + '&cursor=' + firstPage.nextCursor)).json() as Page;
+    assert.equal(lastPage.nextCursor, null);
+    assert.deepEqual([firstPage.items[0].id, lastPage.items[0].id].sort(),
+      [id, (await second.json() as { id: string }).id].sort());
     for (const actor of [differentBusiness, sameBusinessOtherAccount]) {
       assert.equal((await req(portalPath(), actor.cookie)).status, 404);
       const page = await (await req('/portal/tickets', actor.cookie)).json() as { items: Ticket[] };
@@ -60,6 +84,14 @@ export async function portalTicketCases(t: TestContext, db: PrismaClient, fixtur
     }
     const staff = await (await req('/tickets?businessId=' + opener.businessId, inboxReader)).json() as { items: Ticket[] };
     assert.ok(staff.items.some((ticket) => ticket.id === id));
+    for (const change of [{ businessId: differentBusiness.businessId }, { outletId: sameBusinessOtherAccount.outletId }]) {
+      assert.equal((await req(staffPath(), replier, change, origin, 'PATCH')).status, 409);
+    }
+    assert.deepEqual(await (await req(staffPath(), inboxReader)).json().then((row: unknown) => {
+      const { scopeLocked, replyChannel } = row as { scopeLocked: boolean; replyChannel: string | null };
+      return { scopeLocked, replyChannel };
+    }), { scopeLocked: true, replyChannel: null });
+    assert.equal((await (await req(staffPath(), replier)).json() as { replyChannel: string }).replyChannel, 'portal');
     const unrelated = await db.ticket.create({ data: { id: randomUUID(), subject: 'Unshared email', businessId: opener.businessId } });
     const mail = await db.ticketMessage.create({ data: { id: randomUUID(), ticketId: unrelated.id,
       sequence: 1, direction: 'inbound', visibility: 'public', text: 'Unshared fixture mail' } });
@@ -93,19 +125,33 @@ export async function portalTicketCases(t: TestContext, db: PrismaClient, fixtur
     assert.equal(await db.auditEvent.count({ where: { subjectId: id, requestId: reply.requestKey } }), 1);
     assert.equal(await unanswered(), false);
     assert.deepEqual((await (await req(portalPath())).json() as Thread).messages.items.map(({ text }) => text), [draft.text, reply.text]);
+    const page = await (await req(portalPath() + '?limit=1')).json() as { messages: { nextCursor: number } };
+    assert.equal(page.messages.nextCursor, 1);
+    const remaining = await (await req(portalPath() + '?cursor=1&limit=1')).json() as Thread;
+    assert.deepEqual(remaining.messages.items.map(({ text }) => text), [reply.text]);
     assert.ok((await (await req(staffPath(), inboxReader)).json() as Thread).messages.items.some(({ text }) => text === note.text));
   });
 
   await t.test('requires active hosted access for portal ticket reads and writes', async () => {
     assert.ok(id);
-    await fixture.setSuspended(opener.businessId, true);
+    async function setAccess(status: string, revision: number) {
+      await db.$executeRaw`INSERT INTO control.hosted_access_event(business_id,request_key,actor_id,status,reason,revision)
+        VALUES (${opener.businessId}::uuid,${randomUUID()}::uuid,${writer.id}::uuid,${status},'Fixture transition',${revision})`;
+    }
+    const other = await req('/portal/tickets', differentBusiness.cookie, draft);
+    assert.equal(other.status, 201);
+    const { id: foreign } = await other.json() as { id: string };
+    assert.notEqual(foreign, id);
+    await setAccess('suspended', 1);
     try {
       assert.equal((await req('/portal/tickets')).status, 403);
       assert.equal((await req(portalPath())).status, 403);
+      assert.equal((await req('/portal/tickets/' + foreign)).status, 404);
+      assert.equal((await req('/portal/tickets/' + randomUUID())).status, 404);
       assert.equal((await req('/portal/tickets', opener.cookie, { ...draft, requestKey: randomUUID() })).status, 403);
       assert.equal((await req(staffPath(), inboxReader)).status, 200);
     } finally {
-      await fixture.setSuspended(opener.businessId, false);
+      await setAccess('active', 2);
     }
   });
 
@@ -125,6 +171,11 @@ export async function portalTicketCases(t: TestContext, db: PrismaClient, fixtur
     await assert.rejects(db.$transaction(async (tx) => {
       await tx.$executeRaw`SET LOCAL ROLE control_runtime`;
       return tx.$queryRaw`SELECT control.append_audit_event('customer', ${opener.accountId}::uuid, ${opener.businessId}::uuid,
+        'portal.ticket.open', 'ticket', ${id}::uuid, ${randomUUID()}::uuid, 'succeeded', ARRAY['ticket'])`;
+    }), denied);
+    await assert.rejects(db.$transaction(async (tx) => {
+      await tx.$executeRaw`SET LOCAL ROLE control_runtime`;
+      return tx.$queryRaw`SELECT control.append_audit_event_core('customer', ${opener.accountId}::uuid, ${opener.businessId}::uuid,
         'portal.ticket.open', 'ticket', ${id}::uuid, ${randomUUID()}::uuid, 'succeeded', ARRAY['ticket'])`;
     }), denied);
   });
