@@ -7,10 +7,10 @@ export class ApiError extends Error {
   constructor(readonly status: number) { super('Control API request failed'); }
 }
 
-export async function call<T>(path: string, body?: object, signal?: AbortSignal): Promise<T> {
+export async function call<T>(path: string, body?: object, signal?: AbortSignal, method: 'POST' | 'PATCH' = 'POST'): Promise<T> {
   const response = await fetch('/api/control/v1/' + path, {
     signal, cache: 'no-store', ...(body && {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
     }),
   });
   if (!response.ok) throw new ApiError(response.status);
@@ -18,7 +18,7 @@ export async function call<T>(path: string, body?: object, signal?: AbortSignal)
 }
 
 export function pagePath(path: string, cursor: Page<unknown>['nextCursor']) {
-  return cursor === null ? path : path + '?cursor=' + encodeURIComponent(cursor);
+  return cursor === null ? path : path + (path.includes('?') ? '&' : '?') + 'cursor=' + encodeURIComponent(cursor);
 }
 
 // A write can commit after navigation. Ignore its result when its view is gone.

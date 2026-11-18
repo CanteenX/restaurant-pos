@@ -1,7 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { controlPermissionSatisfied } from '@nventra/types/dist/permissions';
 import { Dashboard } from './dashboard';
+import { Helpdesk } from './helpdesk';
 import { call, ApiError, type Session } from './api';
 
 type Challenge = { challenge: string; enrollmentSecret?: string };
@@ -12,6 +14,10 @@ export default function ControlCenter() {
   const [codes, setCodes] = useState<string[]>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [showHelpdesk, setShowHelpdesk] = useState(false);
+  const canReadTickets = controlPermissionSatisfied(session?.grants, 'cc.ticket.read');
+  const canReadBusinesses = controlPermissionSatisfied(session?.grants, 'cc.business.read');
+  const helpdeskActive = canReadTickets && (showHelpdesk || !canReadBusinesses);
 
   const expire = useCallback(() => setSession(null), []);
 
@@ -73,7 +79,13 @@ export default function ControlCenter() {
         <h1>Recovery codes</h1><p>Save these codes securely. Each can be used once in place of an authenticator code.</p>
         <ul className="codes">{codes.map((code) => <li key={code}><code>{code}</code></li>)}</ul>
         <button className="primary" onClick={() => setCodes(undefined)}>Done</button>
-      </section> : session ? <Dashboard session={session} onExpired={expire} /> : session === null ?
+      </section> : session ? <>
+        {canReadTickets && canReadBusinesses && <nav className="actions staff-workspace-nav" aria-label="Staff workspace">
+          <button type="button" aria-pressed={!helpdeskActive} onClick={() => setShowHelpdesk(false)}>Client operations</button>
+          <button type="button" aria-pressed={helpdeskActive} onClick={() => setShowHelpdesk(true)}>Helpdesk</button>
+        </nav>}
+        {helpdeskActive ? <Helpdesk session={session} onExpired={expire} /> : <Dashboard session={session} onExpired={expire} />}
+      </> : session === null ?
         <section className="signin"><h1>{challenge ? 'Two-factor verification' : 'Staff sign-in'}</h1>
           <form method="post" key={challenge ? 'factor' : 'credentials'} onSubmit={signIn}>
             <fieldset disabled={busy}>
