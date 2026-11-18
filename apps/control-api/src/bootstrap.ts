@@ -38,7 +38,7 @@ export async function createControlApi(env: NodeJS.ProcessEnv) {
     });
     app.useBodyParser('json', { limit: '8kb' });
     // Parse failures occur before controller filters and can contain credential fragments.
-    app.use('/api/control/v1/staff', (err: Error & { status?: number }, _req: IncomingMessage,
+    app.use((err: Error & { status?: number }, _req: IncomingMessage,
       res: ServerResponse, next: (err: Error) => void) => {
       if (res.headersSent) return next(new Error('Invalid request body'));
       res.statusCode = err.status === 413 ? 413 : 400;
