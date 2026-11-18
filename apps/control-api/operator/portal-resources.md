@@ -1,6 +1,6 @@
 # Customer portal resources
 
-The Control portal uses the separate portal database login and session cookie configured for customer authentication. An active portal account can read its business summary, invoices and recorded payments. A hosted suspension takes effect for that session on its next outlet, plan or download request. Archived businesses have no portal resource listing.
+Apply the Control migrations and then run `operator/portal-runtime-grants.sql` for the dedicated portal role as described in `portal-identity.md`. The Control portal uses the separate portal database login and session cookie configured for customer authentication. An active portal account can read its business summary, invoices and recorded payments. A hosted suspension takes effect for that session on its next outlet, plan or download request. Archived businesses have no portal resource listing.
 
 The summary displays `nventra01@gmail.com` for payment help. Set `CONTROL_PORTAL_SUPPORT_EMAIL` to a single validated support address to override it. Payment guidance directs the customer to that address with their invoice reference.
 
