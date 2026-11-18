@@ -87,6 +87,8 @@ export async function portalReadCases(t: TestContext, db: PrismaClient, root: st
     assert.equal(downloaded.headers.get('content-disposition'), 'attachment; filename="OrderRestro.msix"');
     assert.equal(await downloaded.text(), 'fixture installer');
     assert.equal((await get('downloads/private.txt')).status, 404);
+    assert.equal((await get('downloads/private.txt', '')).status, 401);
+    assert.equal((await get('downloads/windows-update')).status, 404);
     let request: Promise<Response> | undefined;
     await db.$transaction(async tx => {
       await tx.$queryRaw`SELECT id FROM control.business WHERE id=${a.business.id}::uuid FOR UPDATE`;
@@ -103,6 +105,8 @@ export async function portalReadCases(t: TestContext, db: PrismaClient, root: st
       assert.fail('Portal request did not wait for the pending hosted transition');
     });
     assert.equal((await request!).status, 403);
+    assert.equal((await get('downloads/private.txt')).status, 404);
+    assert.equal((await get('downloads/windows-update')).status, 403);
     for (const path of ['outlets','downloads',file]) assert.equal((await get(path)).status, 403);
     assert.equal((await json<Summary>('summary')).hostedStatus, 'suspended');
     assert.equal((await json('invoices')).items.length, 1);

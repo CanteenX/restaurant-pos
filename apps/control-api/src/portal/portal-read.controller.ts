@@ -5,9 +5,9 @@ import type { z } from 'zod';
 import type { Prisma } from '../../node_modules/.prisma/control-client/index.js';
 import { portalInvoices, portalPayments } from './portal-billing.js';
 import { StaffExceptionFilter } from '../staff/staff.controller.js';
-import { PortalAuth } from './portal-auth.js';
+import { PortalAuth, type PortalPrincipal } from './portal-auth.js';
 import { portalTokenFromRequest } from './portal-auth.controller.js';
-import { PortalDownloads, type PortalFile, type readPortalResources } from './portal-downloads.js';
+import { isPortalDownload, PortalDownloads, type PortalFile, type readPortalResources } from './portal-downloads.js';
 import { portalBusiness, portalOutlets } from './portal-read.js';
 
 export const portalResourceConfig = Symbol('portalResourceConfig');
@@ -72,13 +72,15 @@ export class PortalReadController {
     @Res({ passthrough: true }) res: ServerResponse) {
     input(controlEmptyBody, query);
     let opened: PortalFile | null = null;
-    const open = async () => {
+    const open = async (tx: Prisma.TransactionClient, { businessId }: PortalPrincipal) => {
+      if (!isPortalDownload(id)) throw new NotFoundException();
+      await portalBusiness(tx, businessId, true);
       opened = await this.files.open(id);
       if (!opened) throw new NotFoundException();
       return opened;
     };
     try {
-      const { handle, length, name } = await this.use(req, true, open);
+      const { handle, length, name } = await this.auth.withSession(portalTokenFromRequest(req), open);
       const stream = handle.createReadStream();
       if (res.destroyed) stream.destroy();
       else res.once('close', () => stream.destroy());

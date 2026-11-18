@@ -7,6 +7,7 @@ const artifacts = new Map([
   ['windows-installer', { name: 'OrderRestro.msix', label: 'Windows installer' }],
   ['windows-update', { name: 'OrderRestro-update.msix', label: 'Windows update' }],
 ]);
+export const isPortalDownload = (id: string) => artifacts.has(id);
 export type PortalFile = { name: string; length: number; handle: FileHandle };
 
 export function readPortalResources(env: NodeJS.ProcessEnv) {
