@@ -48,11 +48,20 @@ export CONTROL_AUTH_KEY='a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a
 export CONTROL_ORIGIN='https://localhost:4172' CONTROL_API_PORT=4173
 export CONTROL_API_ORIGIN='http://127.0.0.1:4173' NEXT_TELEMETRY_DISABLED=1
 docker exec "$pg" psql -U fixture -d fixture -v ON_ERROR_STOP=1 -c 'CREATE ROLE control_runtime NOLOGIN; CREATE ROLE control_mail_worker NOLOGIN' >/dev/null
+# This login, passwords and key exist only on the disposable browser fixture above.
+docker exec -i "$pg" psql -U fixture -d fixture -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+CREATE ROLE control_portal_runtime NOLOGIN;
+CREATE ROLE cc_portal_browser_fixture LOGIN PASSWORD 'fixture' IN ROLE control_portal_runtime;
+SQL
 pnpm --filter @nventra/control-api exec prisma migrate deploy
+docker exec -i "$pg" psql -U fixture -d fixture -v ON_ERROR_STOP=1 < apps/control-api/operator/portal-runtime-grants.sql >/dev/null
+export CONTROL_PORTAL_DATABASE_URL="postgresql://cc_portal_browser_fixture:fixture@$binding/fixture"
+printf -v CONTROL_PORTAL_AUTH_KEY 'b6%.0s' {1..32}
+export CONTROL_PORTAL_AUTH_KEY
 docker exec -i "$pg" psql -U fixture -d fixture -v ON_ERROR_STOP=1 < apps/control-api/operator/mail-worker-grants.sql >/dev/null
 node e2e/control/seed.cjs "${binding#127.0.0.1:}"
 export CONTROL_DATABASE_URL="${CONTROL_DATABASE_URL}?options=-c%20role%3Dcontrol_runtime"
-node -e 'void require("./apps/control-api/dist/bootstrap.js").createControlApi(process.env).then(({app,port}) => app.listen(port,"127.0.0.1"))' >"$work/control-api.log" 2>&1 & api=$!
+env -u DEBUG -u RUST_LOG -u NODE_DEBUG node -e 'void require("./apps/control-api/dist/bootstrap.js").createControlApi(process.env).then(({app,port}) => app.listen(port,"127.0.0.1"))' >"$work/control-api.log" 2>&1 & api=$!
 node apps/control/node_modules/next/dist/bin/next dev apps/control -H localhost -p 4172 >"$work/control-web.log" 2>&1 & web=$!
 ready() {
   curl -fsS --max-time 3 'http://127.0.0.1:4173/api/control/v1/health' >/dev/null 2>&1 &&

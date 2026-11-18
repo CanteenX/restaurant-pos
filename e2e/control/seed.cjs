@@ -26,7 +26,11 @@ async function seed() {
   const ownerId = randomUUID(), readerId = randomUUID(), operationsId = randomUUID();
   const read = ['cc.business.read', 'cc.plan.read'];
   const encryptedSeed = sealSecret('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP', process.env.CONTROL_AUTH_KEY + readerId);
+  const controlsId = randomUUID();
   await db.staff.createMany({ data: [
+    { id: controlsId, email: 'client-controls@example.test', passwordHash,
+      grants: ['cc.business.read', 'cc.hosted.read', 'cc.hosted.manage', 'cc.portal.read', 'cc.portal.manage', 'cc.ticket.read'],
+      encryptedSeed: sealSecret('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP', process.env.CONTROL_AUTH_KEY + controlsId) },
     { id: ownerId, email: 'owner@example.test', passwordHash, grants: [...read, 'cc.business.manage', 'cc.plan.manage'] },
     { id: readerId, email: 'reader@example.test', passwordHash, grants: read, encryptedSeed },
     { id: operationsId, email: 'operations@example.test', passwordHash,

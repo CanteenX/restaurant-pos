@@ -8,7 +8,7 @@ test('owner suspends and restores hosted access and provisions a contact in the 
     await route.continue({ headers });
   });
   await page.goto('/');
-  await page.getByLabel('Email').fill('operations@example.test');
+  await page.getByLabel('Email').fill('client-controls@example.test');
   await page.getByLabel('Password', { exact: true }).fill('browser fixture passphrase');
   await page.getByRole('button', { name: 'Continue' }).click();
   const { base32Decode, hotp, stepAt } = require('../../packages/types/dist/node/totp');

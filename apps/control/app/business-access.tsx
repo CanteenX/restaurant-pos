@@ -97,7 +97,7 @@ export function HostedAccess({ id, name, manage, onError }: AccessProps & { name
       {manage && editing && <form onSubmit={change}><fieldset disabled={busy}>
         <legend>{active ? 'Suspend' : 'Restore'} hosted services for {name}</legend>
         <p>Restaurant billing on the installed POS continues independently.</p>
-        <label>Reason<input maxLength={500} required value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+        <label>Reason<input maxLength={240} required value={reason} onChange={(event) => setReason(event.target.value)} /></label>
         <label>Confirm business name<input required value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
         <div className="actions">
           <button className="primary" disabled={!reason.trim() || confirmation.trim() !== name}>
