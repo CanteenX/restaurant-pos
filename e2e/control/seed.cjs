@@ -20,6 +20,7 @@ const db = new PrismaClient({ datasourceUrl: fixtureUrl });
 
 async function seed() {
   const passwordHash = await hash('browser fixture passphrase', 12);
+  await require('./helpdesk-fixture.cjs')(db, passwordHash);
   const ownerId = randomUUID(), readerId = randomUUID();
   const read = ['cc.business.read', 'cc.plan.read'];
   const encryptedSeed = sealSecret('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP', process.env.CONTROL_AUTH_KEY + readerId);

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import './styles.css';
+import './helpdesk.css';
 
 export const metadata = { title: 'Nventra Control Center' };
 

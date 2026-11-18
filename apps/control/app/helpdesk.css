@@ -1,0 +1,17 @@
+.staff-workspace-nav { margin-bottom: 1.25rem; }
+.staff-workspace-nav button[aria-pressed="true"] { border-color: var(--accent); background: #e7f1e9; }
+.ticket-filter { max-width: 16rem; margin-bottom: 1.1rem; }
+.helpdesk-workspace { grid-template-columns: minmax(0, 1fr) minmax(0, 2.5fr); }
+.ticket-detail h2 { overflow-wrap: anywhere; }
+.ticket-status { display: flex; gap: .6rem; align-items: end; flex-wrap: wrap; }
+.ticket-status label { min-width: 9rem; }
+.ticket-thread { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; gap: .65rem; }
+.ticket-thread article { padding: .7rem .8rem; border: 1px solid var(--line); border-radius: .4rem; }
+.ticket-thread .ticket-note { background: #f3f7f2; border-color: #aac1ae; }
+.ticket-thread p { margin: .35rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ticket-detail textarea {
+  width: 100%; resize: vertical; padding: .5rem .65rem; font: inherit; color: inherit;
+  background: white; border: 1px solid #acc1b5; border-radius: .42rem;
+}
+@media (min-width: 720px) { .helpdesk-workspace .detail { grid-column: 2; } }
+@media (max-width: 719px) { .helpdesk-workspace { grid-template-columns: minmax(0, 1fr); } }
