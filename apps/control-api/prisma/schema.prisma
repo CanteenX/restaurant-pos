@@ -1,0 +1,29 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/control-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("CONTROL_DATABASE_URL")
+  schemas  = ["control"]
+}
+
+model AuditEvent {
+  sequence      BigInt   @id
+  occurredAtMs  BigInt   @map("occurred_at_ms")
+  actorType     String   @map("actor_type")
+  actorId       String   @map("actor_id") @db.Uuid
+  businessId    String?  @map("business_id") @db.Uuid
+  action        String
+  subjectType   String   @map("subject_type")
+  subjectId     String?  @map("subject_id") @db.Uuid
+  requestId     String   @map("request_id") @db.Uuid
+  outcome       String
+  changedFields String[] @default([]) @map("changed_fields")
+  previousHash  String   @map("previous_hash")
+  eventHash     String   @map("event_hash")
+
+  @@map("audit_event")
+  @@schema("control")
+}
