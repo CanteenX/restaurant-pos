@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'node:http';
 import { BadRequestException, Body, Controller, Get, Inject, Param, Post, Query, Req, UseFilters } from '@nestjs/common';
-import type { z } from 'zod';
-import { controlEmptyBody, controlResourceId, servicePlanDates, servicePlanKey, servicePlanOperation, servicePlanPage } from '@nventra/types';
+import { z } from 'zod';
+import { controlCursorPage, controlEmptyBody, controlResourceId, servicePlanDates, servicePlanKey, servicePlanOperation, servicePlanPage } from '@nventra/types';
 import { StaffAuth } from '../staff/staff-auth.js';
 import { sessionCookie, StaffExceptionFilter } from '../staff/staff.controller.js';
 import { ServicePlans } from './plans.js';
@@ -11,6 +11,11 @@ function input<T>(schema: z.ZodType<T>, value: unknown): T {
   if (!parsed.success) throw new BadRequestException();
   return parsed.data;
 }
+
+const renewalPage = controlCursorPage.extend({
+  cursor: z.string().max(65).transform((value) => value.split('|'))
+    .pipe(z.tuple([z.iso.datetime({ precision: 3 }), controlResourceId])).optional(),
+});
 
 @Controller()
 @UseFilters(StaffExceptionFilter)
@@ -22,6 +27,11 @@ export class PlansController {
   list(@Req() req: IncomingMessage, @Query() query: unknown) {
     input(controlEmptyBody, query);
     return this.plans.catalog(sessionCookie(req));
+  }
+
+  @Get('plans/renewals')
+  renewals(@Req() req: IncomingMessage, @Query() query: unknown) {
+    return this.plans.renewals(sessionCookie(req), input(renewalPage, query));
   }
 
   @Get('outlets/:id/service-plans')

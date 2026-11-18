@@ -43,6 +43,35 @@ export class ServicePlans {
       tx.servicePlanVersion.findMany({ orderBy: [{ code: 'asc' }, { version: 'desc' }] }));
   }
 
+  renewals(cookie: string, { cursor, limit }: { cursor?: [string, string]; limit: number }) {
+    return this.staff.withPermission(cookie, 'cc.plan.read', async (tx) => {
+      const [expiry, id] = cursor ?? [null, null];
+      const rows = await tx.$queryRaw<{
+        businessId: string; businessName: string; outletId: string; outletName: string; label: string; endsAt: Date;
+      }[]>`
+        SELECT b.id AS "businessId", b.display_name AS "businessName", o.id AS "outletId",
+               o.display_name AS "outletName", p.label, term.ends_at AS "endsAt"
+        FROM control.outlet o
+        JOIN control.business b ON b.id = o.business_id
+        JOIN LATERAL (
+          SELECT ends_at, plan_code, plan_version
+          FROM control.outlet_service_term
+          WHERE outlet_id = o.id AND business_id = b.id
+          ORDER BY revision DESC LIMIT 1
+        ) term ON TRUE
+        JOIN control.service_plan_version p ON p.code = term.plan_code AND p.version = term.plan_version
+        WHERE NOT o.archived AND NOT b.archived
+          AND term.ends_at > CURRENT_TIMESTAMP AND term.ends_at <= CURRENT_TIMESTAMP + INTERVAL '30 days'
+          AND (${expiry}::timestamptz IS NULL OR (term.ends_at, o.id) > (${expiry}::timestamptz, ${id}::uuid))
+        ORDER BY term.ends_at, o.id
+        LIMIT ${limit + 1}
+      `;
+      const items = rows.slice(0, limit);
+      const last = items.at(-1);
+      return { items, nextCursor: rows.length > limit && last ? last.endsAt.toISOString() + '|' + last.outletId : null };
+    });
+  }
+
   history(cookie: string, id: string, { cursor, limit }: Page) {
     return this.staff.withPermission(cookie, 'cc.plan.read', async (tx) => {
       const scope = await outletScope(tx, id);

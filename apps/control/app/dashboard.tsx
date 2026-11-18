@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { controlPermissionSatisfied } from '@nventra/types/dist/permissions';
 import { ApiError, call, pagePath, useRequestScope, type Page, type Session } from './api';
 import { OutletPlans } from './outlet-plans';
+import { BusinessBilling, OverdueInvoices, UpcomingRenewals } from './business-billing';
 
 type Business = { id: string; displayName: string; legalName: string; archived: boolean };
 type Outlet = { id: string; displayName: string; timeZone: string; archived: boolean };
@@ -83,6 +84,10 @@ export function Dashboard({ session, onExpired }: { session: Session; onExpired:
   const [business, setBusiness] = useState<Business>();
   const [outlet, setOutlet] = useState<Outlet>();
   const [notice, setNotice] = useState('');
+  const [queue, setQueue] = useState<'overdue' | 'renewals'>();
+  const [renewalRefresh, setRenewalRefresh] = useState(0);
+  const [billingRefresh, setBillingRefresh] = useState(0);
+  const requests = useRequestScope();
   const can = (key: Parameters<typeof controlPermissionSatisfied>[1]) => controlPermissionSatisfied(session.grants, key);
   const onError = useCallback((failure: unknown) => {
     if (failure instanceof ApiError && failure.status === 401) return onExpired();
@@ -90,21 +95,49 @@ export function Dashboard({ session, onExpired }: { session: Session; onExpired:
       failure instanceof ApiError && failure.status === 409 ? 'These details conflict with an existing record.' :
       'The request could not be completed. Check the details and try again.');
   }, [onExpired]);
-  function openBusiness(item: Business) { setBusiness(item); setOutlet(undefined); setNotice(''); }
+  const selection = useRef(0);
+  function openBusiness(item: Business) {
+    selection.current += 1;
+    setBusiness(item);
+    setOutlet(undefined);
+    setNotice('');
+  }
   function openOutlet(item: Outlet) { setOutlet(item); setNotice(''); }
+  async function openQueuedBusiness(id: string) {
+    const signal = requests.current;
+    if (!signal || signal.aborted) return;
+    const intent = ++selection.current;
+    try {
+      const item = await call<Business>('businesses/' + id, undefined, signal);
+      if (!signal.aborted && intent === selection.current) openBusiness(item);
+    } catch (failure) { if (!signal.aborted && intent === selection.current) onError(failure); }
+  }
 
   return <>
     <h1>Client operations</h1>
     {notice && <p role="alert">{notice} <button onClick={() => setNotice('')}>Dismiss</button></p>}
+    <div className="actions">
+      {can('cc.billing.read') && <button type="button" aria-expanded={queue === 'overdue'}
+        onClick={() => setQueue(queue === 'overdue' ? undefined : 'overdue')}>Overdue invoices</button>}
+      {can('cc.plan.read') && <button type="button" aria-expanded={queue === 'renewals'}
+        onClick={() => setQueue(queue === 'renewals' ? undefined : 'renewals')}>Upcoming renewals</button>}
+    </div>
+    {queue === 'overdue' && can('cc.billing.read') &&
+      <OverdueInvoices onError={onError} refresh={billingRefresh} openBusiness={openQueuedBusiness} />}
+    {queue === 'renewals' && can('cc.plan.read') &&
+      <UpcomingRenewals onError={onError} refresh={renewalRefresh} openBusiness={openQueuedBusiness} />}
     {can('cc.business.read') ? <div className="workspace">
       <Directory<Business> path="businesses" name="business" selectedId={business?.id} onSelect={openBusiness} onError={onError} allowCreate={can('cc.business.manage')} />
       {business && <Directory<Outlet> key={business.id} path={'businesses/' + business.id + '/outlets'}
         name="outlet" selectedId={outlet?.id} onSelect={openOutlet} onError={onError} allowCreate={!business.archived && can('cc.business.manage')} />}
       <section className="detail">
         {outlet ? <><h2>{outlet.displayName}</h2><p>{business?.displayName} · {outlet.timeZone}</p>
-          {can('cc.plan.read') && <OutletPlans key={outlet.id} outletId={outlet.id} onError={onError} onSaved={() => setNotice('')}
+          {can('cc.plan.read') && <OutletPlans key={outlet.id} outletId={outlet.id} onError={onError} onSaved={() => { setNotice(''); setRenewalRefresh((value) => value + 1); }}
             allowManage={!business?.archived && !outlet.archived && can('cc.plan.manage')} verifiedAt={session.verifiedAt} />}
         </> : business ? <><h2>{business.displayName}</h2><p>{business.legalName}</p><p>Choose an outlet to see its service plan.</p></> : <p>Choose a business to find its outlets.</p>}
+        {business && can('cc.billing.read') && <BusinessBilling key={business.id} id={business.id}
+          manage={can('cc.billing.manage') && !business.archived} onError={onError}
+          onChanged={() => setBillingRefresh((value) => value + 1)} />}
       </section>
     </div> : <p>Your current permissions do not include the client registry.</p>}
   </>;
