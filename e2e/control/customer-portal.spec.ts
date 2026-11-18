@@ -26,7 +26,9 @@ async function portal(page: Page) {
     if (path === 'session') return json(account);
     if (path === 'summary') return json({ business, hostedStatus: suspended ? 'suspended' : 'active',
       paymentInstructions: 'Pay the balance against the invoice reference.', supportEmail: 'support@example.test' });
-    if (path === 'invoices') return json(list([invoice]));
+    if (path === 'invoices') return json(list([invoice, {
+      ...invoice, id: 'e7179820-10d5-49cd-9ee4-a70aea9856e3', reference: 'MAX-PAISE', amountPaise: Number.MAX_SAFE_INTEGER,
+    }]));
     if (path === 'invoices/' + invoice.id + '/payments') return json(list([{ id: 'paid-fixture',
       reference: 'Payment fixture', method: 'upi', amountPaise: 5000, createdAt: '2026-11-19T00:00:00.000Z' }]));
     if (suspended) return json({}, 403);
@@ -68,7 +70,8 @@ test('activation uses the portal form and preserves invoices and support after m
   await expect(page.getByRole('link', { name: 'support@example.test' })).toBeVisible();
   await page.getByRole('button', { name: 'Invoices' }).click();
   await expect(page.getByText('INV-2026-2')).toBeVisible();
-  await page.getByRole('button', { name: 'View payments' }).click();
+  await expect(page.getByRole('row').filter({ hasText: 'MAX-PAISE' })).toContainText('₹9,00,71,99,25,47,409.91');
+  await page.getByRole('row').filter({ hasText: 'INV-2026-2' }).getByRole('button', { name: 'View payments' }).click();
   await expect(page.getByText('Payment fixture')).toBeVisible();
   state.restore();
   await page.getByRole('button', { name: 'Refresh access' }).click();
