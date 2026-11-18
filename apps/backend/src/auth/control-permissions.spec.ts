@@ -27,6 +27,8 @@ describe('Control permission registry', () => {
       'cc.plan.read',
       'cc.plan.manage',
       'cc.audit.read',
+      'cc.billing.read',
+      'cc.billing.manage',
       'cc.ticket.read',
       'cc.ticket.manage',
       'cc.ticket.reply',
