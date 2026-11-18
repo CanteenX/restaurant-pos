@@ -11,12 +11,15 @@ type Invoice = {
   amountPaise: bigint; paidPaise: bigint; balancePaise: bigint; createdAt: Date; overdue: boolean
 };
 
-function pageOf<T extends { id: string }>(rows: T[], limit: number) {
+export function pageOf<T extends { id: string }>(rows: T[], limit: number) {
   const items = rows.slice(0, limit);
   return { items, nextCursor: rows.length > limit ? items[items.length - 1].id : null };
 }
 
-async function invoiceRows(tx: Tx, page: Page, scope: { businessId?: string; id?: string; overdue?: boolean }) {
+export async function invoiceRows(tx: Tx, page: Page, scope: { businessId?: string; id?: string; overdue?: boolean },
+  source: 'staff' | 'portal' = 'staff') {
+  const invoices = source === 'portal' ? Prisma.sql`control.portal_invoice` : Prisma.sql`control.billing_invoice`;
+  const payments = source === 'portal' ? Prisma.sql`control.portal_payment` : Prisma.sql`control.billing_payment`;
   const filters = [Prisma.sql`TRUE`];
   if (scope.businessId) filters.push(Prisma.sql`i.business_id=${scope.businessId}::uuid`);
   if (scope.id) filters.push(Prisma.sql`i.id=${scope.id}::uuid`);
@@ -25,8 +28,8 @@ async function invoiceRows(tx: Tx, page: Page, scope: { businessId?: string; id?
     SELECT i.id,i.business_id AS "businessId",i.reference,i.description,i.created_at AS "createdAt",to_char(i.due_on,'YYYY-MM-DD') AS "dueOn",
       i.amount_paise AS "amountPaise",p.paid AS "paidPaise",(i.amount_paise-p.paid) AS "balancePaise",
       (i.due_on < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date AND i.amount_paise>p.paid) AS overdue
-    FROM control.billing_invoice i CROSS JOIN LATERAL (
-      SELECT coalesce(sum(amount_paise),0)::bigint AS paid FROM control.billing_payment WHERE invoice_id=i.id
+    FROM ${invoices} i CROSS JOIN LATERAL (
+      SELECT coalesce(sum(amount_paise),0)::bigint AS paid FROM ${payments} WHERE invoice_id=i.id
     ) p WHERE ${Prisma.join(filters, ' AND ')}
   ) SELECT * FROM balances WHERE ${scope.overdue ? Prisma.sql`overdue` : Prisma.sql`TRUE`} ORDER BY id LIMIT ${page.limit + 1}`;
   return pageOf(rows.map(row => ({
@@ -48,7 +51,9 @@ export function listOverdueInvoices(tx: Tx, page: Page, businessId?: string) {
   return invoiceRows(tx, page, { businessId, overdue: true });
 }
 
-function projectPayment(row: BillingPayment) {
+export type PaymentProjection = Pick<BillingPayment, 'id' | 'businessId' | 'invoiceId' | 'reference' | 'method' | 'amountPaise' | 'createdAt'>;
+
+export function projectPayment(row: PaymentProjection) {
   return {
     id: row.id, businessId: row.businessId, invoiceId: row.invoiceId, reference: row.reference,
     method: row.method, amountPaise: Number(row.amountPaise), createdAt: row.createdAt

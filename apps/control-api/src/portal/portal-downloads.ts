@@ -16,7 +16,7 @@ export function readPortalResources(env: NodeJS.ProcessEnv) {
     /^[/\\]{2}/.test(directory) || directory.includes('\0') || directory !== path.resolve(directory) ||
     directory === path.parse(directory).root))) throw new Error('Invalid portal resources');
   return { directory, supportEmail: support.data,
-    paymentInstructions: 'Follow the payment instructions on your invoice. Contact support if you need a copy or help with a payment.' };
+    paymentInstructions: 'Contact support with your invoice reference for payment instructions or to check a recorded payment.' };
 }
 
 export class PortalDownloads {
