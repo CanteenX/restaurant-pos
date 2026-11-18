@@ -8,6 +8,8 @@
 .ticket-thread { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; gap: .65rem; }
 .ticket-thread article { padding: .7rem .8rem; border: 1px solid var(--line); border-radius: .4rem; }
 .ticket-thread .ticket-note { background: #f3f7f2; border-color: #aac1ae; }
+.ticket-thread strong + small { margin-inline-start: .6rem; }
+.reply-acknowledgment { display: flex; align-items: center; gap: .5rem; }
 .ticket-thread p { margin: .35rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ticket-detail textarea {
   width: 100%; resize: vertical; padding: .5rem .65rem; font: inherit; color: inherit;

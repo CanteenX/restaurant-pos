@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { call, pagePath, useRequestScope, type Page } from './api';
 import { ticketPatch } from '@nventra/types/dist/control-ticket';
+import { TicketReply, type ReplyTarget } from './ticket-reply';
 
 export const statuses = ticketPatch.shape.status.unwrap().options;
 const priorities = ticketPatch.shape.priority.unwrap().options;
@@ -10,11 +11,14 @@ export type Ticket = { id: string; subject: string; status: (typeof statuses)[nu
 export type TicketTriage = Pick<Ticket, 'status' | 'priority'>;
 export const label = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
-type Message = { id: string; direction: string; visibility: string; text: string };
-type Detail = Ticket & { messages: Page<Message> };
+const deliveryLabels = new Map([
+  ['queued', 'Queued'], ['sending', 'Sending'], ['held', 'Held for review'], ['sent', 'Sent'], ['failed', 'Delivery failed'],
+]);
+type Message = { id: string; direction: string; visibility: string; text: string; deliveryState?: string };
+type Detail = Ticket & { messages: Page<Message>; replyTarget?: ReplyTarget | null };
 
-export function TicketDetails({ id, manage, report, clearError, onTriageChange }: {
-  id: string; manage: boolean; report: (failure: unknown) => void; clearError: () => void;
+export function TicketDetails({ id, manage, reply, report, clearError, onTriageChange }: {
+  id: string; manage: boolean; reply: boolean; report: (failure: unknown) => void; clearError: () => void;
   onTriageChange: (id: string, triage: TicketTriage) => void;
 }) {
   const path = 'tickets/' + id;
@@ -82,6 +86,14 @@ export function TicketDetails({ id, manage, report, clearError, onTriageChange }
     });
   }
 
+  async function refreshConversation(scope: AbortSignal) {
+    const refreshed = await call<Detail>(path, undefined, scope);
+    if (!scope.aborted) {
+      setTicket(refreshed);
+      onTriageChange(id, { status: refreshed.status, priority: refreshed.priority });
+    }
+  }
+
   function more() {
     const cursor = ticket?.messages.nextCursor;
     if (!cursor) return;
@@ -110,19 +122,31 @@ export function TicketDetails({ id, manage, report, clearError, onTriageChange }
       </fieldset>
     </form>}
     <h3>Conversation</h3>
+    <button type="button" disabled={busy} onClick={() => void change(refreshConversation)}>Refresh conversation</button>
     {!ticket.messages.items.length && <p>No messages yet.</p>}
-    <ol className="ticket-thread">{ticket.messages.items.map((message) => <li key={message.id}>
-      <article className={message.visibility === 'staff' ? 'ticket-note' : 'ticket-message'}>
-        <strong>{message.visibility === 'staff' ? 'Internal note' : 'Customer message'}</strong>
-        <p>{message.text}</p>
-      </article>
-    </li>)}</ol>
+    <ol className="ticket-thread">{ticket.messages.items.map((message) => {
+      const outbound = message.visibility === 'public' && message.direction === 'outbound';
+      const status = outbound && deliveryLabels.get(message.deliveryState ?? '');
+      const title = message.visibility === 'staff' ? 'Internal note' : outbound ? 'Email reply' : 'Customer message';
+      return <li key={message.id}>
+        <article className={message.visibility === 'staff' ? 'ticket-note' : 'ticket-message'}>
+          <strong>{title}</strong>
+          {status && <small>{status}</small>}
+          <p>{message.text}</p>
+        </article>
+      </li>;
+    })}</ol>
     {ticket.messages.nextCursor && <button disabled={busy} onClick={more}>More messages</button>}
     {manage && <form onSubmit={addNote}><fieldset disabled={busy}>
       <label>Internal note<textarea name="note" maxLength={4000} required rows={3} /></label>
       <small>Visible only to staff.</small>
       <button className="primary" type="submit">Add internal note</button>
     </fieldset></form>}
+    {reply && (ticket.replyTarget ?
+      <TicketReply key={ticket.replyTarget.address + ':' + ticket.replyTarget.verified}
+        path={path} target={ticket.replyTarget} busy={busy} change={change}
+        refresh={refreshConversation} queued={() => setNotice('Reply queued.')} /> :
+      <p>No reply address is available for this ticket.</p>)}
     {notice && <p role="status">{notice}</p>}
   </section>;
 }

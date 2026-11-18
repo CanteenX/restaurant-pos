@@ -8,6 +8,7 @@ import { TicketDetails, label, statuses, type Ticket, type TicketTriage } from '
 export function Helpdesk({ session, onExpired }: { session: Session; onExpired: () => void }) {
   const [filter, setFilter] = useState('');
   const manage = controlPermissionSatisfied(session.grants, 'cc.ticket.manage');
+  const reply = controlPermissionSatisfied(session.grants, 'cc.ticket.reply');
   return <>
     <h1>Helpdesk</h1>
     <label className="ticket-filter">Filter by status
@@ -16,11 +17,11 @@ export function Helpdesk({ session, onExpired }: { session: Session; onExpired: 
         {statuses.map((status) => <option key={status} value={status}>{label(status)}</option>)}
       </select>
     </label>
-    <TicketQueue key={filter} filter={filter} manage={manage} onExpired={onExpired} />
+    <TicketQueue key={filter} filter={filter} manage={manage} reply={reply} onExpired={onExpired} />
   </>;
 }
 
-function TicketQueue({ filter, manage, onExpired }: { filter: string; manage: boolean; onExpired: () => void }) {
+function TicketQueue({ filter, manage, reply, onExpired }: { filter: string; manage: boolean; reply: boolean; onExpired: () => void }) {
   const path = filter ? 'tickets?status=' + encodeURIComponent(filter) : 'tickets';
   const [page, setPage] = useState<Page<Ticket>>();
   const [selected, setSelected] = useState<string>();
@@ -75,7 +76,7 @@ function TicketQueue({ filter, manage, onExpired }: { filter: string; manage: bo
         </li>)}</ul>
         {page?.nextCursor && <button disabled={loading} onClick={more}>More tickets</button>}
       </section>
-      {selected ? <TicketDetails key={selected} id={selected} manage={manage} report={report}
+      {selected ? <TicketDetails key={selected} id={selected} manage={manage} reply={reply} report={report}
         clearError={() => setError('')} onTriageChange={triageChanged} /> :
         <section className="detail"><p>Choose a ticket to view its conversation.</p></section>}
     </div>

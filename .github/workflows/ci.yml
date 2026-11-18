@@ -74,7 +74,9 @@ jobs:
               - "e2e/control-qa.sh"
               - "e2e/control-seed.test.cjs"
               - "e2e/playwright.control.config.ts"
+              - "e2e/package.json"
               - "e2e/package-lock.json"
+              - "pnpm-workspace.yaml"
               - ".github/workflows/ci.yml"
 
       - uses: pnpm/action-setup@v4
