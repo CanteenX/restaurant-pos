@@ -76,3 +76,25 @@ model StaffEnrollmentProof {
   @@map("staff_enrollment_proof")
   @@schema("control")
 }
+
+model Business {
+  id          String   @id @db.Uuid
+  legalName   String   @map("legal_name") @db.VarChar(160)
+  displayName String   @map("display_name") @db.VarChar(160)
+  archived    Boolean  @default(false)
+  outlets     Outlet[]
+  @@map("business")
+  @@schema("control")
+}
+
+model Outlet {
+  id          String   @id @db.Uuid
+  businessId  String   @map("business_id") @db.Uuid
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  displayName String   @map("display_name") @db.VarChar(160)
+  timeZone    String   @map("time_zone") @db.VarChar(64)
+  archived    Boolean  @default(false)
+  @@unique([businessId, id])
+  @@map("outlet")
+  @@schema("control")
+}
