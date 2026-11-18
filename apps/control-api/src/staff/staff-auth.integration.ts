@@ -1,3 +1,4 @@
+import { businessCases } from '../business/business.integration.js';
 import { staffAccessCases } from './staff-access.integration.js';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -157,4 +158,5 @@ export async function staffAuthCases(t: TestContext, db: PrismaClient, datasourc
     assert.equal(ip.filter((s) => s === 429).length, 1);
   });
   await staffAccessCases(t, db, root, origin, password, verifier);
+  await businessCases(t, db, new URL('../businesses', root).href, origin);
 }

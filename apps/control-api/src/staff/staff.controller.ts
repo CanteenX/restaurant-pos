@@ -6,7 +6,7 @@ import { controlChallengeSchema, controlFactorSchema, controlStaffPage, controlS
 import { StaffAuth } from './staff-auth.js';
 
 const cookieName = '__Host-control_staff';
-function sessionCookie(req: IncomingMessage) {
+export function sessionCookie(req: IncomingMessage) {
   const value = req.headers.cookie?.split(';').map((s) => s.trim()).find((s) => s.startsWith(cookieName + '='));
   const token = value?.slice(cookieName.length + 1);
   if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new UnauthorizedException();
@@ -14,7 +14,7 @@ function sessionCookie(req: IncomingMessage) {
 }
 
 @Catch()
-class StaffExceptionFilter implements ExceptionFilter {
+export class StaffExceptionFilter implements ExceptionFilter {
   catch(err: unknown, host: ArgumentsHost) {
     const res = host.switchToHttp().getResponse<ServerResponse>();
     res.statusCode = err instanceof HttpException ? err.getStatus() : 500;
