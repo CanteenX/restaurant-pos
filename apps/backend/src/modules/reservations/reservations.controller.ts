@@ -13,7 +13,7 @@ import {
   createReservationSchema,
   updateReservationStatusSchema,
   type SessionUser,
-} from '@nodedr-restaurant/types';
+} from '@nventra/types';
 import { Auth } from '../../common/decorators/auth.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -48,7 +48,9 @@ export class ReservationsController {
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
-    return this.reservationsService.create(branchId, body as never);
+    return this.reservationsService.create(branchId, body as never, {
+      actorId: user.id,
+    });
   }
 
   @Auth('reservations.manage')
@@ -62,6 +64,6 @@ export class ReservationsController {
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
     const { status } = body as { status: never };
-    return this.reservationsService.updateStatus(branchId, id, status);
+    return this.reservationsService.updateStatus(branchId, id, status, user.id);
   }
 }

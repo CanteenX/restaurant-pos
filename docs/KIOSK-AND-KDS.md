@@ -2,7 +2,7 @@
 
 This covers the self-service customer kiosk (a 23.8" landscape Android touchscreen,
 RK3576 / Android 14 / 4 GB RAM) and the staff kitchen-display tablet (HONOR Pad X8a),
-both served by the **same** OrderRestro instance. Nothing here needs an APK or a Play
+both served by the **same** Nventra POS instance. Nothing here needs an APK or a Play
 Store listing: the kiosk is a browser page that can be added to the home screen as a
 full-screen web app (PWA shortcut).
 
@@ -26,7 +26,7 @@ station chips, (b) realtime now always connects through the web origin (see §6)
 ## 2. Kiosk URL and launch
 
 1. In the staff app: **Settings → Customer kiosk → Enable kiosk**. Copy the address, e.g.
-   `https://orderrestro.nodedrdev.com/kiosk/<32 hex characters>`. The address *is* the
+   `https://pos.example.com/kiosk/<32 hex characters>`. The address *is* the
    credential: anyone who has it can place orders (and nothing else). **Create new address**
    invalidates the old one immediately; **Turn kiosk off** removes it.
 2. On the kiosk (Android 14, Chrome): open that address → ⋮ menu → **Add to Home screen / Install app**.
@@ -85,6 +85,9 @@ Install nothing special.
    Developer options → Stay awake while charging).
 5. New kiosk tickets appear live over the socket connection with a sound; the card shows
    `#<order number>`, `KIOSK · <station>`.
+6. Leave it on **Kitchen Display**: that screen is exempt from the idle sign-out, so the tablet
+   stays signed in untouched (up to `SESSION_MAX_HOURS`). On any other screen it is signed out
+   after `SESSION_IDLE_MINUTES` without a tap.
 
 ## 5. Printer and scanner — what is and is not verified
 
@@ -118,7 +121,7 @@ exercised in a desktop browser, not on the RK3576 / the real devices.**
 
 ## 7. Tests and how to run them
 ```bash
-pnpm install && pnpm --filter @nodedr-restaurant/types build
+pnpm install && pnpm --filter @nventra/types build
 (cd apps/backend && npx tsc --noEmit && npx jest)                        # unit incl. kiosk service
 (cd apps/web && npx tsc --noEmit && npx eslint . && npm test)            # node:test: basket, flow reducer, scan, ticket
 # API integration against a real, migrated + seeded Postgres:

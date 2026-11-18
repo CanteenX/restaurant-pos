@@ -1,0 +1,410 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- supertest bodies are untyped by design */
+// Petty cash float (#72) against a REAL, migrated + seeded Postgres. Opt-in:
+//   PETTY_CASH_E2E=1 DATABASE_URL=... JWT_SECRET=x pnpm test:e2e -- petty-cash
+// Uses the seeded demo branch and a random far-future business date, and
+// asserts balance deltas, so it can be re-run against the same database.
+// The approval-threshold block (#192) changes the restaurant setting, so run
+// it with --runInBand next to expense-approval.e2e-spec.ts.
+import { INestApplication } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import { ThrottlerStorage } from '@nestjs/throttler';
+import { randomInt, randomUUID } from 'crypto';
+import cookieParser from 'cookie-parser';
+import request from 'supertest';
+import { App } from 'supertest/types';
+import { AppModule } from './../src/app.module';
+
+const run = process.env.PETTY_CASH_E2E ? describe : describe.skip;
+const BRANCH = 'demo-branch';
+const q = `?branchId=${BRANCH}`;
+const tag = randomUUID().slice(0, 6);
+const D = new Date(Date.UTC(2031, 0, 1) + randomInt(0, 3650) * 86_400_000)
+  .toISOString()
+  .slice(0, 10);
+const BASE = '/api/v1/accounting/petty-cash';
+
+run('Petty cash ledger (e2e)', () => {
+  let app: INestApplication<App>;
+  let owner: ReturnType<typeof request.agent>;
+  let cashier: ReturnType<typeof request.agent>;
+  let accountant: ReturnType<typeof request.agent>;
+  let start = 0;
+
+  const balance = async () =>
+    Number((await owner.get(`${BASE}${q}`).expect(200)).body.balance);
+
+  beforeAll(async () => {
+    const mod = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(ThrottlerStorage)
+      .useValue({
+        increment: () =>
+          Promise.resolve({
+            totalHits: 1,
+            timeToExpire: 60,
+            isBlocked: false,
+            timeToBlockExpire: 0,
+          }),
+      })
+      .compile();
+    app = mod.createNestApplication();
+    app.use(cookieParser());
+    app.setGlobalPrefix('api', { exclude: [] });
+    await app.init();
+
+    owner = request.agent(app.getHttpServer());
+    await owner
+      .post('/api/v1/auth/login')
+      .send({ email: 'owner@demo.local', password: 'Password123!' })
+      .expect(201);
+
+    const roles = (await owner.get('/api/v1/users/roles').expect(200)).body as {
+      id: string;
+      name: string;
+    }[];
+    const staff = async (role: string) => {
+      const email = `pc-${role.toLowerCase()}-${tag}@demo.local`;
+      await owner
+        .post('/api/v1/users')
+        .send({
+          name: `PC ${role} ${tag}`,
+          email,
+          password: 'Password123!',
+          roleId: roles.find((r) => r.name === role)!.id,
+          branchIds: [BRANCH],
+        })
+        .expect(201);
+      const agent = request.agent(app.getHttpServer());
+      await agent
+        .post('/api/v1/auth/login')
+        .send({ email, password: 'Password123!' })
+        .expect(201);
+      return agent;
+    };
+    cashier = await staff('CASHIER');
+    // Holds petty_cash.manage but not expenses.approve.
+    accountant = await staff('ACCOUNTANT');
+    start = await balance();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('requires petty_cash.manage', async () => {
+    await cashier.get(`${BASE}${q}`).expect(403);
+    await cashier
+      .post(`${BASE}/entries${q}`)
+      .send({ kind: 'TOP_UP', businessDate: D, amount: 10, reason: 'x' })
+      .expect(403);
+  });
+
+  it('validates input with the shared schema', async () => {
+    await owner
+      .post(`${BASE}/entries${q}`)
+      .send({ kind: 'ADJUST', businessDate: D, amount: 0, reason: 'x' })
+      .expect(400);
+    await owner
+      .post(`${BASE}/entries${q}`)
+      .send({ kind: 'PAYOUT', businessDate: D, amount: 5, reason: 'x' })
+      .expect(400); // category required
+    await owner
+      .post(`${BASE}/entries${q}`)
+      .send({ kind: 'STEAL', businessDate: D, amount: 5, reason: 'x' })
+      .expect(400);
+  });
+
+  it('top-up from the till and a payout move the balance exactly', async () => {
+    const top = await owner
+      .post(`${BASE}/entries${q}`)
+      .send({
+        kind: 'TOP_UP',
+        businessDate: D,
+        amount: 1000,
+        reason: `Float ${tag}`,
+        fromTill: true,
+      })
+      .expect(201);
+    expect(Number(top.body.balanceAfter)).toBe(start + 1000);
+
+    const pay = await owner
+      .post(`${BASE}/entries${q}`)
+      .send({
+        kind: 'PAYOUT',
+        businessDate: D,
+        amount: 250.5,
+        category: `Petty ${tag}`,
+        reason: 'Market run',
+        receiptRef: `R-${tag}`,
+      })
+      .expect(201);
+    expect(Number(pay.body.amount)).toBe(-250.5);
+    expect(pay.body.expenseId).toBeTruthy();
+    expect(await balance()).toBe(Math.round((start + 749.5) * 100) / 100);
+
+    // Payout larger than the float is refused and changes nothing.
+    await owner
+      .post(`${BASE}/entries${q}`)
+      .send({
+        kind: 'PAYOUT',
+        businessDate: D,
+        amount: start + 100000,
+        category: 'Too much',
+        reason: 'x',
+      })
+      .expect(400);
+    expect(await balance()).toBe(Math.round((start + 749.5) * 100) / 100);
+  });
+
+  it('a payout is one expense, counted once and never against the till', async () => {
+    const exps = (
+      await owner
+        .get(`/api/v1/accounting/expenses${q}&from=${D}&to=${D}`)
+        .expect(200)
+    ).body as { id: string; category: string; paidFromCash: boolean }[];
+    const mine = exps.filter((e) => e.category === `Petty ${tag}`);
+    expect(mine).toHaveLength(1);
+    expect(mine[0].paidFromCash).toBe(false);
+
+    const pnl = (
+      await owner
+        .get(`/api/v1/accounting/profit-loss${q}&from=${D}&to=${D}`)
+        .expect(200)
+    ).body;
+    expect(
+      pnl.expenses.find((e: any) => e.category === `Petty ${tag}`).amount,
+    ).toBe(250.5);
+
+    const prev = (
+      await owner
+        .get(`/api/v1/accounting/closing/preview${q}&date=${D}`)
+        .expect(200)
+    ).body;
+    expect(prev.cashExpenses).toBe(0); // payout not taken off the till
+    expect(prev.pettyCashTopUps).toBe(1000); // moved out of the drawer
+    expect(prev.expectedCash).toBe(-1000);
+
+    // The linked expense can't be deleted behind the ledger's back.
+    await owner
+      .delete(`/api/v1/accounting/expenses/${mine[0].id}${q}`)
+      .expect(400);
+  });
+
+  it('a bank debit equal to a payout is never matched to it', async () => {
+    const exps = (
+      await owner
+        .get(`/api/v1/accounting/expenses${q}&from=${D}&to=${D}`)
+        .expect(200)
+    ).body as { id: string; category: string }[];
+    const payout = exps.find((e) => e.category === `Petty ${tag}`)!;
+
+    const imp = await owner
+      .post(`/api/v1/accounting/bank/import${q}`)
+      .send({
+        csv: `Date,Description,Ref No,Amount\n${D},Bank debit ${tag},PC-${tag},-250.50`,
+      })
+      .expect(201);
+    expect(imp.body.imported).toBe(1);
+    await owner.post(`/api/v1/accounting/bank/auto-match${q}`).expect(201);
+
+    const rec = (
+      await owner
+        .get(`/api/v1/accounting/bank${q}&from=${D}&to=${D}`)
+        .expect(200)
+    ).body as {
+      transactions: {
+        id: string;
+        reference: string;
+        status: string;
+        expense: unknown;
+      }[];
+    };
+    const line = rec.transactions.find((t) => t.reference === `PC-${tag}`)!;
+    expect(line.status).toBe('UNMATCHED');
+    expect(line.expense).toBeNull();
+
+    const cands = (
+      await owner
+        .get(`/api/v1/accounting/bank/${line.id}/candidates${q}`)
+        .expect(200)
+    ).body as { id: string }[];
+    expect(cands.map((c) => c.id)).not.toContain(payout.id);
+
+    await owner
+      .post(`/api/v1/accounting/bank/${line.id}/match${q}`)
+      .send({ expenseId: payout.id })
+      .expect(404);
+  });
+
+  it('summarises the day', async () => {
+    const s = (await owner.get(`${BASE}/summary${q}&date=${D}`).expect(200))
+      .body;
+    expect(s.topUps).toBe(1000);
+    expect(s.payouts).toBe(250.5);
+    expect(Math.round((s.closingBalance - s.openingBalance) * 100) / 100).toBe(
+      749.5,
+    );
+    const list = (
+      await owner.get(`${BASE}/entries${q}&from=${D}&to=${D}`).expect(200)
+    ).body;
+    expect(list.some((e: any) => e.expense?.category === `Petty ${tag}`)).toBe(
+      true,
+    );
+  });
+
+  it('reconciles a short count as an adjustment', async () => {
+    const before = await balance();
+    const r = (
+      await owner
+        .post(`${BASE}/reconcile${q}`)
+        .send({ businessDate: D, countedCash: before - 10, note: tag })
+        .expect(201)
+    ).body;
+    expect(r.variance).toBe(-10);
+    expect(r.entry.kind).toBe('ADJUST');
+    expect(await balance()).toBe(Math.round((before - 10) * 100) / 100);
+
+    const same = (
+      await owner
+        .post(`${BASE}/reconcile${q}`)
+        .send({ businessDate: D, countedCash: before - 10 })
+        .expect(201)
+    ).body;
+    expect(same).toMatchObject({ variance: 0, entry: null });
+  });
+
+  it('day close records till top-ups and then locks them', async () => {
+    const closing = (
+      await owner
+        .post(`/api/v1/accounting/closing${q}`)
+        .send({ businessDate: D, openingFloat: 1000, countedCash: 0 })
+        .expect(201)
+    ).body;
+    expect(Number(closing.pettyCashTopUps)).toBe(1000);
+    expect(Number(closing.expectedCash)).toBe(0);
+    expect(Number(closing.variance)).toBe(0);
+
+    await owner
+      .post(`${BASE}/entries${q}`)
+      .send({
+        kind: 'TOP_UP',
+        businessDate: D,
+        amount: 5,
+        reason: 'late',
+        fromTill: true,
+      })
+      .expect(400);
+  });
+
+  it('concurrent movements never lose an update', async () => {
+    const before = await balance();
+    const res = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        owner.post(`${BASE}/entries${q}`).send({
+          kind: 'TOP_UP',
+          businessDate: D,
+          amount: 1.1,
+          reason: `race ${tag}`,
+        }),
+      ),
+    );
+    const ok = res.filter((r) => r.status === 201).length;
+    expect(ok).toBeGreaterThan(0);
+    expect(res.every((r) => r.status === 201 || r.status === 409)).toBe(true);
+    expect(await balance()).toBe(Math.round((before + ok * 1.1) * 100) / 100);
+  });
+
+  describe('expense approval threshold (#192)', () => {
+    const payout = (amount: number, category: string) => ({
+      kind: 'PAYOUT',
+      businessDate: D,
+      amount,
+      category,
+      reason: `threshold ${tag}`,
+    });
+    const expensesOn = async () =>
+      (
+        await owner
+          .get(`/api/v1/accounting/expenses${q}&from=${D}&to=${D}`)
+          .expect(200)
+      ).body as {
+        id: string;
+        category: string;
+        status: string;
+        decidedById: string | null;
+        decisionNote: string | null;
+      }[];
+
+    beforeAll(async () => {
+      await owner
+        .post(`${BASE}/entries${q}`)
+        .send({ kind: 'TOP_UP', businessDate: D, amount: 5000, reason: 'x' })
+        .expect(201);
+      await owner
+        .patch('/api/v1/settings/restaurant')
+        .send({ expenseApprovalThreshold: 1000 })
+        .expect(200);
+    });
+
+    afterAll(async () => {
+      await owner
+        .patch('/api/v1/settings/restaurant')
+        .send({ expenseApprovalThreshold: null })
+        .expect(200);
+    });
+
+    it('lets a non-approver pay out up to the threshold', async () => {
+      await accountant
+        .post(`${BASE}/entries${q}`)
+        .send(payout(1000, `Small ${tag}`))
+        .expect(201);
+      const e = (await expensesOn()).find((x) => x.category === `Small ${tag}`);
+      expect(e).toMatchObject({ status: 'APPROVED', decidedById: null });
+    });
+
+    it('refuses a larger payout without expenses.approve, moving nothing', async () => {
+      const before = await balance();
+      const res = await accountant
+        .post(`${BASE}/entries${q}`)
+        .send(payout(1500, `Denied ${tag}`))
+        .expect(403);
+      expect(res.body.message).toMatch(/approval threshold/);
+      expect(await balance()).toBe(before);
+      expect(
+        (await expensesOn()).some((x) => x.category === `Denied ${tag}`),
+      ).toBe(false);
+    });
+
+    it("books an approver's larger payout as pre-approved and audits it", async () => {
+      const before = await balance();
+      const entry = (
+        await owner
+          .post(`${BASE}/entries${q}`)
+          .send(payout(1500, `Big ${tag}`))
+          .expect(201)
+      ).body as { id: string; expenseId: string };
+      expect(await balance()).toBe(Math.round((before - 1500) * 100) / 100);
+
+      const e = (await expensesOn()).find((x) => x.category === `Big ${tag}`);
+      expect(e).toMatchObject({
+        id: entry.expenseId,
+        status: 'APPROVED',
+        decisionNote: 'Pre-approved petty-cash payout',
+      });
+      expect(e!.decidedById).toEqual(expect.any(String));
+
+      const logs = (
+        await owner
+          .get('/api/v1/audit-logs')
+          .query({ action: 'expense.preapproved', entity: 'Expense' })
+          .expect(200)
+      ).body as { data: { entityId: string; metadata: any }[] };
+      const row = logs.data.find((l) => l.entityId === entry.expenseId);
+      expect(row?.metadata).toMatchObject({
+        via: 'petty_cash.payout',
+        pettyCashEntryId: entry.id,
+        amount: 1500,
+        threshold: 1000,
+      });
+    });
+  });
+});

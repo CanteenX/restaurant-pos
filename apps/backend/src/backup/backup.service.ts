@@ -1,13 +1,12 @@
-import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import type { Readable } from 'node:stream';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -15,7 +14,6 @@ import {
 import { Cron, CronExpression } from '@nestjs/schedule';
 import {
   DeleteObjectCommand,
-  GetObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -23,12 +21,27 @@ import type {
   RestoreBackupDto,
   SessionUser,
   SetBackupConfigDto,
-} from '@nodedr-restaurant/types';
+} from '@nventra/types';
 import { AuditService } from '../audit/audit.service';
 import type { NotifyPayload } from '../notifications/notifications.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { uploadsDir } from '../common/upload/image-upload.config';
+import { notifyOwners } from './notify-owners';
+import { swapUploads, UploadsRollbackError } from './swap-uploads';
+import { extractVettedTarball, UnsafeArchiveError } from './safe-tar-extract';
+import { dumpDatabase, restoreDatabase } from './pg-exec';
+import { RestoreRoleService } from './restore-role';
+import {
+  CHECKSUM_FILE,
+  DB_FILE,
+  UPLOADS_FILE,
+  checksumKeyFor,
+  downloadBuffer,
+  fetchVerifiedObjects,
+  formatChecksums,
+  sha256Hex,
+} from './backup-integrity';
 
 const execFileAsync = promisify(execFile);
 const CONFIG_ID = 'singleton';
@@ -52,7 +65,7 @@ function mask(value: string): string {
  * Full-instance backup (Postgres + the uploads volume) to any S3-compatible
  * bucket, ported from zulivio's real, working `backup/` module
  * (~/zulivio/apps/backend/src/backup/) and adapted to this repo's
- * conventions: Zod schemas from @nodedr-restaurant/types instead of
+ * conventions: Zod schemas from @nventra/types instead of
  * class-validator DTOs, `AuditService`/`NotificationsService` instead of
  * zulivio's audit/notification equivalents, and a permission-key gate
  * (`backup.manage`, checked by the controller's `@Auth()`) instead of
@@ -73,6 +86,7 @@ function mask(value: string): string {
 @Injectable()
 export class BackupService {
   private readonly logger = new Logger(BackupService.name);
+  private restoreInFlight = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -238,7 +252,7 @@ export class BackupService {
           Body: Buffer.from('ok'),
         }),
       );
-      await this.downloadBuffer(s3, candidate.bucket, probeKey);
+      await downloadBuffer(s3, candidate.bucket, probeKey);
       await s3.send(
         new DeleteObjectCommand({ Bucket: candidate.bucket, Key: probeKey }),
       );
@@ -363,12 +377,7 @@ export class BackupService {
     try {
       // Custom format: compressed single file, restorable with
       // `pg_restore --clean --if-exists` for a clean overwrite on restore.
-      await execFileAsync('pg_dump', [
-        '--format=custom',
-        '--file',
-        dbDumpPath,
-        process.env.DATABASE_URL!,
-      ]);
+      await dumpDatabase(dbDumpPath);
 
       const uploadsExist = fsSync.existsSync(uploadRoot);
       if (uploadsExist) {
@@ -384,7 +393,8 @@ export class BackupService {
       const s3 = this.s3Client(config);
       const dbKey = `${timestamp}/db.dump`;
       const dbBuffer = await fs.readFile(dbDumpPath);
-      const sha256 = createHash('sha256').update(dbBuffer).digest('hex');
+      const sha256 = sha256Hex(dbBuffer);
+      const checksums: Record<string, string> = { [DB_FILE]: sha256 };
       await s3.send(
         new PutObjectCommand({
           Bucket: config.bucket,
@@ -396,8 +406,9 @@ export class BackupService {
       let uploadsKey: string | undefined;
       let totalSize = dbBuffer.length;
       if (uploadsExist) {
-        uploadsKey = `${timestamp}/uploads.tar.gz`;
+        uploadsKey = `${timestamp}/${UPLOADS_FILE}`;
         const uploadsBuffer = await fs.readFile(uploadsArchivePath);
+        checksums[UPLOADS_FILE] = sha256Hex(uploadsBuffer);
         await s3.send(
           new PutObjectCommand({
             Bucket: config.bucket,
@@ -407,34 +418,31 @@ export class BackupService {
         );
         totalSize += uploadsBuffer.length;
       }
+      // SHA256SUMS beside the objects: checked again on every restore and
+      // download (backup-integrity.ts), and by `sha256sum -c` by hand.
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: config.bucket,
+          Key: checksumKeyFor(dbKey),
+          Body: Buffer.from(formatChecksums(checksums)),
+          ContentType: 'text/plain',
+        }),
+      );
 
-      // Verify by downloading each object back and comparing its actual
-      // bytes against the local file (sha256 for the db dump, length for
-      // the uploads archive) — a real integrity check, and deliberately
+      // Verify by downloading each object back and comparing its sha256
+      // against the local file — a real integrity check, and deliberately
       // not HeadObjectCommand: some S3-compatible servers (RustFS) return
       // spurious 403s on HEAD for objects that GET fetches correctly, so
       // HEAD-based verification is not reliable across implementations
       // (same workaround zulivio's backup.service.ts carries, around its
       // line 258).
-      const downloadedDb = await this.downloadBuffer(s3, config.bucket, dbKey);
-      if (createHash('sha256').update(downloadedDb).digest('hex') !== sha256) {
-        throw new Error(
-          'Verification failed: downloaded db backup does not match the uploaded content',
-        );
-      }
-      if (uploadsKey) {
-        const uploadsBuffer = await fs.readFile(uploadsArchivePath);
-        const downloadedUploads = await this.downloadBuffer(
-          s3,
-          config.bucket,
-          uploadsKey,
-        );
-        if (downloadedUploads.length !== uploadsBuffer.length) {
-          throw new Error(
-            'Verification failed: downloaded uploads archive size does not match the local file',
-          );
-        }
-      }
+      // fetchVerifiedObjects re-reads SHA256SUMS too, so this also proves
+      // the checksum file itself landed intact.
+      await fetchVerifiedObjects(s3, config.bucket, {
+        s3KeyDb: dbKey,
+        s3KeyUploads: uploadsKey ?? null,
+        sha256,
+      });
 
       const completed = await this.prisma.backup.update({
         where: { id: record.id },
@@ -508,6 +516,14 @@ export class BackupService {
             }),
           );
         }
+        if (old.s3KeyDb) {
+          await s3.send(
+            new DeleteObjectCommand({
+              Bucket: config.bucket,
+              Key: checksumKeyFor(old.s3KeyDb),
+            }),
+          );
+        }
         await this.prisma.backup.delete({ where: { id: old.id } });
       } catch (err) {
         this.logger.error(
@@ -532,7 +548,13 @@ export class BackupService {
       );
     }
     const config = await this.requireConfig();
-    const s3 = this.s3Client(config);
+    // Verified before anything is sent: a corrupt backup is reported as
+    // such instead of handing the owner a broken file.
+    const objects = await fetchVerifiedObjects(
+      this.s3Client(config),
+      config.bucket,
+      record,
+    );
 
     await this.audit.record({
       userId: user.id,
@@ -541,13 +563,14 @@ export class BackupService {
       entityId: record.id,
     });
 
-    return { record, config, s3 };
+    return { record, objects };
   }
 
   /**
    * Builds a fresh backup (`db.dump` + `uploads.tar.gz`) on local disk for
    * the caller to download straight to their own computer — no S3 bucket
-   * needed. Unlike `prepareDownload` nothing is stored on the server or
+   * needed, with a SHA256SUMS file alongside. Unlike `prepareDownload`
+   * nothing is stored on the server or
    * recorded as a Backup row; the caller must `fs.rm(workDir)` when done.
    * Audited as `backup.exported`, same sensitivity as a bucket download.
    */
@@ -563,16 +586,11 @@ export class BackupService {
     );
     try {
       const dbDumpPath = path.join(workDir, 'db.dump');
-      await execFileAsync('pg_dump', [
-        '--format=custom',
-        '--file',
-        dbDumpPath,
-        process.env.DATABASE_URL!,
-      ]);
+      await dumpDatabase(dbDumpPath);
       const uploadRoot = uploadsDir();
       let uploadsArchivePath: string | null = null;
       if (fsSync.existsSync(uploadRoot)) {
-        uploadsArchivePath = path.join(workDir, 'uploads.tar.gz');
+        uploadsArchivePath = path.join(workDir, UPLOADS_FILE);
         await execFileAsync('tar', [
           '-czf',
           uploadsArchivePath,
@@ -581,27 +599,19 @@ export class BackupService {
           path.basename(uploadRoot),
         ]);
       }
-      return { workDir, dbDumpPath, uploadsArchivePath };
+      const sums: Record<string, string> = {
+        [DB_FILE]: sha256Hex(await fs.readFile(dbDumpPath)),
+      };
+      if (uploadsArchivePath) {
+        sums[UPLOADS_FILE] = sha256Hex(await fs.readFile(uploadsArchivePath));
+      }
+      const checksumsPath = path.join(workDir, CHECKSUM_FILE);
+      await fs.writeFile(checksumsPath, formatChecksums(sums));
+      return { workDir, dbDumpPath, uploadsArchivePath, checksumsPath };
     } catch (err) {
       await fs.rm(workDir, { recursive: true, force: true });
       throw err;
     }
-  }
-
-  async fetchObjectStream(
-    s3: S3Client,
-    bucket: string,
-    key: string,
-  ): Promise<Readable> {
-    const res = await s3.send(
-      new GetObjectCommand({ Bucket: bucket, Key: key }),
-    );
-    // In the Node.js runtime (this backend always runs under Node, never a
-    // browser), the AWS SDK v3 always resolves GetObjectCommand's `Body` to
-    // a Node `Readable`, never the DOM `ReadableStream` its union type also
-    // allows for browser builds — safe to cast for `archiver.append()`,
-    // which expects a Node Readable.
-    return res.Body as Readable;
   }
 
   /**
@@ -616,6 +626,24 @@ export class BackupService {
    * the plan's Phase 4 addition.
    */
   async restore(user: SessionUser, id: string, dto: RestoreBackupDto) {
+    // Single-flight: the backend is one process, so a flag is enough to stop
+    // two restores interleaving their pg_restore and uploads swap.
+    if (this.restoreInFlight) {
+      throw new ConflictException('A restore is already in progress');
+    }
+    this.restoreInFlight = true;
+    try {
+      return await this.runRestore(user, id, dto);
+    } finally {
+      this.restoreInFlight = false;
+    }
+  }
+
+  private async runRestore(
+    user: SessionUser,
+    id: string,
+    dto: RestoreBackupDto,
+  ) {
     this.requireOwner(user);
     if (dto.confirm !== 'RESTORE') {
       throw new BadRequestException(
@@ -658,44 +686,44 @@ export class BackupService {
     const uploadRoot = uploadsDir();
 
     try {
-      await this.downloadTo(s3, config.bucket, record.s3KeyDb, dbDumpPath);
-      await execFileAsync('pg_restore', [
-        '--clean',
-        '--if-exists',
-        '--no-owner',
-        '--dbname',
-        process.env.DATABASE_URL!,
-        dbDumpPath,
-      ]);
+      // Every object is downloaded and checksum-verified BEFORE anything
+      // destructive runs; a mismatch throws here and pg_restore never runs.
+      const objects = await fetchVerifiedObjects(s3, config.bucket, record);
+      await fs.writeFile(dbDumpPath, objects.db);
+      // Vet + extract the uploads archive into a scratch dir BEFORE anything
+      // destructive: a malicious archive (links, `..`, absolute paths, extra
+      // roots) is refused here and surfaces as a 400 with pg_restore untouched.
+      let extractedRoot: string | null = null;
+      if (objects.uploads) {
+        await fs.writeFile(uploadsArchivePath, objects.uploads);
+        try {
+          extractedRoot = await extractVettedTarball({
+            archivePath: uploadsArchivePath,
+            expectedRoot: path.basename(uploadRoot),
+            destDir: path.join(workDir, 'uploads-extract'),
+          });
+        } catch (err) {
+          if (err instanceof UnsafeArchiveError) {
+            throw new BadRequestException(err.message);
+          }
+          throw err;
+        }
+      }
+      // Re-derive and reset the restore role right before every restore, so a
+      // tampered earlier restore cannot leave it with a password it chose.
+      await new RestoreRoleService(this.prisma).ensure();
+      await restoreDatabase(dbDumpPath);
 
-      if (record.s3KeyUploads) {
-        await this.downloadTo(
-          s3,
-          config.bucket,
-          record.s3KeyUploads,
-          uploadsArchivePath,
+      if (extractedRoot) {
+        // Swapped in LAST, from the already-validated tree; the old uploads
+        // are kept aside and restored if the swap fails.
+        await swapUploads(
+          extractedRoot,
+          uploadRoot,
+          // Outside workDir: if the rollback fails this copy must survive
+          // the `finally` cleanup below.
+          path.join(os.tmpdir(), `nventra-uploads-aside-${Date.now()}`),
         );
-        // Empty uploadRoot's contents rather than removing the directory
-        // itself: the container's non-root user owns everything inside it
-        // but not necessarily its parent, so an rmdir/mkdir round-trip on
-        // uploadRoot itself can fail with EACCES. tar then recreates the
-        // same tree from the archive, merging into the now-empty
-        // directory (same approach zulivio's restore() uses).
-        const existingEntries = await fs.readdir(uploadRoot).catch(() => []);
-        await Promise.all(
-          existingEntries.map((entry) =>
-            fs.rm(path.join(uploadRoot, entry), {
-              recursive: true,
-              force: true,
-            }),
-          ),
-        );
-        await execFileAsync('tar', [
-          '-xzf',
-          uploadsArchivePath,
-          '-C',
-          path.dirname(uploadRoot),
-        ]);
       }
 
       const completedAt = new Date().toISOString();
@@ -717,6 +745,9 @@ export class BackupService {
       return { ok: true, restoredFrom: record.id };
     } catch (err) {
       const failureReason = (err as Error).message;
+      if (err instanceof UploadsRollbackError) {
+        this.logger.error(failureReason);
+      }
       await this.audit.record({
         userId: user.id,
         action: 'backup.restore_failed',
@@ -737,57 +768,7 @@ export class BackupService {
     }
   }
 
-  // Instance-wide event -> notify every OWNER-role user across every
-  // restaurant on this instance (not just the acting user's own
-  // restaurant), because a backup/restore affects the entire shared
-  // Postgres instance, not one tenant. `Notification` rows are
-  // branch-scoped (schema.prisma), so each Owner is attached to their
-  // oldest (first-created) branch — a reasonable stand-in "primary" branch
-  // since there's no meaningful branch to prefer for an instance-wide
-  // event, and an Owner of a typical single-branch self-hosted deployment
-  // only has exactly one branch anyway. An Owner with no branch assignment
-  // (shouldn't normally happen — registration always assigns one) is
-  // skipped rather than failing the whole operation.
-  private async notifyOwners(payload: NotifyPayload) {
-    const owners = await this.prisma.user.findMany({
-      where: { role: { name: 'OWNER' }, isActive: true },
-      select: {
-        id: true,
-        branches: {
-          select: { branchId: true },
-          orderBy: { branch: { createdAt: 'asc' } },
-          take: 1,
-        },
-      },
-    });
-
-    for (const owner of owners) {
-      const branchId = owner.branches[0]?.branchId;
-      if (!branchId) continue;
-      await this.notifications.notifyUser(owner.id, branchId, payload);
-    }
-  }
-
-  private async downloadBuffer(
-    s3: S3Client,
-    bucket: string,
-    key: string,
-  ): Promise<Buffer> {
-    const res = await s3.send(
-      new GetObjectCommand({ Bucket: bucket, Key: key }),
-    );
-    const chunks: Buffer[] = [];
-    for await (const chunk of res.Body as AsyncIterable<Buffer>)
-      chunks.push(chunk);
-    return Buffer.concat(chunks);
-  }
-
-  private async downloadTo(
-    s3: S3Client,
-    bucket: string,
-    key: string,
-    destPath: string,
-  ) {
-    await fs.writeFile(destPath, await this.downloadBuffer(s3, bucket, key));
+  private notifyOwners(payload: NotifyPayload) {
+    return notifyOwners(this.prisma, this.notifications, payload);
   }
 }

@@ -13,7 +13,7 @@ import {
   createRoleSchema,
   updateRoleSchema,
   type SessionUser,
-} from '@nodedr-restaurant/types';
+} from '@nventra/types';
 import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
@@ -34,7 +34,7 @@ export class RolesController {
   @Post()
   @UsePipes(new ZodValidationPipe(createRoleSchema))
   create(@CurrentUser() user: SessionUser, @Body() body: unknown) {
-    return this.rolesService.create(user.restaurantId, user.id, body as never);
+    return this.rolesService.create(user.restaurantId, user, body as never);
   }
 
   @Auth('roles.manage')
@@ -45,17 +45,12 @@ export class RolesController {
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
-    return this.rolesService.update(
-      user.restaurantId,
-      user.id,
-      id,
-      body as never,
-    );
+    return this.rolesService.update(user.restaurantId, user, id, body as never);
   }
 
   @Auth('roles.manage')
   @Delete(':id')
   remove(@CurrentUser() user: SessionUser, @Param('id') id: string) {
-    return this.rolesService.remove(user.restaurantId, user.id, id);
+    return this.rolesService.remove(user.restaurantId, user, id);
   }
 }

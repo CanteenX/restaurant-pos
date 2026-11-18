@@ -3,10 +3,11 @@
 import { ArrowDown, ArrowUp, Eye, EyeOff, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { useI18n } from "@/lib/i18n/context";
 import {
   DEFAULT_DASHBOARD_PREFS,
   TREND_DAY_OPTIONS,
-  WIDGET_LABELS,
+  WIDGET_LABEL_KEYS,
   type DashboardPrefs,
 } from "@/hooks/use-dashboard";
 
@@ -23,6 +24,8 @@ export function CustomizePanel({
   onClose: () => void;
   saving: boolean;
 }) {
+  const { t } = useI18n();
+  const label = (id: string) => (id in WIDGET_LABEL_KEYS ? t(WIDGET_LABEL_KEYS[id]) : id);
   const move = (key: "topOrder" | "cardOrder", id: string, by: -1 | 1) => {
     const list = [...prefs[key]];
     const i = list.indexOf(id);
@@ -46,8 +49,8 @@ export function CustomizePanel({
           return (
             <li key={id} className="flex items-center justify-between gap-2 px-3 py-1.5">
               <span className={hidden ? "text-sm text-muted-foreground line-through" : "text-sm text-foreground"}>
-                {WIDGET_LABELS[id] ?? id}
-                {hidden && <span className="ml-2 text-xs no-underline">(hidden)</span>}
+                {label(id)}
+                {hidden && <span className="ml-2 text-xs no-underline">{t("dashboard.custom.hidden")}</span>}
               </span>
               <span className="flex items-center gap-0.5">
                 <Button
@@ -55,7 +58,7 @@ export function CustomizePanel({
                   size="icon"
                   className="h-8 w-8"
                   disabled={i === 0}
-                  aria-label={`Move ${WIDGET_LABELS[id]} up`}
+                  aria-label={t("dashboard.custom.moveUp", { name: label(id) })}
                   onClick={() => move(key, id, -1)}
                 >
                   <ArrowUp className="h-4 w-4" />
@@ -65,7 +68,7 @@ export function CustomizePanel({
                   size="icon"
                   className="h-8 w-8"
                   disabled={i === all.length - 1}
-                  aria-label={`Move ${WIDGET_LABELS[id]} down`}
+                  aria-label={t("dashboard.custom.moveDown", { name: label(id) })}
                   onClick={() => move(key, id, 1)}
                 >
                   <ArrowDown className="h-4 w-4" />
@@ -75,7 +78,7 @@ export function CustomizePanel({
                   size="icon"
                   className="h-8 w-8"
                   aria-pressed={hidden}
-                  aria-label={hidden ? `Show ${WIDGET_LABELS[id]}` : `Hide ${WIDGET_LABELS[id]}`}
+                  aria-label={hidden ? t("dashboard.custom.show", { name: label(id) }) : t("dashboard.custom.hide", { name: label(id) })}
                   onClick={() => toggle(id)}
                 >
                   {hidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -89,29 +92,29 @@ export function CustomizePanel({
   );
 
   return (
-    <Card className="flex flex-col gap-4 p-5" role="region" aria-label="Customize dashboard">
+    <Card className="flex flex-col gap-4 p-5" role="region" aria-label={t("dashboard.custom.region")}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-[18px] font-medium text-foreground">Customize your dashboard</h2>
+        <h2 className="text-[18px] font-medium text-foreground">{t("dashboard.custom.title")}</h2>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => onChange(DEFAULT_DASHBOARD_PREFS)}>
             <RotateCcw className="h-3.5 w-3.5" />
-            Restore default
+            {t("dashboard.custom.restore")}
           </Button>
           <Button size="sm" onClick={onClose}>
-            Done
+            {t("common.done")}
           </Button>
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
-        This only changes what you see and in what order. The numbers always come from your records.
-        {saving ? " Saving…" : " Saved automatically for your account."}
+        {t("dashboard.custom.note")}
+        {` ${saving ? t("dashboard.custom.saving") : t("dashboard.custom.saved")}`}
       </p>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {group("Main sections", "topOrder")}
-        {group("Cards", "cardOrder")}
+        {group(t("dashboard.custom.mainSections"), "topOrder")}
+        {group(t("dashboard.custom.cards"), "cardOrder")}
       </div>
       <label className="flex flex-wrap items-center gap-2 text-sm text-foreground">
-        Chart period
+        {t("dashboard.custom.chartPeriod")}
         <select
           value={prefs.trendDays}
           onChange={(e) => onChange({ ...prefs, trendDays: Number(e.target.value) })}
@@ -119,7 +122,7 @@ export function CustomizePanel({
         >
           {TREND_DAY_OPTIONS.map((d) => (
             <option key={d} value={d}>
-              Last {d} days
+              {t("dashboard.custom.lastDays", { days: d })}
             </option>
           ))}
         </select>

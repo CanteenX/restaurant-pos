@@ -1,3 +1,4 @@
+import { addWalletEntry } from '../customers/wallet-ledger';
 import {
   BadRequestException,
   ConflictException,
@@ -19,13 +20,16 @@ import {
   type SessionUser,
   type UpdateOrderDto,
   type UpdateOrderItemDto,
-} from '@nodedr-restaurant/types';
+} from '@nventra/types';
 import { AuditService } from '../../audit/audit.service';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { GiftCardsService } from '../gift-cards/gift-cards.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { MarketingService } from '../marketing/marketing.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { ReceiptEmailService } from './receipt-email.service';
+import { IntegrationOutboxService } from '../../integration-hub/outbox/integration-outbox.service';
+import { gatewayQrOpenSince } from '../../integration-hub/payments/payment-gateway';
 import { resolveProfile } from './escpos/encoder';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeGateway } from '../../realtime/realtime.gateway';
@@ -43,7 +47,7 @@ import {
   settlePayments,
   type Bill,
 } from './settlement';
-import type { TaxMode } from '@nodedr-restaurant/types';
+import type { TaxMode } from '@nventra/types';
 import {
   adjustOnlinePrice,
   type OnlinePriceAdjust,
@@ -73,6 +77,8 @@ export class OrdersService {
     private readonly webhooks: WebhooksService,
     private readonly verifactu: VerifactuService,
     private readonly referrals: ReferralsService,
+    private readonly outbox: IntegrationOutboxService,
+    private readonly receiptEmails: ReceiptEmailService,
   ) {}
 
   async listOpen(branchId: string, tableId?: string) {
@@ -377,7 +383,9 @@ export class OrdersService {
           guestName: dto.guestName,
           notes: dto.notes,
           clientRequestId: options.clientRequestId,
-          ...(options.historical ? { createdAt: options.historical.createdAt } : {}),
+          ...(options.historical
+            ? { createdAt: options.historical.createdAt }
+            : {}),
           integrationKeyId: options.integrationKeyId,
           clientRequestHash: options.clientRequestHash,
           externalSource: options.externalSource,
@@ -687,6 +695,7 @@ export class OrdersService {
           'This order was just accepted or declined by someone else',
         );
       }
+      await this.outbox.enqueueOrderStatus(tx, order, 'ACCEPTED');
       if (!this.isDeferred(order.scheduledFor ?? undefined)) {
         await this.generateKots(tx, orderId, branchId, order.items);
       }
@@ -727,11 +736,14 @@ export class OrdersService {
     orderId: string,
     userId: string,
     reason: string,
+    // 'platform': the platform itself cancelled, so nothing is sent back.
+    opts: { origin?: 'platform' } = {},
   ) {
     return this.withdrawOrder(branchId, orderId, userId, {
       reason,
       source: 'ONLINE_DECLINED',
       declineIncoming: true,
+      origin: opts.origin,
     });
   }
 
@@ -881,6 +893,7 @@ export class OrdersService {
       source: 'STAFF' | 'CUSTOMER' | 'KITCHEN_REJECTED' | 'ONLINE_DECLINED';
       confirmStarted?: boolean;
       declineIncoming?: boolean;
+      origin?: 'platform';
     },
   ) {
     const reason = options.reason?.trim() || undefined;
@@ -948,6 +961,14 @@ export class OrdersService {
       if (flipped.count === 0) {
         throw new ConflictException(
           'This order was just paid or changed - refresh and check it',
+        );
+      }
+      if (options.origin !== 'platform') {
+        await this.outbox.enqueueOrderStatus(
+          tx,
+          order,
+          options.declineIncoming ? 'REJECTED' : 'CANCELLED',
+          reason,
         );
       }
       await tx.kot.updateMany({
@@ -1504,6 +1525,8 @@ export class OrdersService {
     userId: string,
     dto: CheckoutDto,
     mayExceedDiscountCap = false,
+    /** Set only by PaymentGatewayService when settling money that already moved. */
+    fromGatewaySettlement = false,
   ) {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, branchId },
@@ -1528,6 +1551,9 @@ export class OrdersService {
         'This order has not been accepted yet - accept it before taking payment',
       );
     }
+    const qrOverride = fromGatewaySettlement
+      ? null
+      : await this.assertNoLiveGatewayQr(orderId, dto);
 
     const branch = await this.prisma.branch.findUniqueOrThrow({
       where: { id: branchId },
@@ -1701,6 +1727,19 @@ export class OrdersService {
               totalAmount: bill.totalDue,
             };
 
+        // Only a checkout that goes through is recorded as an override.
+        if (qrOverride) {
+          await tx.auditLog.create({
+            data: {
+              userId,
+              action: 'payment.gateway_qr_overridden',
+              entity: 'Order',
+              entityId: orderId,
+              metadata: qrOverride,
+            },
+          });
+        }
+
         if (!settlement.fullyPaid) {
           await tx.order.update({
             where: { id: orderId, status: 'OPEN' },
@@ -1838,6 +1877,15 @@ export class OrdersService {
         ? { status: 'PAID' }
         : { balanceDue: settlement.balanceAfter }),
     });
+    // Digital receipt (#222): keep the address the guest agreed to, then mail
+    // the receipt once the bill is fully paid. Neither can fail the payment.
+    await this.receiptEmails.capture({
+      orderId,
+      branchId,
+      customerId: effectiveCustomerId,
+      dto,
+    });
+    if (settlement.fullyPaid) void this.receiptEmails.sendAfterPayment(orderId);
     if (settlement.fullyPaid) {
       if (order.tableId) {
         this.realtime.emitToBranch(branchId, 'table.updated', {
@@ -1871,6 +1919,37 @@ export class OrdersService {
   }
 
   // Current settlement state of an order, for answering a replayed request.
+  /**
+   * A gateway QR that can still be paid means the guest may be paying right
+   * now; recording another payment would collect the bill twice. The server
+   * holds the line whatever the till shows, unless the cashier overrides.
+   * A QR past its close time cannot collect any more, so it no longer holds
+   * the bill, even when the gateway cannot be asked (switched off, bad keys).
+   * Returns what to audit when the cashier overrode a live QR.
+   */
+  private async assertNoLiveGatewayQr(orderId: string, dto: CheckoutDto) {
+    const live = await this.prisma.gatewayPayment.findMany({
+      where: {
+        orderId,
+        status: { in: ['CREATED', 'PENDING'] },
+        externalId: { not: null },
+        settlementError: null,
+        createdAt: { gt: gatewayQrOpenSince() },
+      },
+      select: { id: true, provider: true, amount: true },
+    });
+    if (live.length === 0) return null;
+    if (!dto.overrideOpenGatewayQr) {
+      throw new ConflictException(
+        `A payment QR for ${live[0].amount.toFixed(2)} is still open on this bill - wait for it to be paid or to expire, or confirm the guest is paying another way`,
+      );
+    }
+    return {
+      attemptIds: live.map((a) => a.id),
+      amounts: live.map((a) => a.amount.toFixed(2)),
+    };
+  }
+
   private async checkoutResult(branchId: string, orderId: string) {
     const updated = await this.prisma.order.findFirstOrThrow({
       where: { id: orderId, branchId },
@@ -1996,13 +2075,16 @@ export class OrdersService {
       }
 
       if (dto.method === 'STORE_CREDIT' && order.customerId) {
-        // Atomic increment, not read-then-write: two concurrent
-        // STORE_CREDIT refunds for the same customer (from different
-        // orders) could otherwise both read the same stale walletBalance
-        // and one credit would be silently lost.
-        await tx.customer.update({
-          where: { id: order.customerId },
-          data: { walletBalance: { increment: dto.amount } },
+        // Ledger entry + rounded set under the customer row lock (two
+        // concurrent STORE_CREDIT refunds serialise on it), so the balance
+        // always equals its ledger and sync can recompute it (#82).
+        await addWalletEntry(tx, {
+          customerId: order.customerId,
+          delta: dto.amount,
+          reason: 'REFUND_CREDIT',
+          refundId: created.id,
+          orderId,
+          idempotencyKey: `refund:${created.id}`,
         });
       }
 
@@ -2377,6 +2459,9 @@ export class OrdersService {
           select: {
             id: true,
             orderNumber: true,
+            branchId: true,
+            externalSource: true,
+            externalOrderId: true,
             table: { select: { assignedWaiterId: true, number: true } },
           },
         },
@@ -2414,6 +2499,7 @@ export class OrdersService {
         where: { kotId },
         data: { status: target },
       });
+      if (target === 'READY') await this.platformReadyIfDone(tx, kot.order);
       return tx.kot.findUniqueOrThrow({ where: { id: kotId } });
     });
 
@@ -2458,6 +2544,29 @@ export class OrdersService {
     }
 
     return updated;
+  }
+
+  // Tells a delivery platform the order is ready once its last live ticket is
+  // READY (or already SERVED). Queued in the caller's transaction; deduped.
+  private async platformReadyIfDone(
+    tx: Prisma.TransactionClient,
+    order: {
+      id: string;
+      branchId: string;
+      externalSource: string | null;
+      externalOrderId: string | null;
+    },
+  ) {
+    if (!order.externalSource) return;
+    const cooking = await tx.kot.count({
+      where: {
+        orderId: order.id,
+        status: { notIn: ['READY', 'SERVED', 'CANCELLED', 'REJECTED'] },
+      },
+    });
+    if (cooking === 0) {
+      await this.outbox.enqueueOrderStatus(tx, order, 'READY');
+    }
   }
 
   // The kitchen declining a ticket. It is never a silent disappearance: the

@@ -1,6 +1,6 @@
 "use client";
 
-import type { TableStatusDto } from "@nodedr-restaurant/types";
+import type { TableStatusDto } from "@nventra/types";
 import { Users } from "lucide-react";
 import { useState } from "react";
 import { ElapsedTimer } from "@/components/tables/elapsed-timer";
@@ -9,6 +9,7 @@ import { ResponsiveTabs } from "@/components/ui/nav-picker";
 import { QueryError } from "@/components/ui/query-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Floor, RestaurantTable } from "@/hooks/use-tables";
+import { useI18n, type TranslationKey } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 
 const STATUS_STYLES: Record<TableStatusDto, string> = {
@@ -19,12 +20,12 @@ const STATUS_STYLES: Record<TableStatusDto, string> = {
   OUT_OF_SERVICE: "bg-muted border-border text-muted-foreground opacity-50",
 };
 
-const STATUS_LABEL: Record<TableStatusDto, string> = {
-  AVAILABLE: "Available",
-  OCCUPIED: "Occupied — tap to add items or bill",
-  RESERVED: "Reserved",
-  CLEANING: "Cleaning",
-  OUT_OF_SERVICE: "Out of service",
+const STATUS_LABEL: Record<TableStatusDto, TranslationKey> = {
+  AVAILABLE: "pos.tablePicker.available",
+  OCCUPIED: "pos.tablePicker.occupiedTap",
+  RESERVED: "pos.tablePicker.reserved",
+  CLEANING: "pos.tablePicker.cleaning",
+  OUT_OF_SERVICE: "pos.tablePicker.outOfService",
 };
 
 // A click-to-order table grid, purpose-built for POS: pick a table, land
@@ -48,11 +49,12 @@ export function PosTablePicker({
   onRetry?: () => void;
   retrying?: boolean;
 }) {
+  const { t } = useI18n();
   const [activeFloorId, setActiveFloorId] = useState<string | undefined>(undefined);
   const activeFloor = floors.find((f) => f.id === (activeFloorId ?? floors[0]?.id));
 
   if (error && floors.length === 0) {
-    return <QueryError error={error} what="the tables" onRetry={() => onRetry?.()} retrying={retrying} />;
+    return <QueryError error={error} what={t("pos.tablePicker.theTables")} onRetry={() => onRetry?.()} retrying={retrying} />;
   }
   if (isLoading && floors.length === 0) {
     return (
@@ -66,7 +68,7 @@ export function PosTablePicker({
   if (floors.length === 0) {
     return (
       <p className="py-10 text-center text-sm text-muted-foreground">
-        No tables are set up for this branch yet. A manager can add them under Tables.
+        {t("pos.tablePicker.none")}
       </p>
     );
   }
@@ -75,13 +77,13 @@ export function PosTablePicker({
     <div className="flex h-full flex-col gap-4">
       {floors.length > 1 && (
         <ResponsiveTabs
-          label="Floor"
+          label={t("pos.tablePicker.floor")}
           value={activeFloor?.id ?? floors[0].id}
           onChange={setActiveFloorId}
           items={floors.map((f) => ({
             id: f.id,
             label: f.name,
-            hint: `${f.tables.filter((t) => t.status === "AVAILABLE").length} free`,
+            hint: t("pos.tablePicker.free", { count: f.tables.filter((tbl) => tbl.status === "AVAILABLE").length }),
           }))}
         />
       )}
@@ -94,7 +96,7 @@ export function PosTablePicker({
               key={table.id}
               type="button"
               disabled={!clickable}
-              title={STATUS_LABEL[table.status]}
+              title={t(STATUS_LABEL[table.status])}
               onClick={() => onSelect(table)}
               className={cn(
                 "flex h-28 flex-col items-center justify-center gap-1 rounded-2xl border-2 p-3 text-xs font-medium shadow-sm transition-transform lg:h-36 lg:gap-1.5",
@@ -110,7 +112,7 @@ export function PosTablePicker({
                 {table.capacity}
               </span>
               <span className="hidden rounded-full bg-background/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide lg:inline">
-                {table.status === "OUT_OF_SERVICE" ? "Out of service" : table.status.toLowerCase()}
+                {table.status === "OUT_OF_SERVICE" ? t("pos.tablePicker.outOfService") : table.status === "AVAILABLE" || table.status === "RESERVED" || table.status === "CLEANING" ? t(STATUS_LABEL[table.status]) : t("pos.tablePicker.occupied")}
               </span>
               {(table.status === "OCCUPIED" || table.status === "RESERVED") && (
                 <ElapsedTimer since={table.statusSince} className="flex items-center gap-1 text-[10px] opacity-70" />
@@ -120,16 +122,16 @@ export function PosTablePicker({
         })}
         {activeFloor?.tables.length === 0 && (
           <p className="col-span-full py-10 text-center text-sm text-muted-foreground">
-            No tables on this floor yet.
+            {t("pos.tablePicker.noneOnFloor")}
           </p>
         )}
       </div>
 
       <div className="flex flex-wrap gap-4 text-xs text-muted-foreground lg:border-t lg:border-border lg:pt-3">
-        <Legend color="bg-success" label="Available" />
-        <Legend color="bg-primary" label="Occupied" />
-        <Legend color="bg-warning" label="Reserved" />
-        <Legend color="bg-muted-foreground" label="Cleaning / out of service" />
+        <Legend color="bg-success" label={t("pos.tablePicker.available")} />
+        <Legend color="bg-primary" label={t("pos.tablePicker.occupied")} />
+        <Legend color="bg-warning" label={t("pos.tablePicker.reserved")} />
+        <Legend color="bg-muted-foreground" label={t("pos.tablePicker.cleaningOrOut")} />
       </div>
     </div>
   );

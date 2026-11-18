@@ -7,7 +7,7 @@ import type {
   KotStatusDto,
   RefundDto,
   UpdateOrderDto,
-} from "@nodedr-restaurant/types";
+} from "@nventra/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Customer } from "@/hooks/use-customers";
 import { api } from "@/lib/api";
@@ -101,6 +101,8 @@ export function useCheckoutOrder(branchId: string | null) {
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["floors", branchId] });
       queryClient.invalidateQueries({ queryKey: ["dashboard", "summary", branchId] });
+      // A gift card may have been redeemed at this checkout.
+      queryClient.invalidateQueries({ queryKey: ["gift-cards", branchId] });
     },
   });
 }

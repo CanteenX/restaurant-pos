@@ -8,7 +8,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { createIntegrationOrderSchema } from '@nodedr-restaurant/types';
+import { createIntegrationOrderSchema } from '@nventra/types';
 import { OrdersService } from '../modules/orders/orders.service';
 import {
   IntegrationKeyContext,
@@ -158,6 +158,8 @@ function build(opts: { zones?: boolean } = {}) {
     {} as never,
     { emitForBranch: jest.fn() } as never,
     {} as never,
+    {} as never,
+    { enqueueOrderStatus: jest.fn() } as never,
     {} as never,
   );
   const service = new IntegrationsService(

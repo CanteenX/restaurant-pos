@@ -8,10 +8,11 @@ import type {
   DeliveryStatusDto,
   DeliveryZoneDto,
   DeliveryZoneUpdateDto,
-} from '@nodedr-restaurant/types';
+} from '@nventra/types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeGateway } from '../../realtime/realtime.gateway';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { IntegrationOutboxService } from '../../integration-hub/outbox/integration-outbox.service';
 
 // Forward-only lifecycle; FAILED is reachable from any open state.
 const NEXT: Record<DeliveryStatusDto, DeliveryStatusDto[]> = {
@@ -34,6 +35,7 @@ export class DeliveryService {
     private readonly realtime: RealtimeGateway,
     private readonly webhooks: WebhooksService,
     private readonly push: PushService,
+    private readonly outbox: IntegrationOutboxService,
   ) {}
 
   // --- Zones ---------------------------------------------------------------
@@ -173,7 +175,7 @@ export class DeliveryService {
     });
     if (!driver)
       throw new BadRequestException('Driver not found for this branch');
-    const saved = await this.save(branchId, orderId, {
+    const saved = await this.save(branchId, orderId, undefined, {
       driverId,
       deliveryStatus: 'ASSIGNED',
       assignedAt: new Date(),
@@ -204,7 +206,13 @@ export class DeliveryService {
       throw new BadRequestException(`Cannot move from ${current} to ${status}`);
     if (status === 'PICKED_UP' && !order.driverId)
       throw new BadRequestException('Assign a driver first');
-    return this.save(branchId, orderId, {
+    const platform =
+      status === 'PICKED_UP'
+        ? ('DISPATCHED' as const)
+        : status === 'DELIVERED'
+          ? ('DELIVERED' as const)
+          : undefined;
+    return this.save(branchId, orderId, platform, {
       deliveryStatus: status,
       ...(status === 'UNASSIGNED' ? { driverId: null } : {}),
       ...(status === 'PICKED_UP' ? { pickedUpAt: new Date() } : {}),
@@ -223,16 +231,27 @@ export class DeliveryService {
     return order;
   }
 
+  // `platform`: the delivery-platform status this change reports (own-fleet
+  // pickup / drop-off), queued in the same transaction as the update.
   private async save(
     branchId: string,
     orderId: string,
+    platform: 'DISPATCHED' | 'DELIVERED' | undefined,
     data: Record<string, unknown>,
   ) {
-    const updated = await this.prisma.order.update({
-      where: { id: orderId },
-      data,
-      include: ORDER_INCLUDE,
-    });
+    const update = (db: Pick<PrismaService, 'order'>) =>
+      db.order.update({
+        where: { id: orderId },
+        data,
+        include: ORDER_INCLUDE,
+      });
+    const updated = platform
+      ? await this.prisma.$transaction(async (tx) => {
+          const row = await update(tx);
+          await this.outbox.enqueueOrderStatus(tx, row, platform);
+          return row;
+        })
+      : await update(this.prisma);
     this.realtime.emitToBranch(branchId, 'order.updated', { id: orderId });
     void this.webhooks.emitForBranch(branchId, 'delivery.updated', {
       orderId,

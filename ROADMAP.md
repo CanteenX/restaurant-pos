@@ -8,7 +8,7 @@ inventory, CRM, payments, security, AI, etc. — ~305 line items each marked
 Shipped/Partial/Planned against the real codebase) see
 [`FEATURE-CHECKLIST.md`](./FEATURE-CHECKLIST.md). This file tracks the same
 ground phase-by-phase for engineering; that one is organized by product
-category for anyone (including the website) that wants "what does OrderRestro
+category for anyone (including the website) that wants "what does Nventra POS
 actually do today."
 
 ## Current phase: 5–8 core features shipped (see each phase for what is and is not built)
@@ -176,7 +176,10 @@ containers, not just "it compiles."
       **Scope note:** the earn/redeem rate is a fixed constant for now
       (`LOYALTY_POINT_VALUE` / `LOYALTY_EARN_PER_CURRENCY` in
       `orders.service.ts`), not yet a per-restaurant configurable program —
-      real "memberships" (tiers) are not built, only the points ledger.
+      Membership tiers (#12): tiers with discount %, points multiplier and
+      duration, enrol/upgrade/expire API and a server-side benefit lookup
+      (`MembershipService.benefitFor`). Not yet applied at checkout and no
+      UI yet (follow-up issues).
 - [x] Gift cards: issue (random code + balance), balance lookup, redeem as
       a checkout payment source — debits up to the remaining amount due
       (never more than the card's balance), read-modify-write with
@@ -241,8 +244,11 @@ containers, not just "it compiles."
       (Phase 7 territory, same as expiry alerts).
 - [x] Procurement: vendor quotations, purchase requests, vendor invoices,
       payment tracking, supplier performance — landed 2026-08-14, see
-      Session log. Purchase returns and automatic reorder suggestions
-      remain out of scope for this pass.
+      Session log.
+- [x] Purchase returns / debit notes API (#63): `POST|GET
+      /inventory/purchase-returns`, `GET /inventory/suppliers/:id/balance`.
+      Capped at received and still-in-stock batch quantity; deducts stock at
+      the batch's cost and reduces the supplier payable. UI is #64.
 
 ### Phase 5 — Delivery + Online/QR ordering
 
@@ -347,12 +353,11 @@ dataset gets a documented import path, not a fabricated snapshot, when we
 reach it (tax code masters, delivery-platform rate cards, etc.).
 
 **Phase 4 scope cuts (2026-08-04):**
-- **Unit conversion.** Each `Ingredient` has one base unit used everywhere
-  (recipe, PO, GRN, stock). A real conversion engine — buy a 25kg bag,
-  stock and recipe in kg — is real, non-trivial modeling work (conversion
-  factors can be ingredient-specific and sometimes non-linear, e.g. a dozen
-  of a piece-counted item vs. a weight-based one) that would have doubled
-  the schema surface for this pass. Revisit when a real recipe needs it.
+- **Unit conversion.** ~~Deferred~~ — shipped in #69 (API only). Stock stays
+  in each `Ingredient`'s base unit; recipes, GRNs, waste and adjustments may
+  be entered in KG/G, L/ML, DOZEN/PIECE or a per-ingredient pack size
+  (`PUT /inventory/ingredients/:id/conversions`) and are converted at the
+  boundary (`modules/inventory/unit-conversion.ts`). UI pickers are follow-up.
 - **Stock transfers.** Deferred to Phase 6 alongside multi-branch, since a
   transfer needs two real branches to mean anything.
 - **Expiry/low-stock alerting (push/email/report).** The *data* is
@@ -415,7 +420,7 @@ reach it (tax code masters, delivery-platform rate cards, etc.).
   applied directly via `psql` against a real local Postgres (all prior
   migrations replayed first) to confirm it's syntactically and
   semantically correct against the actual schema — but **run
-  `pnpm --filter @nodedr-restaurant/types build && cd apps/backend && npx
+  `pnpm --filter @nventra/types build && cd apps/backend && npx
   prisma generate && npx prisma migrate deploy` for real once, and re-run
   the backend's own test suite, before trusting this in production.**
   `packages/types` and all of `apps/web` (including every file touched
@@ -583,7 +588,7 @@ reach it (tax code masters, delivery-platform rate cards, etc.).
 
   **Real bugs/gotchas caught this session:**
   1. `apps/backend/.env`'s `DATABASE_URL` had a stale password
-     (`nodedr_dev_pw`) that didn't match root `.env`'s actual
+     (an old dev-only value) that didn't match root `.env`'s actual
      `POSTGRES_PASSWORD` (`change-me`, which is what the running Postgres
      volume was actually initialized with) — local migrations failed with
      an auth error until traced and fixed. Pre-existing drift between the

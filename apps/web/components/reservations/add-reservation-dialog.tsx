@@ -24,6 +24,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useCreateReservation } from "@/hooks/use-reservations";
 import type { RestaurantTable } from "@/hooks/use-tables";
 import { ApiError } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
+import { parseDepositInput } from "@/lib/reservation-deposit";
 
 function defaultDateTimeLocal() {
   const d = new Date(Date.now() + 60 * 60 * 1000);
@@ -38,6 +40,7 @@ export function AddReservationDialog({
   branchId: string | null;
   tables: RestaurantTable[];
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [customerName, setCustomerName] = useState("");
   const [phone, setPhone] = useState("");
@@ -45,6 +48,7 @@ export function AddReservationDialog({
   const [reservedAt, setReservedAt] = useState(defaultDateTimeLocal());
   const [tableId, setTableId] = useState("");
   const [specialRequests, setSpecialRequests] = useState("");
+  const [deposit, setDeposit] = useState("");
 
   const createReservation = useCreateReservation(branchId);
 
@@ -55,10 +59,16 @@ export function AddReservationDialog({
     setReservedAt(defaultDateTimeLocal());
     setTableId("");
     setSpecialRequests("");
+    setDeposit("");
   };
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const parsedDeposit = parseDepositInput(deposit);
+    if (!parsedDeposit.ok) {
+      toast.error(t("reservations.add.depositInvalid"));
+      return;
+    }
     createReservation.mutate(
       {
         customerName,
@@ -68,30 +78,31 @@ export function AddReservationDialog({
         durationMinutes: 90,
         tableId: tableId || undefined,
         specialRequests: specialRequests || undefined,
+        deposit: parsedDeposit.value,
       },
       {
         onSuccess: () => {
-          toast.success(`Reservation added for ${customerName}`);
+          toast.success(t("reservations.add.added", { name: customerName }));
           setOpen(false);
           reset();
         },
         onError: (err) =>
-          toast.error(err instanceof ApiError ? err.message : "Could not add reservation"),
+          toast.error(err instanceof ApiError ? err.message : t("reservations.add.error")),
       },
     );
   };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button size="sm">New reservation</Button>} />
+      <DialogTrigger render={<Button size="sm">{t("reservations.add.title")}</Button>} />
       <DialogContent className="sm:max-w-md">
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>New reservation</DialogTitle>
+            <DialogTitle>{t("reservations.add.title")}</DialogTitle>
           </DialogHeader>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="r-name">Customer name</Label>
+            <Label htmlFor="r-name">{t("reservations.add.customerName")}</Label>
             <Input
               id="r-name"
               value={customerName}
@@ -103,11 +114,11 @@ export function AddReservationDialog({
 
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-2">
-              <Label htmlFor="r-phone">Phone</Label>
+              <Label htmlFor="r-phone">{t("reservations.add.phone")}</Label>
               <Input id="r-phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="r-guests">Guests</Label>
+              <Label htmlFor="r-guests">{t("reservations.add.guests")}</Label>
               <Input
                 id="r-guests"
                 type="number"
@@ -120,7 +131,7 @@ export function AddReservationDialog({
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="r-when">Date & time</Label>
+            <Label htmlFor="r-when">{t("reservations.add.dateTime")}</Label>
             <Input
               id="r-when"
               type="datetime-local"
@@ -131,15 +142,15 @@ export function AddReservationDialog({
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label>Table (optional)</Label>
+            <Label>{t("reservations.add.tableOptional")}</Label>
             <Select value={tableId} onValueChange={(v) => setTableId(v ?? "")}>
               <SelectTrigger>
-                <SelectValue placeholder="No table assigned yet" />
+                <SelectValue placeholder={t("reservations.add.noTable")} />
               </SelectTrigger>
               <SelectContent>
-                {tables.map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.name ?? `Table ${t.number}`}
+                {tables.map((tb) => (
+                  <SelectItem key={tb.id} value={tb.id}>
+                    {tb.name ?? t("tables.tableLabel", { number: tb.number })}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -147,7 +158,20 @@ export function AddReservationDialog({
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="r-notes">Special requests</Label>
+            <Label htmlFor="r-deposit">{t("reservations.add.depositOptional")}</Label>
+            <Input
+              id="r-deposit"
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="0.01"
+              value={deposit}
+              onChange={(e) => setDeposit(e.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="r-notes">{t("reservations.add.specialRequests")}</Label>
             <Textarea
               id="r-notes"
               value={specialRequests}
@@ -158,7 +182,7 @@ export function AddReservationDialog({
 
           <DialogFooter>
             <Button type="submit" disabled={createReservation.isPending}>
-              {createReservation.isPending ? "Saving…" : "Save reservation"}
+              {createReservation.isPending ? t("tables.saving") : t("reservations.add.save")}
             </Button>
           </DialogFooter>
         </form>

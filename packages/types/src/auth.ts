@@ -34,8 +34,39 @@ export const sessionUserSchema = z.object({
 });
 export type SessionUser = z.infer<typeof sessionUserSchema>;
 
+/** Session settings the browser follows (returned by GET /auth/me, #18). */
+export const clientSessionSchema = z.object({
+  idleMinutes: z.number().positive(),
+  idleSignOut: z.boolean(),
+});
+export type ClientSession = z.infer<typeof clientSessionSchema>;
+
 export const twoFactorCodeSchema = z.object({ code: z.string().trim().min(6).max(20) });
 export const twoFactorDisableSchema = z.object({
   password: z.string().min(1),
   code: z.string().trim().min(6).max(20),
 });
+
+// --- Password reset by email (#224) -----------------------------------------
+
+/** The account password policy: the same rule as sign-up and staff create. */
+export const newPasswordSchema = z.string().min(8).max(200);
+
+export const passwordResetRequestSchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(200),
+});
+export type PasswordResetRequestDto = z.infer<typeof passwordResetRequestSchema>;
+
+/** A single-use link token: `<selector>.<verifier>` (backend auth/tokens). */
+export const authLinkTokenSchema = z
+  .string()
+  .trim()
+  .min(20)
+  .max(200)
+  .regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+
+export const passwordResetConfirmSchema = z.object({
+  token: authLinkTokenSchema,
+  password: newPasswordSchema,
+});
+export type PasswordResetConfirmDto = z.infer<typeof passwordResetConfirmSchema>;

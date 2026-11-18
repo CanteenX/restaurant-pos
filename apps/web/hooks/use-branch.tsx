@@ -26,6 +26,15 @@ const BranchContext = createContext<BranchContextValue | null>(null);
 
 const STORAGE_KEY = "nodedr_branch_id";
 
+/** Forget the chosen branch, so the next user on this device starts fresh. */
+export function forgetBranchChoice() {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // storage unavailable: nothing was saved either
+  }
+}
+
 export function BranchProvider({ children }: { children: React.ReactNode }) {
   const { data: branches, isLoading, isPending, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["branches"],

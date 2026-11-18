@@ -1,0 +1,71 @@
+# Builder agent
+
+You implement exactly one GitHub issue per run, then stop.
+
+**GitHub access:** GraphQL is blocked in cloud sessions, so `gh issue …` and
+`gh pr …` fail. Use `source scripts/agent/gh-rest.sh` (REST helpers) or the
+GitHub MCP tools (`mcp__github__issue_read`, `issue_write`, `add_issue_comment`,
+`create_pull_request`, `pull_request_read`). Start Docker with `ensure_docker`.
+
+## 1. Pick work
+**Review fixes come first:** if any open issue has `agent:changes` and your
+`model:` label, take the oldest one instead of new work: check out its existing
+`claude/N-*` branch, address every numbered item in the latest `REVIEW: CHANGES`
+comment, re-verify, push once, comment `Addressed review: <summary>` and
+`set_state N agent:review`. One issue per run either way.
+
+```bash
+source scripts/agent/gh-rest.sh
+issues_with_labels "agent:ready,model:<YOUR_MODEL>"      # number, title, labels
+issues_with_labels "agent:in-progress"                    # busy lanes
+```
+- Lanes run in PARALLEL (see README). Skip issues whose lane already has TWO
+  `agent:in-progress` issues, or one that edits the same files as yours.
+- Prefer an eligible `lane:foundation` issue, then the lowest number.
+- Before opening/updating your PR: `git fetch origin && git rebase origin/staging`,
+  resolve conflicts, re-run checks.
+- Skip issues whose body says `Depends on #N` while any such #N is still open
+  (`issue_state N`). Dependencies always win over issue order.
+- Skip issues labelled `reserved` (kept for a manual session).
+- Take the lowest-numbered remaining issue and claim it with a unique run id:
+  `RUN=$(date +%s)-$RANDOM`, `comment N "Claimed by builder (<model>) run $RUN at $(date -u +%FT%TZ)"`,
+  then `set_state N agent:in-progress`.
+- **Confirm the claim (prevents two builders on one issue):** wait 15 s, then
+  read the issue's comments from the last 30 min that start with `Claimed by builder`.
+  If the OLDEST of them is not yours (other run id), you lost the race: delete
+  your claim comment (`gh api -X DELETE repos/$R/issues/comments/<id>`), do not
+  touch the labels, and go back to picking another issue.
+- Nothing to do → stop without changes.
+
+## 2. Build (TDD)
+- `git fetch origin && git checkout -b claude/N-<slug> origin/staging`
+  (if `origin/claude/N-*` already exists from an earlier run, continue on it).
+- Read the issue (`issue_body N`), CLAUDE.md, and the files it points to.
+- Write the failing test first (backend: `*.spec.ts` next to the service or
+  `apps/backend/test/*.e2e-spec.ts`; web: `apps/web/lib/*.test.ts`; UI flows:
+  `e2e/tests/*.spec.ts`). Run it, see it fail, implement, see it pass.
+- Keep the change scoped to the issue. Files < 800 lines, functions < 50 lines.
+
+## 3. Verify locally (all must pass before pushing)
+```bash
+corepack enable && pnpm install --frozen-lockfile && pnpm --filter ./packages/types build
+pnpm --filter ./apps/backend exec prisma generate
+pnpm -r typecheck && pnpm -r lint && pnpm -r test
+ensure_docker && scripts/agent/qa.sh      # any user-visible or API change
+```
+Backend e2e needs Postgres: `docker run -d --name pg -e POSTGRES_USER=ci -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=ci -p 5432:5432 postgres:16-alpine`,
+then `DATABASE_URL=postgresql://ci:ci@localhost:5432/ci JWT_SECRET=ci-only-secret-ci-only-secret pnpm --filter ./apps/backend exec prisma migrate deploy && … test:e2e`.
+Save screenshots of changed UI (Playwright `page.screenshot`) and describe them.
+
+## 4. Open the PR (push once)
+- Commit: `feat(scope): ... (#N)` (conventional commits).
+- `git push -u origin claude/N-<slug>`
+- Write the body to a file using `.github/PULL_REQUEST_TEMPLATE.md`: what/why,
+  `Closes #N`, commands run + results, each acceptance criterion ticked with
+  evidence, screenshot notes. Then `open_pr claude/N-<slug> "<type>: <summary> (#N)" body.md`.
+- `set_state N agent:review`.
+
+## If you get stuck
+Push and `open_pr … body.md true` (draft) with what works, comment what is
+left and why, `set_state N agent:ready` (or add `agent:blocked` if a human is
+needed) and stop.

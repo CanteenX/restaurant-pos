@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { toast } from "@/lib/toast";
 import { CreateIntegrationKeyDialog } from "@/components/settings/create-integration-key-dialog";
 import { CreateStaffKeyDialog } from "@/components/settings/create-staff-key-dialog";
@@ -22,8 +22,24 @@ import {
   type StaffApiKey,
 } from "@/hooks/use-api-keys";
 import { ApiError } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
+
+// Inline markup helper for translated strings.
+function rich(text: string, tags: Record<string, (children: string) => ReactNode>): ReactNode[] {
+  const out: ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(/<(\w+)>(.*?)<\/\1>/g)) {
+    const at = m.index ?? 0;
+    out.push(text.slice(last, at));
+    out.push(<Fragment key={at}>{tags[m[1]]?.(m[2]) ?? m[2]}</Fragment>);
+    last = at + m[0].length;
+  }
+  out.push(text.slice(last));
+  return out;
+}
 
 export default function ApiKeysPage() {
+  const { t } = useI18n();
   const { data } = useCurrentUser();
   const user = data?.user;
   const canManageIntegrations = hasPermission(user, "settings.manage");
@@ -31,8 +47,8 @@ export default function ApiKeysPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-[32px] font-semibold tracking-tight text-foreground">Settings</h1>
-        <p className="text-sm text-muted-foreground">Restaurant, branch, and staff configuration</p>
+        <h1 className="text-[32px] font-semibold tracking-tight text-foreground">{t("settings.apiKeys.title")}</h1>
+        <p className="text-sm text-muted-foreground">{t("settings.apiKeys.subtitle")}</p>
       </div>
 
       <SettingsTabs />
@@ -44,16 +60,17 @@ export default function ApiKeysPage() {
 }
 
 function StaffApiKeysCard() {
+  const { t } = useI18n();
   const { data: keys, isLoading } = useStaffApiKeys();
   const revokeKey = useRevokeStaffApiKey();
   const [showCreate, setShowCreate] = useState(false);
   const [newToken, setNewToken] = useState<string | null>(null);
 
   const onRevoke = (key: StaffApiKey) => {
-    if (!confirm(`Revoke "${key.name}"? Anything using this key stops working immediately.`)) return;
+    if (!confirm(t("settings.apiKeys.personal.revokeConfirm", { name: key.name }))) return;
     revokeKey.mutate(key.id, {
-      onSuccess: () => toast.success("Key revoked"),
-      onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not revoke key"),
+      onSuccess: () => toast.success(t("settings.apiKeys.keyRevoked")),
+      onError: (err) => toast.error(err instanceof ApiError ? err.message : t("settings.apiKeys.revokeFailed")),
     });
   };
 
@@ -61,25 +78,30 @@ function StaffApiKeysCard() {
     <Card className="flex flex-col gap-4 p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-[18px] font-medium text-foreground">Personal API keys &amp; MCP</h2>
+          <h2 className="text-[18px] font-medium text-foreground">{t("settings.apiKeys.personal.title")}</h2>
           <p className="text-sm text-muted-foreground">
-            Personal access tokens that act as you, with your exact permissions. Use one to connect an MCP client
-            (Claude Desktop, etc.) or any script.
+            {t("settings.apiKeys.personal.desc")}
           </p>
         </div>
         <Button size="sm" onClick={() => setShowCreate(true)}>
-          New key
+          {t("settings.apiKeys.newKey")}
         </Button>
       </div>
 
       <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-        <p className="font-medium text-foreground">MCP server URL</p>
+        <p className="font-medium text-foreground">{t("settings.apiKeys.mcp.title")}</p>
         <code className="mt-1 block overflow-x-auto rounded bg-background/60 p-2 font-mono text-xs">
           {typeof window !== "undefined" ? window.location.origin : ""}/api/v1/mcp
         </code>
         <p className="mt-2">
-          Point your MCP client at that URL with header <code className="font-mono">Authorization: Bearer &lt;key&gt;</code>.
-          See <a href="/docs/api" className="underline">API docs</a> for the full tool list.
+          {rich(t("settings.apiKeys.mcp.help"), {
+            code: (text) => <code className="font-mono">{text}</code>,
+            docs: (text) => (
+              <a href="/docs/api" className="underline">
+                {text}
+              </a>
+            ),
+          })}
         </p>
       </div>
 
@@ -89,10 +111,10 @@ function StaffApiKeysCard() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Key</TableHead>
-              <TableHead>Last used</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead>{t("settings.apiKeys.col.name")}</TableHead>
+              <TableHead>{t("settings.apiKeys.col.key")}</TableHead>
+              <TableHead>{t("settings.apiKeys.col.lastUsed")}</TableHead>
+              <TableHead className="text-right">{t("settings.apiKeys.col.actions")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -101,14 +123,14 @@ function StaffApiKeysCard() {
                 <TableCell className="font-medium text-foreground">{key.name}</TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">…{key.lastFour}</TableCell>
                 <TableCell className="text-muted-foreground">
-                  {key.lastUsedAt ? new Date(key.lastUsedAt).toLocaleString() : "Never"}
+                  {key.lastUsedAt ? new Date(key.lastUsedAt).toLocaleString() : t("settings.apiKeys.never")}
                 </TableCell>
                 <TableCell className="text-right">
                   {key.revokedAt ? (
-                    <Badge variant="outline">Revoked</Badge>
+                    <Badge variant="outline">{t("settings.apiKeys.revoked")}</Badge>
                   ) : (
                     <Button size="sm" variant="destructive" onClick={() => onRevoke(key)}>
-                      Revoke
+                      {t("settings.apiKeys.revoke")}
                     </Button>
                   )}
                 </TableCell>
@@ -117,7 +139,7 @@ function StaffApiKeysCard() {
           </TableBody>
         </Table>
       ) : (
-        <p className="py-6 text-center text-sm text-muted-foreground">No personal API keys yet.</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">{t("settings.apiKeys.personal.empty")}</p>
       )}
 
       {showCreate ? (
@@ -135,6 +157,7 @@ function StaffApiKeysCard() {
 }
 
 function IntegrationApiKeysCard() {
+  const { t } = useI18n();
   const { data: keys, isLoading } = useIntegrationApiKeys();
   const revokeKey = useRevokeIntegrationApiKey();
   const rotateKey = useRotateIntegrationApiKey();
@@ -142,18 +165,18 @@ function IntegrationApiKeysCard() {
   const [newToken, setNewToken] = useState<string | null>(null);
 
   const onRotate = (key: IntegrationApiKey) => {
-    if (!confirm(`Rotate "${key.name}"? A new key replaces it; update your website with it, as the old one stops working immediately.`)) return;
+    if (!confirm(t("settings.apiKeys.integration.rotateConfirm", { name: key.name }))) return;
     rotateKey.mutate(key.id, {
       onSuccess: (created) => setNewToken(created.token),
-      onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not rotate key"),
+      onError: (err) => toast.error(err instanceof ApiError ? err.message : t("settings.apiKeys.integration.rotateFailed")),
     });
   };
 
   const onRevoke = (key: IntegrationApiKey) => {
-    if (!confirm(`Revoke "${key.name}"? Any external website using this key stops working immediately.`)) return;
+    if (!confirm(t("settings.apiKeys.integration.revokeConfirm", { name: key.name }))) return;
     revokeKey.mutate(key.id, {
-      onSuccess: () => toast.success("Key revoked"),
-      onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not revoke key"),
+      onSuccess: () => toast.success(t("settings.apiKeys.keyRevoked")),
+      onError: (err) => toast.error(err instanceof ApiError ? err.message : t("settings.apiKeys.revokeFailed")),
     });
   };
 
@@ -161,14 +184,13 @@ function IntegrationApiKeysCard() {
     <Card className="flex flex-col gap-4 p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-[18px] font-medium text-foreground">Integration API keys</h2>
+          <h2 className="text-[18px] font-medium text-foreground">{t("settings.apiKeys.integration.title")}</h2>
           <p className="text-sm text-muted-foreground">
-            Credentials for an external website or system to use OrderRestro as a backend — browse the menu, place
-            orders, and book tables for a location. Not tied to any staff account.
+            {t("settings.apiKeys.integration.desc")}
           </p>
         </div>
         <Button size="sm" onClick={() => setShowCreate(true)}>
-          New key
+          {t("settings.apiKeys.newKey")}
         </Button>
       </div>
 
@@ -178,11 +200,11 @@ function IntegrationApiKeysCard() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Key</TableHead>
-              <TableHead>Location</TableHead>
-              <TableHead>Permissions</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead>{t("settings.apiKeys.col.name")}</TableHead>
+              <TableHead>{t("settings.apiKeys.col.key")}</TableHead>
+              <TableHead>{t("settings.apiKeys.col.location")}</TableHead>
+              <TableHead>{t("settings.apiKeys.col.permissions")}</TableHead>
+              <TableHead className="text-right">{t("settings.apiKeys.col.actions")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -190,7 +212,7 @@ function IntegrationApiKeysCard() {
               <TableRow key={key.id}>
                 <TableCell className="font-medium text-foreground">{key.name}</TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">…{key.lastFour}</TableCell>
-                <TableCell className="text-muted-foreground">{key.branch?.name ?? "All locations"}</TableCell>
+                <TableCell className="text-muted-foreground">{key.branch?.name ?? t("settings.apiKeys.integration.allLocations")}</TableCell>
                 <TableCell className="text-muted-foreground">
                   <div className="flex flex-wrap gap-1">
                     {key.scopes.map((s) => (
@@ -202,14 +224,14 @@ function IntegrationApiKeysCard() {
                 </TableCell>
                 <TableCell className="text-right">
                   {key.revokedAt ? (
-                    <Badge variant="outline">Revoked</Badge>
+                    <Badge variant="outline">{t("settings.apiKeys.revoked")}</Badge>
                   ) : (
                     <div className="flex justify-end gap-2">
                       <Button size="sm" variant="outline" onClick={() => onRotate(key)}>
-                        Rotate
+                        {t("settings.apiKeys.integration.rotate")}
                       </Button>
                       <Button size="sm" variant="destructive" onClick={() => onRevoke(key)}>
-                        Revoke
+                        {t("settings.apiKeys.revoke")}
                       </Button>
                     </div>
                   )}
@@ -219,7 +241,7 @@ function IntegrationApiKeysCard() {
           </TableBody>
         </Table>
       ) : (
-        <p className="py-6 text-center text-sm text-muted-foreground">No integration API keys yet.</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">{t("settings.apiKeys.integration.empty")}</p>
       )}
 
       {showCreate ? (

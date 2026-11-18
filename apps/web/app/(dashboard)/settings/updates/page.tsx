@@ -1,5 +1,6 @@
 "use client";
 
+import { useI18n, type TranslationKey } from "@/lib/i18n/context";
 import { useState } from "react";
 import { toast } from "@/lib/toast";
 import { NavDot } from "@/components/layout/nav-dot";
@@ -17,15 +18,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useApplyUpdate, useUpdateCheck } from "@/hooks/use-updates";
+import { useApplyUpdate, useUpdateCheck, useUpdateProgress } from "@/hooks/use-updates";
 import { ApiError } from "@/lib/api";
+import { describeProgress, type UpdateProgress } from "@/lib/update-progress";
 
 // After "Update now" the updater sidecar pulls the new images (the app keeps
 // running meanwhile) and then restarts the backend. Each tick asks the
 // backend what the updater is doing: a reported error stops the wait with a
 // real message, "done" reloads, and if the backend has gone away (restart in
 // progress) the unauthenticated health route decides when it is back.
-function pollUntilBackUp(onFailed: () => void) {
+function pollUntilBackUp(onFailed: VoidFunction, t: (key: TranslationKey, vars?: Record<string, string | number>) => string) {
   const start = Date.now();
   const timeoutMs = 10 * 60 * 1000;
   let wentDown = false;
@@ -33,7 +35,7 @@ function pollUntilBackUp(onFailed: () => void) {
     if (Date.now() - start > timeoutMs) {
       clearInterval(interval);
       onFailed();
-      toast.error("Still not back after 10 minutes — check the server directly.");
+      toast.error(t("settings.updates.stillDown"));
       return;
     }
     try {
@@ -42,16 +44,16 @@ function pollUntilBackUp(onFailed: () => void) {
         credentials: "include",
       });
       if (res.ok) {
-        const p = (await res.json()) as { state: string; error?: string | null };
-        if (p.state === "error") {
+        const view = describeProgress((await res.json()) as UpdateProgress, t);
+        if (view.kind === "failed" || view.kind === "rolled_back" || view.kind === "rollback_failed") {
           clearInterval(interval);
           onFailed();
-          toast.error(`Update failed: ${p.error ?? "unknown error"}. The old version is still running.`);
+          toast.error(view.message);
           return;
         }
-        if (p.state === "done") {
+        if (view.kind === "done") {
           clearInterval(interval);
-          toast.success("Update finished — reloading.");
+          toast.success(t("settings.updates.finished"));
           window.location.reload();
           return;
         }
@@ -65,7 +67,7 @@ function pollUntilBackUp(onFailed: () => void) {
       const res = await fetch("/api/health", { cache: "no-store" });
       if (res.ok && wentDown) {
         clearInterval(interval);
-        toast.success("Update finished — reloading.");
+        toast.success(t("settings.updates.finished"));
         window.location.reload();
       }
     } catch {
@@ -75,7 +77,12 @@ function pollUntilBackUp(onFailed: () => void) {
 }
 
 export default function UpdatesPage() {
+  const { t } = useI18n();
   const { data, isLoading, refetch, isFetching } = useUpdateCheck();
+  // Last thing the updater reported: after a rollback the backend restarted
+  // underneath the page, so show it on load instead of only in a toast.
+  const { data: progress } = useUpdateProgress();
+  const lastRun = progress ? describeProgress(progress, t) : null;
   const applyUpdate = useApplyUpdate();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -86,11 +93,11 @@ export default function UpdatesPage() {
     applyUpdate.mutate(undefined, {
       onSuccess: (result) => {
         toast.info(result.message);
-        pollUntilBackUp(() => setApplying(false));
+        pollUntilBackUp(() => setApplying(false), t);
       },
       onError: (err) => {
         setApplying(false);
-        toast.error(err instanceof ApiError ? err.message : "Could not start the update");
+        toast.error(err instanceof ApiError ? err.message : t("settings.updates.startFailed"));
       },
     });
   };
@@ -102,9 +109,9 @@ export default function UpdatesPage() {
       <Card className="flex flex-col gap-4 p-6">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-base font-medium">Application Updates</h2>
+            <h2 className="text-base font-medium">{t("settings.updates.heading")}</h2>
             <p className="text-sm text-muted-foreground">
-              Check the current version against the latest release on GitHub.
+              {t("settings.updates.intro")}
             </p>
           </div>
           <Button
@@ -113,20 +120,30 @@ export default function UpdatesPage() {
             onClick={() => refetch()}
             disabled={isFetching}
           >
-            {isFetching ? "Checking…" : "Check for update"}
+            {isFetching ? t("settings.updates.checking") : t("settings.updates.check")}
           </Button>
         </div>
+
+        {(lastRun?.kind === "rolled_back" || lastRun?.kind === "rollback_failed") && (
+          <p
+            role="alert"
+            data-testid={lastRun.kind === "rolled_back" ? "update-rolled-back" : "update-rollback-failed"}
+            className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+          >
+            {lastRun.message}
+          </p>
+        )}
 
         {isLoading ? (
           <Skeleton className="h-16 w-full" />
         ) : data ? (
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Running:</span>
+              <span className="text-muted-foreground">{t("settings.updates.running")}</span>
               <Badge variant="outline">{data.currentVersion}</Badge>
               {data.latestVersion && (
                 <>
-                  <span className="text-muted-foreground">Latest:</span>
+                  <span className="text-muted-foreground">{t("settings.updates.latest")}</span>
                   <Badge variant={data.updateAvailable || data.building ? "secondary" : "outline"}>
                     {data.latestVersion}
                   </Badge>
@@ -134,25 +151,25 @@ export default function UpdatesPage() {
               )}
               {data.updateAvailable ? (
                 <Badge className="gap-2">
-                  <NavDot className="ml-0 h-2 w-2" label="Update available" />
-                  Update available
+                  <NavDot className="ml-0 h-2 w-2" label={t("settings.updates.available")} />
+                  {t("settings.updates.available")}
                 </Badge>
               ) : data.building ? (
-                <Badge variant="outline">New release building</Badge>
+                <Badge variant="outline">{t("settings.updates.building")}</Badge>
               ) : (
-                <Badge variant="outline">Up to date</Badge>
+                <Badge variant="outline">{t("settings.updates.upToDate")}</Badge>
               )}
             </div>
 
             {data.currentVersion === "dev" && (
               <p className="text-sm text-muted-foreground">
-                Running a dev build — version comparison isn&apos;t meaningful here.
+                {t("settings.updates.devBuild")}
               </p>
             )}
 
             {data.building && (
               <p className="text-sm text-muted-foreground">
-                {data.latestVersion} is published but its images are still being built. Check again in a few minutes.
+                {t("settings.updates.buildingNote", { version: data.latestVersion ?? "" })}
               </p>
             )}
 
@@ -163,7 +180,7 @@ export default function UpdatesPage() {
                 rel="noreferrer"
                 className="text-sm text-muted-foreground underline underline-offset-3 hover:text-foreground"
               >
-                View release notes
+                {t("settings.updates.releaseNotes")}
               </a>
             )}
 
@@ -173,7 +190,7 @@ export default function UpdatesPage() {
                 disabled={applying}
                 onClick={() => setConfirmOpen(true)}
               >
-                {applying ? "Updating…" : "Update now"}
+                {applying ? t("settings.updates.updating") : t("settings.updates.updateNow")}
               </Button>
             )}
           </div>
@@ -183,16 +200,14 @@ export default function UpdatesPage() {
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Update and restart the application?</DialogTitle>
+            <DialogTitle>{t("settings.updates.confirmTitle")}</DialogTitle>
             <DialogDescription>
-              This pulls the latest release and rebuilds/restarts every service. The
-              app will be briefly unreachable while it restarts — this page will
-              reload automatically once it&apos;s back.
+              {t("settings.updates.confirmBody")}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-            <Button onClick={handleUpdate}>Update now</Button>
+            <DialogClose render={<Button variant="outline" />}>{t("settings.updates.cancel")}</DialogClose>
+            <Button onClick={handleUpdate}>{t("settings.updates.updateNow")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

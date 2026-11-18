@@ -6,6 +6,22 @@
 // Writing a new adapter: implement IntegrationProvider, then add it to
 // providers/registry.ts. Nothing in POS, KDS or order management changes.
 
+import type {
+  CanonicalMenu,
+  PlatformAvailabilityItem,
+} from '../aggregator-menu';
+
+/**
+ * Menu/availability calls: idempotency, our branch (always, so a merchant
+ * without an outlet map can still route per branch) and the platform outlet,
+ * if mapped.
+ */
+export interface PlatformCallOptions {
+  idempotencyKey: string;
+  branchId?: string;
+  outletId?: string;
+}
+
 export type IntegrationCategory =
   | 'FOOD_DELIVERY'
   | 'PAYMENT'
@@ -25,6 +41,36 @@ export interface ProviderCapabilities {
   webhooks: boolean;
   /** The platform can be linked with OAuth instead of pasted keys. */
   oauth: boolean;
+  /** We can switch a menu item on/off on the platform (#59). */
+  itemAvailability: boolean;
+  /** We can publish the menu to the platform (#59). */
+  menuSync: boolean;
+}
+
+/** Order states we report back to a platform (docs/AGGREGATORS.md 4.1). */
+export const PLATFORM_ORDER_STATUSES = [
+  'ACCEPTED',
+  'REJECTED',
+  'READY',
+  'DISPATCHED',
+  'DELIVERED',
+  'CANCELLED',
+] as const;
+export type PlatformOrderStatus = (typeof PLATFORM_ORDER_STATUSES)[number];
+
+/**
+ * Thrown by outbound calls. `retryable` decides whether the outbox tries
+ * again later (network, timeout, 408, 429, 5xx) or gives up (other 4xx).
+ */
+export class OutboundError extends Error {
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+    readonly httpStatus?: number,
+  ) {
+    super(message);
+    this.name = 'OutboundError';
+  }
 }
 
 export interface CredentialField {
@@ -68,18 +114,36 @@ export interface IntegrationProvider {
   testConnection(ctx: ProviderContext): Promise<TestResult>;
 
   // Optional: only called when the matching capability is true.
+  /** Throws OutboundError on failure. `idempotencyKey` is stable across retries. */
   updateOrderStatus?(
     ctx: ProviderContext,
     externalOrderId: string,
-    status: 'ACCEPTED' | 'REJECTED' | 'READY' | 'CANCELLED',
-    reason?: string,
+    status: PlatformOrderStatus,
+    opts: { reason?: string; idempotencyKey: string; at: string },
   ): Promise<void>;
+  /** Turn a partner's own payload into the canonical event JSON (default: identity). */
+  normalizeWebhook?(
+    headers: Record<string, string | string[] | undefined>,
+    rawBody: string,
+  ): unknown;
   processWebhook?(
     ctx: ProviderContext,
     headers: Record<string, string>,
     rawBody: string,
   ): Promise<{ externalOrderId?: string }>;
   refreshCredentials?(ctx: ProviderContext): Promise<Record<string, string>>;
+  /** Switch items on/off on the platform (#59). Throws OutboundError. */
+  setItemAvailability?(
+    ctx: ProviderContext,
+    items: PlatformAvailabilityItem[],
+    opts: PlatformCallOptions,
+  ): Promise<void>;
+  /** Publish the whole menu to the platform (#59). Throws OutboundError. */
+  pushMenu?(
+    ctx: ProviderContext,
+    menu: CanonicalMenu,
+    opts: PlatformCallOptions,
+  ): Promise<void>;
 }
 
 export const NO_CAPABILITIES: ProviderCapabilities = {
@@ -88,4 +152,6 @@ export const NO_CAPABILITIES: ProviderCapabilities = {
   cancelOrders: false,
   webhooks: false,
   oauth: false,
+  itemAvailability: false,
+  menuSync: false,
 };

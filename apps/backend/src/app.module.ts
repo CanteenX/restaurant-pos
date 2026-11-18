@@ -20,6 +20,7 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { OperationsModule } from './modules/operations/operations.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { IntegrationHubModule } from './integration-hub/integration-hub.module';
+import { IntegrationOutboxModule } from './integration-hub/outbox/integration-outbox.module';
 import { ImportsModule } from './modules/imports/imports.module';
 import { EmailModule } from './modules/email/email.module';
 import { TablesModule } from './modules/tables/tables.module';
@@ -46,6 +47,7 @@ import { StandaloneModule } from './standalone/standalone.module';
 import { BackupModule } from './backup/backup.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { McpModule } from './mcp/mcp.module';
+import { GraphqlModule } from './graphql/graphql.module';
 import { SystemModule } from './system/system.module';
 import { VerifactuModule } from './modules/verifactu/verifactu.module';
 
@@ -69,6 +71,7 @@ import { VerifactuModule } from './modules/verifactu/verifactu.module';
     OperationsModule,
     WebhooksModule,
     IntegrationHubModule,
+    IntegrationOutboxModule,
     ImportsModule,
     EmailModule,
     OrdersModule,
@@ -95,6 +98,7 @@ import { VerifactuModule } from './modules/verifactu/verifactu.module';
     BackupModule,
     IntegrationsModule,
     McpModule,
+    GraphqlModule,
     SystemModule,
   ],
   controllers: [AppController],

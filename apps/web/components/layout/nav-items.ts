@@ -1,6 +1,9 @@
+import type { TranslationKey } from "@/lib/i18n/context";
 import {
   CalendarClock,
   Clock,
+  Gift,
+  Tag,
   Bike,
   Truck,
   Users,
@@ -21,7 +24,7 @@ import {
 } from "lucide-react";
 
 export interface NavItem {
-  labelKey: string;
+  labelKey: TranslationKey;
   href: string;
   icon: LucideIcon;
   permission?: string;
@@ -41,6 +44,8 @@ export const NAV_ITEMS: NavItem[] = [
   { labelKey: "nav.menu", href: "/menu", icon: UtensilsCrossed, permission: "menu.view" },
   { labelKey: "nav.kds", href: "/kds", icon: ChefHat, permission: "kds.manage" },
   { labelKey: "nav.customers", href: "/customers", icon: UsersRound, permission: "customers.manage" },
+  { labelKey: "nav.giftCards", href: "/gift-cards", icon: Gift, permission: "customers.manage" },
+  { labelKey: "nav.labels", href: "/labels", icon: Tag, permission: "bills.print" },
   { labelKey: "nav.inventory", href: "/inventory", icon: Package, permission: "inventory.manage" },
   { labelKey: "nav.myDeliveries", href: "/my-deliveries", icon: Bike, permission: "delivery.rider" },
   { labelKey: "nav.delivery", href: "/delivery", icon: Truck, permission: "delivery.manage" },
@@ -51,4 +56,12 @@ export const NAV_ITEMS: NavItem[] = [
   { labelKey: "nav.operations", href: "/operations", icon: Wrench, permission: "operations.manage" },
   { labelKey: "nav.attendance", href: "/attendance", icon: Clock },
   { labelKey: "nav.settings", href: "/settings", icon: Settings, permission: "settings.manage" },
+];
+
+/**
+ * Sub-pages gated by a different permission than their nav entry. The layout
+ * checks these together with NAV_ITEMS (the longest matching href wins).
+ */
+export const EXTRA_ROUTE_GATES: { href: string; permission: string }[] = [
+  { href: "/settings/email-templates", permission: "settings.emailTemplates" },
 ];

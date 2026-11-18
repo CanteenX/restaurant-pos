@@ -45,3 +45,9 @@ export function formatCustomerAddress(a: {
     .filter(Boolean)
     .join(", ");
 }
+
+export const applyReferralCodeSchema = z.object({
+  customerId: z.string().min(1),
+  code: z.string().trim().min(1).max(20),
+});
+export type ApplyReferralCodeDto = z.infer<typeof applyReferralCodeSchema>;

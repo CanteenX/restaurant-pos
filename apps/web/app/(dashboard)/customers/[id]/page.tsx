@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { use, useState } from "react";
 import { toast } from "@/lib/toast";
 import { AddressesCard } from "@/components/customers/addresses-card";
+import { ReferralCard } from "@/components/customers/referral-card";
+import { MembershipCard } from "@/components/customers/membership-card";
 import { RewardsCard } from "@/components/customers/rewards-card";
 import { EditCustomerDialog } from "@/components/customers/edit-customer-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -122,7 +124,9 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
         </Card>
       )}
 
+      <MembershipCard branchId={branchId} customerId={customer.id} />
       <RewardsCard branchId={branchId} customerId={customer.id} />
+      <ReferralCard branchId={branchId} customerId={customer.id} />
       <AddressesCard branchId={branchId} customerId={customer.id} addresses={customer.addresses ?? []} />
 
       {customer.giftCards.length > 0 && (

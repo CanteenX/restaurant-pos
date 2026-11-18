@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_ROLE_PERMISSIONS } from "@nodedr-restaurant/types";
+import { DEFAULT_ROLE_PERMISSIONS } from "@nventra/types";
 import { canOpen, firstAllowedHref, requiredPermissionFor } from "./route-access.ts";
 
 const routes = [
@@ -43,4 +43,11 @@ test("a manage permission implies its view permission", () => {
   assert.equal(canOpen("/menu", ["menu.manage"], routes), true);
   assert.equal(canOpen("/tables", ["tables.manage"], routes), true);
   assert.equal(canOpen("/menu", ["tables.manage"], routes), false);
+});
+
+test("gift cards page needs customers.manage", () => {
+  const withGift = [...routes, { href: "/gift-cards", permission: "customers.manage" }];
+  assert.equal(requiredPermissionFor("/gift-cards", withGift), "customers.manage");
+  assert.equal(canOpen("/gift-cards", DEFAULT_ROLE_PERMISSIONS.WAITER, withGift), false);
+  assert.equal(canOpen("/gift-cards", ["customers.manage"], withGift), true);
 });

@@ -11,13 +11,7 @@ import {
 } from "recharts";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-
-function formatDayLabel(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
-}
-
-// Axis ticks are short (10K); the tooltip carries the exact currency value.
-const compactNumber = new Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 1 });
+import { useI18n } from "@/lib/i18n/context";
 
 export function TrendChart({
   title,
@@ -38,6 +32,10 @@ export function TrendChart({
   isLoading: boolean;
   emptyMessage: string;
 }) {
+  const { formatDate, formatNumber } = useI18n();
+  const formatDayLabel = (dateStr: string) => formatDate(dateStr, { day: "numeric", month: "short" });
+  // Axis ticks are short (10K); the tooltip carries the exact currency value.
+  const compactNumber = (v: number) => formatNumber(v, { notation: "compact", maximumFractionDigits: 1 });
   const hasData = data.some((d) => Number(d[valueKey]) > 0);
 
   return (
@@ -70,7 +68,7 @@ export function TrendChart({
                 axisLine={false}
                 tickLine={false}
                 width={44}
-                tickFormatter={(v: number) => compactNumber.format(v)}
+                tickFormatter={(v: number) => compactNumber(v)}
               />
               <Tooltip
                 formatter={(value: number) => valueFormatter(value)}

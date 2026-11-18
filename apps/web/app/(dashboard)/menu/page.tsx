@@ -12,7 +12,8 @@ import { EditCategoryDialog } from "@/components/menu/edit-category-dialog";
 import { EditItemDialog } from "@/components/menu/edit-item-dialog";
 import { Badge } from "@/components/ui/badge";
 import { UploadImage } from "@/components/ui/upload-image";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import Link from "next/link";
 import { ResponsiveTabs } from "@/components/ui/nav-picker";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,6 +25,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useI18n } from "@/lib/i18n/context";
 import { hasPermission, useCurrentUser } from "@/hooks/use-auth";
 import { useBranch } from "@/hooks/use-branch";
 import {
@@ -39,6 +41,7 @@ import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function MenuPage() {
+  const { t } = useI18n();
   const { branchId } = useBranch();
   const { data: me } = useCurrentUser();
   // menu.view alone is read-only; every edit control needs menu.manage.
@@ -56,15 +59,15 @@ export default function MenuPage() {
   const selectedCategory = categories?.find((c) => c.id === selectedCategoryId);
 
   const onDeleteCategory = (category: MenuCategory) => {
-    if (!confirm(`Delete the "${category.name}" category? This cannot be undone.`)) return;
+    if (!confirm(t("menu.deleteCategoryConfirm", { name: category.name }))) return;
     deleteCategory.mutate(category.id, {
       onSuccess: () => {
-        toast.success(`"${category.name}" deleted`);
+        toast.success(t("menu.categoryDeleted", { name: category.name }));
         if (selectedCategoryId === category.id) setSelectedCategoryId(undefined);
       },
       onError: (err) =>
         toast.error(
-          err instanceof ApiError ? err.message : "Could not delete category — remove its items first",
+          err instanceof ApiError ? err.message : t("menu.deleteCategoryFailed"),
         ),
     });
   };
@@ -73,8 +76,8 @@ export default function MenuPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[32px] font-semibold tracking-tight text-foreground">Menu</h1>
-          <p className="text-sm text-muted-foreground">{canManage ? "Categories, items, and pricing" : "Categories, items, and pricing (view only)"}</p>
+          <h1 className="text-[32px] font-semibold tracking-tight text-foreground">{t("menu.title")}</h1>
+          <p className="text-sm text-muted-foreground">{canManage ? t("menu.subtitle") : t("menu.subtitleViewOnly")}</p>
         </div>
       </div>
 
@@ -82,7 +85,7 @@ export default function MenuPage() {
         <Card className="flex flex-col gap-3 p-4">
           <div className="flex items-center justify-between px-1">
             <h2 className="text-[13px] font-medium uppercase tracking-wide text-muted-foreground">
-              Categories
+              {t("menu.categories")}
             </h2>
           </div>
 
@@ -98,10 +101,10 @@ export default function MenuPage() {
             <div className="flex flex-col gap-3 lg:hidden">
               <ResponsiveTabs
                 mobileOnly
-                label="Category"
+                label={t("menu.category")}
                 value={selectedCategoryId ?? "all"}
                 onChange={(id) => setSelectedCategoryId(id === "all" ? undefined : id)}
-                items={[{ id: "all", label: "All items" }, ...(categories ?? []).map((c) => ({ id: c.id, label: c.name, hint: `${c._count.items} items${c.showOnWebsite ? "" : " · hidden"}` }))]}
+                items={[{ id: "all", label: t("menu.allItems") }, ...(categories ?? []).map((c) => ({ id: c.id, label: c.name, hint: `${t("menu.itemCount", { count: c._count.items })}${c.showOnWebsite ? "" : ` · ${t("menu.hidden")}`}` }))]}
               />
               {selectedCategory && (
                 <div className="flex items-center justify-between gap-2 rounded-lg bg-secondary/60 px-3 py-2">
@@ -109,17 +112,17 @@ export default function MenuPage() {
                     <span className="truncate text-sm font-medium text-foreground">{selectedCategory.name}</span>
                     {!selectedCategory.showOnWebsite && (
                       <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <EyeOff className="h-3 w-3" /> Hidden from website
+                        <EyeOff className="h-3 w-3" /> {t("menu.hiddenFromWebsite")}
                       </span>
                     )}
                   </span>
                   {canManage && (
 <div className="flex shrink-0 gap-1">
                     <Button variant="ghost" size="sm" className="h-10 gap-1.5 px-3" onClick={() => setEditingCategory(selectedCategory)}>
-                      <Pencil className="h-4 w-4" /> Edit
+                      <Pencil className="h-4 w-4" /> {t("common.edit")}
                     </Button>
                     <Button variant="ghost" size="sm" className="h-10 gap-1.5 px-3 text-destructive" onClick={() => onDeleteCategory(selectedCategory)}>
-                      <Trash2 className="h-4 w-4" /> Delete
+                      <Trash2 className="h-4 w-4" /> {t("common.delete")}
                     </Button>
                   </div>
 )}
@@ -136,7 +139,7 @@ export default function MenuPage() {
                     : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                 )}
               >
-                All items
+                {t("menu.allItems")}
               </button>
               {categories?.map((cat) => (
                 <div
@@ -155,9 +158,9 @@ export default function MenuPage() {
                     {cat.name}
                   </button>
                   {!cat.showOnWebsite && (
-                    <span title="Hidden from website" className="mr-1 shrink-0 text-muted-foreground">
+                    <span title={t("menu.hiddenFromWebsite")} className="mr-1 shrink-0 text-muted-foreground">
                       <EyeOff className="h-3.5 w-3.5" />
-                      <span className="sr-only">Hidden from website</span>
+                      <span className="sr-only">{t("menu.hiddenFromWebsite")}</span>
                     </span>
                   )}
                   <span className={cn("shrink-0 text-xs text-muted-foreground", canManage && "group-hover:hidden")}>
@@ -169,7 +172,7 @@ export default function MenuPage() {
                       variant="ghost"
                       size="icon"
                       className="h-6 w-6 text-muted-foreground hover:text-primary"
-                      title="Edit category"
+                      title={t("menu.editCategory")}
                       onClick={() => setEditingCategory(cat)}
                     >
                       <Pencil className="h-3.5 w-3.5" />
@@ -178,7 +181,7 @@ export default function MenuPage() {
                       variant="ghost"
                       size="icon"
                       className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                      title="Delete category"
+                      title={t("menu.deleteCategory")}
                       onClick={() => onDeleteCategory(cat)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -196,10 +199,13 @@ export default function MenuPage() {
 
         <Card className="flex flex-col gap-4 p-4 sm:p-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-[18px] font-medium text-foreground">Items</h2>
+            <h2 className="text-[18px] font-medium text-foreground">{t("menu.items")}</h2>
             {canManage && (
               <div className="flex flex-wrap items-center gap-2">
                 <BulkPriceDialog branchId={branchId} categories={categories ?? []} />
+                <Link href="/labels?source=menu" className={buttonVariants({ variant: "outline" })}>
+                  {t("menu.printLabels")}
+                </Link>
                 <ImportCsvDialog kind="menu" branchId={branchId} />
                 <AddItemDialog branchId={branchId} categories={categories ?? []} />
               </div>
@@ -231,7 +237,7 @@ export default function MenuPage() {
                       <p className="mt-0.5 text-xs text-muted-foreground">
                         {item.category.name}
                         {item.station ? ` · ${item.station.name}` : ""}
-                        {` · ${Number(item.taxRatePercent)}% tax`}
+                        {` · ${t("menu.taxPercent", { rate: Number(item.taxRatePercent) })}`}
                       </p>
                     </div>
                     <p className="shrink-0 text-sm font-semibold tabular-nums text-foreground">{formatCurrency(item.price)}</p>
@@ -239,21 +245,21 @@ export default function MenuPage() {
                   {canManage && (
 <div className="flex justify-end gap-1">
                     <Button variant="outline" size="sm" className={cn("h-10 gap-1.5 px-3", item.isCombo && "text-primary")} onClick={() => setComboItem(item)}>
-                      <Layers className="h-4 w-4" /> Combo
+                      <Layers className="h-4 w-4" /> {t("menu.combo")}
                     </Button>
                     <Button variant="outline" size="sm" className="h-10 gap-1.5 px-3" onClick={() => setEditingItem(item)}>
-                      <Pencil className="h-4 w-4" /> Edit
+                      <Pencil className="h-4 w-4" /> {t("common.edit")}
                     </Button>
                     <Button
                       variant="outline"
                       size="icon"
                       className="h-10 w-10 text-destructive"
-                      aria-label={`Delete ${item.name}`}
+                      aria-label={t("menu.deleteNamed", { name: item.name })}
                       onClick={() =>
                         deleteItem.mutate(item.id, {
-                          onSuccess: () => toast.success(`${item.name} removed`),
+                          onSuccess: () => toast.success(t("menu.itemRemoved", { name: item.name })),
                           onError: (err) =>
-                            toast.error(err instanceof ApiError ? err.message : "Could not remove item"),
+                            toast.error(err instanceof ApiError ? err.message : t("menu.removeItemFailed")),
                         })
                       }
                     >
@@ -268,11 +274,11 @@ export default function MenuPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Station</TableHead>
-                  <TableHead className="text-right">Price</TableHead>
-                  <TableHead className="text-right">Tax</TableHead>
+                  <TableHead>{t("menu.col.name")}</TableHead>
+                  <TableHead>{t("menu.col.category")}</TableHead>
+                  <TableHead>{t("menu.col.station")}</TableHead>
+                  <TableHead className="text-right">{t("menu.col.price")}</TableHead>
+                  <TableHead className="text-right">{t("menu.col.tax")}</TableHead>
                   <TableHead className="w-10" />
                 </TableRow>
               </TableHeader>
@@ -318,7 +324,7 @@ export default function MenuPage() {
                             "h-8 w-8 text-muted-foreground hover:text-primary",
                             item.isCombo && "text-primary",
                           )}
-                          title="Combo components"
+                          title={t("menu.comboComponents")}
                           onClick={() => setComboItem(item)}
                         >
                           <Layers className="h-4 w-4" />
@@ -327,7 +333,7 @@ export default function MenuPage() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-muted-foreground hover:text-primary"
-                          title="Edit item"
+                          title={t("menu.editItem")}
                           onClick={() => setEditingItem(item)}
                         >
                           <Pencil className="h-4 w-4" />
@@ -336,12 +342,12 @@ export default function MenuPage() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                          title="Delete item"
+                          title={t("menu.deleteItem")}
                           onClick={() =>
                             deleteItem.mutate(item.id, {
-                              onSuccess: () => toast.success(`${item.name} removed`),
+                              onSuccess: () => toast.success(t("menu.itemRemoved", { name: item.name })),
                               onError: (err) =>
-                                toast.error(err instanceof ApiError ? err.message : "Could not remove item"),
+                                toast.error(err instanceof ApiError ? err.message : t("menu.removeItemFailed")),
                             })
                           }
                         >
@@ -358,9 +364,9 @@ export default function MenuPage() {
             </>
           ) : (
             <div className="flex flex-col items-center gap-2 py-16 text-center">
-              <p className="text-sm font-medium text-foreground">No items yet</p>
+              <p className="text-sm font-medium text-foreground">{t("menu.empty.title")}</p>
               <p className="text-sm text-muted-foreground">
-                Add a category, then add your first menu item.
+                {t("menu.empty.body")}
               </p>
             </div>
           )}

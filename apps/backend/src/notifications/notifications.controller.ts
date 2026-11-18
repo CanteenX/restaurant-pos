@@ -7,10 +7,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import {
-  notificationListQuerySchema,
-  type SessionUser,
-} from '@nodedr-restaurant/types';
+import { notificationListQuerySchema, type SessionUser } from '@nventra/types';
 import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { NotificationsService } from './notifications.service';

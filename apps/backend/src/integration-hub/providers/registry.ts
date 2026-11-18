@@ -1,5 +1,8 @@
+import { PartnerApiProvider } from './partner-api.provider';
 import { WebhookOrderProvider } from './webhook-order.provider';
 import type { IntegrationProvider } from './provider';
+import { MockPaymentGateway } from '../payments/mock-gateway';
+import { RazorpayGateway } from './razorpay.provider';
 
 const NOTE =
   'Zomato and Swiggy do not offer a public order API. They deliver orders through the merchant webhook / an aggregator (UrbanPiper, Petpooja, Dotpe and similar) that your restaurant has an account with. Point it at the webhook URL below and sign requests with the secret.';
@@ -28,7 +31,17 @@ const PROVIDERS: IntegrationProvider[] = [
     NOTE,
     'aggregator',
   ),
+  new PartnerApiProvider(),
+  new RazorpayGateway(),
 ];
+
+// The mock gateway never moves money; it exists for tests and demos only.
+if (
+  process.env.NODE_ENV !== 'production' ||
+  process.env.PAYMENT_GATEWAY_MOCK === '1'
+) {
+  PROVIDERS.push(new MockPaymentGateway());
+}
 
 const BY_KEY = new Map(PROVIDERS.map((p) => [p.key, p]));
 

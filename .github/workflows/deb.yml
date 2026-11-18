@@ -5,12 +5,10 @@ name: Debian package
 # only by running this workflow by hand with a version: it attaches the .deb files and SHA-256 checksums to the
 # GitHub release v<version>.
 
+# Nventra: manual-only. Automatic triggers removed to protect the org's
+# 2,000 Actions minutes/month and because this job targets upstream
+# (NodeDR) release infrastructure. Re-enable deliberately after the rebrand.
 on:
-  pull_request:
-    paths: ["packaging/deb/**", ".github/workflows/deb.yml"]
-  push:
-    branches: [master]
-    paths: ["packaging/deb/**", ".github/workflows/deb.yml"]
   workflow_dispatch:
     inputs:
       version:

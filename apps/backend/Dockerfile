@@ -1,12 +1,12 @@
 # Built from the MONOREPO ROOT context (see docker-compose.yml `context: .`)
-# because this app depends on the workspace package @nodedr-restaurant/types.
+# because this app depends on the workspace package @nventra/types.
 # Do not try to `docker build` this file with apps/backend as context.
 
 FROM node:22-alpine AS base
 RUN corepack enable
 WORKDIR /repo
 
-# --- deps: install with full workspace visible so pnpm can link @nodedr-restaurant/types ---
+# --- deps: install with full workspace visible so pnpm can link @nventra/types ---
 # python3/make/g++/linux-headers/eudev-dev/libusb-dev/pkgconfig are for the
 # `usb` package's native addon (direct-USB ESC/POS printing, see
 # apps/backend/src/modules/orders/escpos-usb.ts). It ships a prebuilt
@@ -28,9 +28,9 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS builder
 COPY packages/types packages/types
 COPY apps/backend apps/backend
-RUN pnpm --filter @nodedr-restaurant/types build
-RUN pnpm --filter @nodedr-restaurant/backend exec prisma generate
-RUN pnpm --filter @nodedr-restaurant/backend build
+RUN pnpm --filter @nventra/types build
+RUN pnpm --filter @nventra/backend exec prisma generate
+RUN pnpm --filter @nventra/backend build
 
 # Docker CLI (optional in-container "update & restart" against mounted
 # docker.sock — see src/system/update.service.ts). Pulled from the official
@@ -98,4 +98,7 @@ COPY --from=builder /repo/packages/types/node_modules ./packages/types/node_modu
 
 WORKDIR /repo/apps/backend
 EXPOSE 4000
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main.js"]
+# db-identity-upgrade renames a pre-rename install's Postgres role/database
+# (pre-rename upstream names -> nventra/nventra_pos) in place; a no-op otherwise.
+# scripts/test-db-identity-upgrade.sh runs this exact CMD against an old volume.
+CMD ["sh", "-c", "node dist/src/system/db-identity-upgrade.cli.js && npx prisma migrate deploy && node dist/src/main.js"]

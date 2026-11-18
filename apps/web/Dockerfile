@@ -1,5 +1,5 @@
 # Built from the MONOREPO ROOT context (see docker-compose.yml `context: .`)
-# because this app depends on the workspace package @nodedr-restaurant/types.
+# because this app depends on the workspace package @nventra/types.
 
 FROM node:22-alpine AS base
 RUN corepack enable
@@ -29,7 +29,7 @@ ARG BACKEND_URL=http://backend:4000
 ENV BACKEND_URL=${BACKEND_URL}
 COPY packages/types packages/types
 COPY apps/web apps/web
-RUN pnpm --filter @nodedr-restaurant/types build
+RUN pnpm --filter @nventra/types build
 RUN pnpm --filter web build
 
 # --- runtime ---
@@ -47,6 +47,10 @@ ENV NODE_ENV=production
 COPY --from=builder /repo/apps/web/public ./apps/web/public
 COPY --from=builder /repo/apps/web/.next/standalone ./
 COPY --from=builder /repo/apps/web/.next/static ./apps/web/.next/static
+# Rewrites X-Forwarded-For to the resolved client address before Next proxies
+# /api to the backend (apps/web/lib/client-ip.mjs, WEB_TRUST_PROXY).
+COPY --from=builder /repo/apps/web/client-ip-preload.mjs ./apps/web/client-ip-preload.mjs
+COPY --from=builder /repo/apps/web/lib/client-ip.mjs ./apps/web/lib/client-ip.mjs
 
 EXPOSE 3000
-CMD ["node", "apps/web/server.js"]
+CMD ["node", "--import", "./apps/web/client-ip-preload.mjs", "apps/web/server.js"]

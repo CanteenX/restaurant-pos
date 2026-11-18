@@ -33,5 +33,7 @@ import { StaffApiKeysService } from './staff-api-keys.service';
     IntegrationApiKeyGuard,
     BranchAccessService,
   ],
+  // GraphQL createOrder (#79) reuses the REST order path and its idempotency.
+  exports: [IntegrationsService],
 })
 export class IntegrationsModule {}

@@ -4,9 +4,11 @@ name: Dependabot security auto-merge
 # CI check has run and every check has passed. A PR with no CI, any failing
 # check, or a major bump is left open for manual review. Nothing from the PR is
 # checked out or executed here.
+# Nventra: manual-only. Automatic triggers removed to protect the org's
+# 2,000 Actions minutes/month and because this job targets upstream
+# (NodeDR) release infrastructure. Re-enable deliberately after the rebrand.
 on:
-  pull_request_target:
-    types: [opened, reopened, synchronize]
+  workflow_dispatch: {}
 
 permissions:
   contents: write

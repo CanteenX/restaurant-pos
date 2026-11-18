@@ -26,3 +26,7 @@ test("every subscribed event maps to at least one cache", () => {
   for (const e of REALTIME_EVENTS) assert.ok(keys(e).length > 0, e);
   assert.deepEqual(keys("something.else"), []);
 });
+
+test("order pushes refresh the gift-card list (a checkout may have redeemed a card)", () => {
+  assert.ok(keys("order.updated").includes("gift-cards/b1"));
+});

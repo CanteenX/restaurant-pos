@@ -4,9 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { Prisma, StockMovementType } from '@prisma/client';
-import type { StockAdjustmentDto } from '@nodedr-restaurant/types';
+import type { StockAdjustmentDto } from '@nventra/types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { round3 } from '../../common/money';
+import { converterFor, withConversions } from './unit-conversion.service';
 
 type Tx = Prisma.TransactionClient;
 
@@ -266,10 +267,15 @@ export class StockService {
     return this.prisma.$transaction(async (tx) => {
       const ingredient = await tx.ingredient.findFirst({
         where: { id: ingredientId, branchId },
+        include: withConversions,
       });
       if (!ingredient) throw new NotFoundException('Ingredient not found');
+      const quantity = converterFor(ingredient).quantity(
+        dto.quantity,
+        dto.unit,
+      );
 
-      const newStock = round3(Number(ingredient.currentStock) + dto.quantity);
+      const newStock = round3(Number(ingredient.currentStock) + quantity);
       if (newStock < 0) {
         throw new BadRequestException('Adjustment would take stock below zero');
       }
@@ -283,7 +289,7 @@ export class StockService {
           branchId,
           ingredientId,
           type: 'ADJUSTMENT',
-          quantity: dto.quantity,
+          quantity,
           note: dto.note,
           createdById: userId,
         },

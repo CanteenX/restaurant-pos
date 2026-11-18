@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useRotateQrToken, type RestaurantTable } from "@/hooks/use-tables";
 import { ApiError } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 
 export function TableQrDialog({
   table,
@@ -18,6 +19,7 @@ export function TableQrDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { t } = useI18n();
   const rotate = useRotateQrToken(branchId);
 
   const orderUrl =
@@ -29,7 +31,7 @@ export function TableQrDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>{table.name ?? `Table ${table.number}`} — QR code</DialogTitle>
+          <DialogTitle>{t("tables.qr.title", { name: table.name ?? t("tables.tableLabel", { number: table.number }) })}</DialogTitle>
         </DialogHeader>
 
         <div className="flex flex-col items-center gap-4 py-2">
@@ -44,14 +46,14 @@ export function TableQrDialog({
             </>
           ) : (
             <p className="py-8 text-sm text-muted-foreground">
-              No QR code yet — generate one below.
+              {t("tables.qr.none")}
             </p>
           )}
 
           <div className="flex gap-2">
             {orderUrl && (
               <Button variant="outline" onClick={() => window.print()}>
-                Print
+                {t("tables.qr.print")}
               </Button>
             )}
             <Button
@@ -60,16 +62,16 @@ export function TableQrDialog({
               onClick={() =>
                 rotate.mutate(table.id, {
                   onError: (err) =>
-                    toast.error(err instanceof ApiError ? err.message : "Could not generate QR code"),
+                    toast.error(err instanceof ApiError ? err.message : t("tables.qr.error")),
                 })
               }
             >
-              {orderUrl ? "Generate new code" : "Generate QR code"}
+              {orderUrl ? t("tables.qr.regenerate") : t("tables.qr.generate")}
             </Button>
           </div>
           {orderUrl && (
             <p className="text-center text-xs text-muted-foreground">
-              Generating a new code invalidates this one — reprint any table tents using it.
+              {t("tables.qr.warning")}
             </p>
           )}
         </div>

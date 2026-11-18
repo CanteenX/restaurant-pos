@@ -30,11 +30,16 @@ export const restaurantSettingsSchema = z.object({
   referralReferredPoints: z.coerce.number().int().min(0).max(100000).optional(),
   referralMinPurchase: z.coerce.number().min(0).max(1000000).optional(),
   onlineMinOrderAmount: z.coerce.number().min(0).max(1000000).optional(),
+  expiryAlertDays: z.coerce.number().int().min(0).max(365).optional(),
   // Website / app-ordering prices: PERCENT or AMOUNT, negative = cheaper, positive = costlier.
   onlinePriceAdjustKind: z.enum(["PERCENT", "AMOUNT"]).optional(),
   onlinePriceAdjustValue: z.coerce.number().min(-100000).max(100000).optional(),
   maxManualDiscountPercent: z.coerce.number().min(0).max(100).optional(),
   requireDiscountReason: z.boolean().optional(),
+  // Email a digital receipt after payment to customers who gave an address and consent.
+  digitalReceiptsEnabled: z.boolean().optional(),
+  // Expenses above this need expenses.approve sign-off; null turns approvals off.
+  expenseApprovalThreshold: z.coerce.number().min(0).max(100000000).optional().nullable(),
 });
 export type RestaurantSettingsDto = z.infer<typeof restaurantSettingsSchema>;
 

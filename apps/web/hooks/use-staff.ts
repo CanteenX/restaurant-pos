@@ -1,6 +1,6 @@
 "use client";
 
-import type { CreateStaffDto, UpdateStaffDto } from "@nodedr-restaurant/types";
+import type { CreateStaffDto, UpdateStaffDto } from "@nventra/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
@@ -17,6 +17,8 @@ export interface StaffMember {
   departmentId: string | null;
   department: { id: string; name: string } | null;
   permissionOverrides: PermissionOverride[];
+  /** Set while an emailed invite link is live (#223); list endpoint only. */
+  invitePendingUntil?: string | null;
 }
 
 export interface PermissionOverride {
@@ -55,7 +57,25 @@ export function useStaffRoles() {
 export function useCreateStaff() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (dto: CreateStaffDto) => api.post<StaffMember>("/users", dto),
+    // `inviteSent` is present only when the account was created with invite: true.
+    mutationFn: (dto: CreateStaffDto) => api.post<StaffMember & { inviteSent?: boolean }>("/users", dto),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["staff"] }),
+  });
+}
+
+/** Sends or re-sends the email invite (#223); any older link stops working. */
+export function useSendStaffInvite() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<{ sent: true }>(`/users/${id}/invite`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["staff"] }),
+  });
+}
+
+export function useRevokeStaffInvite() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete<{ revoked: number }>(`/users/${id}/invite`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["staff"] }),
   });
 }

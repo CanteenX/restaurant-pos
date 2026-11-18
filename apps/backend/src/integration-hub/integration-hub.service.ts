@@ -4,17 +4,31 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import type { IntegrationItemMapPatchDto } from '@nventra/types';
 import type { IntegrationConnection, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { getProvider, listProviders } from './providers/registry';
+import { outletsForBranch } from './aggregator-menu';
+import { mergeItemMap } from './item-map';
+import { getProvider, listProviders, sourceOf } from './providers/registry';
 import type { IntegrationProvider, TestResult } from './providers/provider';
+import { IntegrationOutboxService } from './outbox/integration-outbox.service';
 import { decryptSecret, encryptSecret } from './secret-box';
 
 export interface ConnectInput {
   externalAccountId?: string;
   /** Only the fields being set or changed; omitted secrets keep their stored value. */
   credentials: Record<string, string>;
+  /** Platform outlet id -> our branch id. Replaces the stored map when given. */
+  outlets?: Record<string, string>;
+  /** Our menu item id -> the platform's item id. Replaces the stored map when given. */
+  itemMap?: Record<string, string>;
 }
+
+type StoredConfig = {
+  credentialKeys?: string[];
+  outlets?: Record<string, string>;
+  itemMap?: Record<string, string>;
+} | null;
 
 const ctxKey = (restaurantId: string, provider: string) =>
   `${restaurantId}:${provider}`;
@@ -23,7 +37,10 @@ const ctxKey = (restaurantId: string, provider: string) =>
 export class IntegrationHubService {
   private readonly logger = new Logger(IntegrationHubService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly outbox: IntegrationOutboxService,
+  ) {}
 
   private provider(key: string): IntegrationProvider {
     const p = getProvider(key);
@@ -32,11 +49,21 @@ export class IntegrationHubService {
   }
 
   /** What the API may show: never the credentials, only which fields are set. */
-  private view(c: IntegrationConnection | null) {
+  private view(
+    c: IntegrationConnection | null,
+    outbox: { pending: number; dead: number } = { pending: 0, dead: 0 },
+    lastOrderAt: Date | null = null,
+  ) {
     if (!c) return null;
-    const keys = (c.config as { credentialKeys?: string[] } | null)
-      ?.credentialKeys;
+    const cfg = c.config as StoredConfig;
+    const keys = cfg?.credentialKeys;
     return {
+      outlets: cfg?.outlets ?? {},
+      /** Our menu item id -> the platform's item id (ids only, no secrets). */
+      itemMap: cfg?.itemMap ?? {},
+      outbox,
+      /** When the newest order from this channel arrived, or null. */
+      lastOrderAt,
       id: c.id,
       enabled: c.enabled,
       status: c.status,
@@ -54,6 +81,8 @@ export class IntegrationHubService {
       where: { restaurantId },
     });
     const byProvider = new Map(rows.map((r) => [r.provider, r]));
+    const counts = await this.outbox.counts(rows.map((r) => r.id));
+    const lastOrders = await this.lastOrders(restaurantId);
     return listProviders().map((p) => ({
       key: p.key,
       name: p.name,
@@ -66,8 +95,27 @@ export class IntegrationHubService {
         : null,
       requirements: p.requirements ?? null,
       credentialFields: p.credentialFields,
-      connection: this.view(byProvider.get(p.key) ?? null),
+      connection: this.view(
+        byProvider.get(p.key) ?? null,
+        counts.get(byProvider.get(p.key)?.id ?? ''),
+        lastOrders.get(sourceOf(p)) ?? null,
+      ),
     }));
+  }
+
+  /** Newest order per external source (zomato, swiggy, ...), read-only. */
+  private async lastOrders(restaurantId: string, source?: string) {
+    const rows = await this.prisma.order.groupBy({
+      by: ['externalSource'],
+      where: {
+        branch: { restaurantId },
+        externalSource: source ?? { not: null },
+      },
+      _max: { createdAt: true },
+    });
+    return new Map(
+      rows.map((r) => [r.externalSource ?? '', r._max.createdAt ?? null]),
+    );
   }
 
   private async log(
@@ -138,6 +186,14 @@ export class IntegrationHubService {
     }
     const accountId =
       input.externalAccountId?.trim() || existing?.externalAccountId || null;
+    const outlets =
+      input.outlets !== undefined
+        ? await this.checkOutlets(restaurantId, input.outlets)
+        : ((existing?.config as StoredConfig)?.outlets ?? undefined);
+    const itemMap =
+      input.itemMap !== undefined
+        ? await this.checkItemMap(restaurantId, input.itemMap)
+        : ((existing?.config as StoredConfig)?.itemMap ?? undefined);
     if (provider.accountIdLabel && !provider.accountIdOptional && !accountId) {
       throw new BadRequestException(`Enter the ${provider.accountIdLabel}`);
     }
@@ -148,7 +204,11 @@ export class IntegrationHubService {
         JSON.stringify(merged),
         ctxKey(restaurantId, providerKey),
       ),
-      config: { credentialKeys: Object.keys(merged) } as Prisma.InputJsonValue,
+      config: {
+        credentialKeys: Object.keys(merged),
+        ...(outlets ? { outlets } : {}),
+        ...(itemMap ? { itemMap } : {}),
+      } as Prisma.InputJsonValue,
       // Saving keys is not the same as a working connection: only a test
       // that the adapter itself observed succeeding can set CONNECTED.
       status:
@@ -172,6 +232,127 @@ export class IntegrationHubService {
         });
     await this.log(row.id, 'INFO', 'credentials_saved', 'Credentials saved');
     return this.view(row);
+  }
+
+  /** Every mapped branch must belong to this restaurant. */
+  private async checkOutlets(
+    restaurantId: string,
+    outlets: Record<string, string>,
+  ) {
+    const ids = [...new Set(Object.values(outlets))];
+    const own = await this.prisma.branch.count({
+      where: { restaurantId, id: { in: ids } },
+    });
+    if (own !== ids.length) {
+      throw new BadRequestException(
+        'An outlet is mapped to a branch that is not part of this restaurant',
+      );
+    }
+    return outlets;
+  }
+
+  /** Every mapped dish must belong to one of this restaurant's branches. */
+  private async checkItemMap(
+    restaurantId: string,
+    itemMap: Record<string, string>,
+  ) {
+    await this.checkOwnItems(restaurantId, Object.keys(itemMap));
+    const ext = Object.values(itemMap);
+    if (new Set(ext).size !== ext.length) {
+      throw new BadRequestException(
+        'Two dishes are mapped to the same platform item id',
+      );
+    }
+    return itemMap;
+  }
+
+  private async checkOwnItems(restaurantId: string, ids: string[]) {
+    const own = await this.prisma.menuItem.count({
+      where: { id: { in: ids }, branch: { restaurantId } },
+    });
+    if (own !== ids.length) {
+      throw new BadRequestException(
+        'An item is mapped that is not part of this restaurant',
+      );
+    }
+  }
+
+  /**
+   * Applies an item-map patch onto the stored map. The write only lands if
+   * the row is unchanged since it was read (optimistic check on updatedAt),
+   * so two concurrent edits are both kept instead of the last one winning.
+   */
+  async patchItemMap(
+    restaurantId: string,
+    providerKey: string,
+    patch: IntegrationItemMapPatchDto,
+  ) {
+    await this.require(restaurantId, providerKey);
+    await this.checkOwnItems(restaurantId, Object.keys(patch.set));
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const c = await this.require(restaurantId, providerKey);
+      const cfg = (c.config as StoredConfig) ?? {};
+      const itemMap = mergeItemMap(cfg.itemMap, patch);
+      const { count } = await this.prisma.integrationConnection.updateMany({
+        where: { id: c.id, updatedAt: c.updatedAt },
+        data: { config: { ...cfg, itemMap } },
+      });
+      if (count === 0) continue; // someone else saved in between: re-read
+      await this.log(
+        c.id,
+        'INFO',
+        'item_map_saved',
+        `Item mapping saved (${Object.keys(patch.set).length} set, ${patch.remove.length} removed)`,
+      );
+      const row = await this.require(restaurantId, providerKey);
+      const counts = await this.outbox.counts([row.id]);
+      const last = await this.lastOrders(
+        restaurantId,
+        sourceOf(this.provider(providerKey)),
+      );
+      return this.view(row, counts.get(row.id), [...last.values()][0] ?? null);
+    }
+    throw new BadRequestException(
+      'The item mapping is being changed elsewhere - try again',
+    );
+  }
+
+  /** Publishes one branch's menu to the platform now (queued, retried). */
+  async syncMenu(restaurantId: string, providerKey: string, branchId: string) {
+    const c = await this.require(restaurantId, providerKey);
+    const provider = this.provider(providerKey);
+    if (!provider.capabilities.menuSync) {
+      throw new BadRequestException('This integration cannot publish a menu');
+    }
+    const branch = await this.prisma.branch.findFirst({
+      where: { id: branchId, restaurantId },
+      select: { id: true },
+    });
+    if (!branch) throw new NotFoundException('Unknown branch');
+    const outlets = (c.config as StoredConfig)?.outlets;
+    if (outletsForBranch(outlets ?? undefined, branch.id).length === 0) {
+      throw new BadRequestException(
+        'No platform outlet is mapped to this branch',
+      );
+    }
+    const queued = await this.prisma.$transaction((tx) =>
+      this.outbox.enqueueMenuPush(tx, branch.id, c.id),
+    );
+    await this.log(c.id, 'INFO', 'menu_sync', 'Menu publish queued');
+    return { queued };
+  }
+
+  /** Re-queues the platform calls that gave up, e.g. after fixing the API key. */
+  async retryFailed(restaurantId: string, providerKey: string) {
+    const c = await this.require(restaurantId, providerKey);
+    const res = await this.outbox.retryDead(c.id);
+    await this.log(
+      c.id,
+      'INFO',
+      'outbox_retry',
+      `Retrying ${res.requeued} failed platform update(s)`,
+    );
+    return res;
   }
 
   async setEnabled(

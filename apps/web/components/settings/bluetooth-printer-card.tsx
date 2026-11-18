@@ -1,5 +1,6 @@
 "use client";
 
+import { useI18n } from "@/lib/i18n/context";
 import { Bluetooth } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ const read = () => window.localStorage.getItem("orderrestro.btPrinter") ?? "";
  * browser, where the printer attached to the restaurant computer is used.
  */
 export function BluetoothPrinterCard() {
+  const { t } = useI18n();
   const raw = useSyncExternalStore(subscribe, read, () => "");
   const { branchId } = useBranch();
   const test = usePrintTestSlip(branchId);
@@ -41,25 +43,41 @@ export function BluetoothPrinterCard() {
     <Card className="flex flex-col gap-4 p-4 sm:p-6">
       <div className="flex items-center gap-2">
         <Bluetooth className="h-[18px] w-[18px] text-muted-foreground" aria-hidden />
-        <h2 className="text-[18px] font-medium text-foreground">Bluetooth printer (this phone)</h2>
+        <h2 className="text-[18px] font-medium text-foreground">{t("settings.btPrinter.title")}</h2>
       </div>
       <p className="text-sm text-muted-foreground">
-        Print bills and kitchen tickets from this phone on a 58 mm or 80 mm Bluetooth thermal printer. You can also
-        use <strong>Print bill</strong> to open the phone&apos;s print dialog and save a PDF or use any printer
-        service installed on the phone.
+        {(() => {
+          const [before, after] = t("settings.btPrinter.intro", { action: "\u0000" }).split("\u0000");
+          return (
+            <>
+              {before}
+              <strong>{t("settings.btPrinter.printBill")}</strong>
+              {after}
+            </>
+          );
+        })()}
       </p>
       <p className="text-sm text-foreground">
         {printer ? (
           <>
-            Printer: <strong>{printer.name}</strong>
+            {(() => {
+              const [before, after] = t("settings.btPrinter.printer", { name: "\u0000" }).split("\u0000");
+              return (
+                <>
+                  {before}
+                  <strong>{printer.name}</strong>
+                  {after}
+                </>
+              );
+            })()}
           </>
         ) : (
-          "No printer chosen yet."
+          t("settings.btPrinter.none")
         )}
       </p>
       <div className="flex flex-wrap gap-2">
         <Button type="button" onClick={() => void choose()}>
-          {printer ? "Change printer" : "Choose printer"}
+          {printer ? t("settings.btPrinter.change") : t("settings.btPrinter.choose")}
         </Button>
         <Button
           type="button"
@@ -67,15 +85,15 @@ export function BluetoothPrinterCard() {
           disabled={!printer || test.isPending}
           onClick={() =>
             test.mutate(undefined, {
-              onSuccess: () => setNote("Test slip sent."),
+              onSuccess: () => setNote(t("settings.btPrinter.testSent")),
               onError: (e) => {
                 setNote(null);
-                toast.error(e instanceof Error ? e.message : "Could not print the test slip");
+                toast.error(e instanceof Error ? e.message : t("settings.btPrinter.testFailed"));
               },
             })
           }
         >
-          {test.isPending ? "Printing…" : "Print test slip"}
+          {test.isPending ? t("settings.btPrinter.printing") : t("settings.btPrinter.printTest")}
         </Button>
         {printer && (
           <Button
@@ -87,7 +105,7 @@ export function BluetoothPrinterCard() {
               window.dispatchEvent(new Event("orderrestro:printer"));
             }}
           >
-            Forget
+            {t("settings.btPrinter.forget")}
           </Button>
         )}
       </div>

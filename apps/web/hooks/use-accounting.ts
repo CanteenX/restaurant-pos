@@ -1,7 +1,9 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
+import type { ExpenseStatus } from "@/lib/expense-status";
+import { parseDownloadFilename, tallyExportPath, tallyFilename } from "@/lib/tally-export";
 
 export interface ExpenseRow {
   id: string;
@@ -10,6 +12,10 @@ export interface ExpenseRow {
   amount: string;
   note: string | null;
   paidFromCash: boolean;
+  status?: ExpenseStatus;
+}
+export interface PendingExpenseRow extends ExpenseRow {
+  createdBy: { id: string; name: string } | null;
 }
 export interface ClosingPreview {
   businessDate: string;
@@ -60,6 +66,21 @@ export function useExpenses(branchId: string | null, from: string, to: string) {
     queryKey: ["acct", "expenses", branchId, from, to],
     queryFn: () => api.get<ExpenseRow[]>(`/accounting/expenses?${q(branchId)}&from=${from}&to=${to}`),
     enabled: !!branchId,
+  });
+}
+export function usePendingExpenses(branchId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ["acct", "expenses-pending", branchId],
+    queryFn: () => api.get<PendingExpenseRow[]>(`/accounting/expenses/pending?${q(branchId)}`),
+    enabled: !!branchId && enabled,
+  });
+}
+export function useExpenseDecision(branchId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, decision, note }: { id: string; decision: "approve" | "reject"; note?: string }) =>
+      api.post(`/accounting/expenses/${id}/${decision}?${q(branchId)}`, note ? { note } : {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["acct"] }),
   });
 }
 export function useClosingPreview(branchId: string | null, date: string, openingFloat: number) {
@@ -114,6 +135,99 @@ export function useAccountingActions(branchId: string | null) {
     closeDay: useMutation({
       mutationFn: (dto: { businessDate: string; openingFloat: number; countedCash: number; note?: string }) =>
         api.post(`/accounting/closing?${q(branchId)}`, dto),
+      onSuccess: done,
+    }),
+  };
+}
+
+export type TallyMapping = Record<string, string>;
+
+export function useTallyMapping() {
+  return useQuery({
+    queryKey: ["acct", "tally-mapping"],
+    queryFn: () => api.get<TallyMapping>("/accounting/tally-mapping"),
+  });
+}
+export function useSaveTallyMapping() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (dto: TallyMapping) => api.put<TallyMapping>("/accounting/tally-mapping", dto),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["acct", "tally-mapping"] }),
+  });
+}
+
+/** Fetches the Tally XML (with the session cookie) and returns it as a Blob + filename. */
+export async function fetchTallyExport(branchId: string, from: string, to: string) {
+  const res = await fetch(`/api/v1${tallyExportPath(branchId, from, to)}`, { credentials: "include" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ message: res.statusText }));
+    throw new ApiError(body.message ?? "Export failed", res.status);
+  }
+  return {
+    blob: await res.blob(),
+    filename: parseDownloadFilename(res.headers.get("Content-Disposition"), tallyFilename(from, to)),
+  };
+}
+
+/* ------------------------------ Petty cash ------------------------------ */
+
+export interface PettyEntryRow {
+  id: string;
+  businessDate: string;
+  kind: "TOP_UP" | "PAYOUT" | "ADJUST";
+  amount: string;
+  balanceAfter: string;
+  reason: string;
+  receiptRef: string | null;
+  fromTill: boolean;
+  expense: { id: string; category: string } | null;
+}
+export interface PettyDaySummary {
+  businessDate: string;
+  openingBalance: number;
+  topUps: number;
+  payouts: number;
+  adjustments: number;
+  closingBalance: number;
+}
+export interface PettyReconcileResult {
+  expected: number;
+  counted: number;
+  variance: number;
+}
+
+export function usePettyBalance(branchId: string | null) {
+  return useQuery({
+    queryKey: ["acct", "petty", "balance", branchId],
+    queryFn: () => api.get<{ balance: number }>(`/accounting/petty-cash?${q(branchId)}`),
+    enabled: !!branchId,
+  });
+}
+export function usePettyEntries(branchId: string | null, from: string, to: string) {
+  return useQuery({
+    queryKey: ["acct", "petty", "entries", branchId, from, to],
+    queryFn: () => api.get<PettyEntryRow[]>(`/accounting/petty-cash/entries?${q(branchId)}&from=${from}&to=${to}`),
+    enabled: !!branchId,
+  });
+}
+export function usePettySummary(branchId: string | null, date: string) {
+  return useQuery({
+    queryKey: ["acct", "petty", "summary", branchId, date],
+    queryFn: () => api.get<PettyDaySummary>(`/accounting/petty-cash/summary?${q(branchId)}&date=${date}`),
+    enabled: !!branchId,
+  });
+}
+export function usePettyActions(branchId: string | null) {
+  const qc = useQueryClient();
+  const done = () => qc.invalidateQueries({ queryKey: ["acct", "petty"] });
+  return {
+    record: useMutation({
+      mutationFn: (dto: object) => api.post(`/accounting/petty-cash/entries?${q(branchId)}`, dto),
+      onSuccess: done,
+    }),
+    reconcile: useMutation({
+      mutationFn: (dto: { businessDate: string; countedCash: number; note?: string }) =>
+        api.post<PettyReconcileResult>(`/accounting/petty-cash/reconcile?${q(branchId)}`, dto),
       onSuccess: done,
     }),
   };

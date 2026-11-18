@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-click installer for Nodedr OrderRestro (nodedr-restaurant-pos).
+# One-click installer for Nventra POS (a fork of Nodedr OrderRestro).
 #
 # Run this from the repo root after cloning:
 #   ./install.sh
@@ -57,33 +57,53 @@ fi
 # first (docker-compose.yml has no insecure default for either — it fails
 # loudly instead), so generate real random values here. Never overwrites an
 # existing .env, so re-running this script is safe.
+rand_hex() { # rand_hex <bytes> -> 2*bytes random hex characters
+  openssl rand -hex "$1" 2>/dev/null || head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'
+}
+
 if [ ! -f .env ]; then
   echo "No .env found — generating one with random secrets..."
-  if command -v openssl >/dev/null 2>&1; then
-    jwt_secret="$(openssl rand -hex 32)"
-    pg_password="$(openssl rand -hex 16)"
-  else
-    jwt_secret="$(head -c48 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c64)"
-    pg_password="$(head -c24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c32)"
-  fi
   cat > .env <<EOF
-POSTGRES_PASSWORD=${pg_password}
-JWT_SECRET=${jwt_secret}
+POSTGRES_PASSWORD=$(rand_hex 16)
+JWT_SECRET=$(rand_hex 32)
+UPDATER_TOKEN=$(rand_hex 32)
 FRONTEND_ORIGIN=http://localhost:1995
 HOST_PORT=1995
 COOKIE_SECURE=false
 EOF
-  echo ".env created with a generated POSTGRES_PASSWORD and JWT_SECRET."
+  echo ".env created with a generated POSTGRES_PASSWORD, JWT_SECRET and UPDATER_TOKEN."
+fi
+
+# The updater container holds the Docker socket, and UPDATER_TOKEN is all that
+# stands between it and every other container on the network. A .env from
+# before this was generated has none (compose then refuses to start) or one of
+# the values compose used to default to (upstream's, then the rebrand's), which
+# are public: give it a random one.
+# A token you set yourself is left alone.
+current_token="$(sed -n 's/^UPDATER_TOKEN=//p' .env | tail -n 1 | tr -d "\"'\r")"
+case "$current_token" in
+  ""|nodedr-restaurant-updater|nventra-pos-updater) replace_token=1 ;;
+  *) replace_token=0 ;;
+esac
+if [ "$replace_token" = 1 ]; then
+  tmp_env="$(mktemp .env.XXXXXX)"
+  grep -v '^UPDATER_TOKEN=' .env > "$tmp_env" || true
+  # If the file had no trailing newline, keep its last line intact.
+  if [ -s "$tmp_env" ] && [ -n "$(tail -c 1 "$tmp_env")" ]; then echo >> "$tmp_env"; fi
+  echo "UPDATER_TOKEN=$(rand_hex 32)" >> "$tmp_env"
+  cat "$tmp_env" > .env
+  rm -f "$tmp_env"
+  echo "Added a random UPDATER_TOKEN to .env (used only between the app and its updater container)."
 fi
 
 # --- 3. Build the images and start the stack --------------------------------
-echo "Building Nodedr OrderRestro images and starting the stack (this can take a few minutes on first run)..."
+echo "Building Nventra POS images and starting the stack (this can take a few minutes on first run)..."
 docker compose up -d --build
 
 # --- 4. Wait for the app to report healthy ----------------------------------
 # The backend container's own start command runs `prisma migrate deploy`
 # before it starts listening, so a 200 here means migrations already applied.
-HOST_PORT="$(grep -m1 '^HOST_PORT=' .env 2>/dev/null | cut -d= -f2-)"
+HOST_PORT="$(grep -m1 '^HOST_PORT=' .env 2>/dev/null | cut -d= -f2- || true)"
 HOST_PORT="${HOST_PORT:-1995}"
 
 echo "Waiting for the app to come online..."
@@ -107,12 +127,12 @@ fi
 # re-install without duplicating or clobbering anything.
 if [ "$load_demo" = true ]; then
   echo "Loading demo data (restaurant, menu, staff logins)..."
-  docker exec nodedr-restaurant-backend npx ts-node prisma/seed.ts
+  docker exec nventra-pos-backend npx ts-node prisma/seed.ts
 fi
 
 # --- 6. Done -----------------------------------------------------------------
 echo ""
-echo "Nodedr OrderRestro is up and running."
+echo "Nventra POS is up and running."
 echo "Open http://localhost:${HOST_PORT}"
 if [ "$load_demo" = true ]; then
   echo "Sign in with the demo account: owner@demo.local / Password123!"

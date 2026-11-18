@@ -7,7 +7,8 @@ import {
 import type {
   CreateReservationDto,
   ReservationStatusDto,
-} from '@nodedr-restaurant/types';
+} from '@nventra/types';
+import { AuditService } from '../../audit/audit.service';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RealtimeGateway } from '../../realtime/realtime.gateway';
@@ -19,6 +20,9 @@ export interface CreateReservationOptions {
   // creating a reservation from the dashboard are never capped — they can
   // always merge tables or make a judgment call the online flow can't.
   fromWebsite?: boolean;
+  // Staff user making the booking, for the audit trail. Absent for
+  // website/API bookings (recorded with no actor).
+  actorId?: string;
 }
 
 @Injectable()
@@ -30,6 +34,7 @@ export class ReservationsService {
     private readonly realtime: RealtimeGateway,
     private readonly notifications: NotificationsService,
     private readonly webhooks: WebhooksService,
+    private readonly audit: AuditService,
   ) {}
 
   list(branchId: string, date?: string) {
@@ -137,6 +142,20 @@ export class ReservationsService {
       );
     }
 
+    await this.audit.record({
+      userId: options.actorId ?? null,
+      action: 'reservation.created',
+      entity: 'Reservation',
+      entityId: created.id,
+      metadata: {
+        branchId,
+        customerName: created.customerName,
+        guestCount: created.guestCount,
+        reservedAt: created.reservedAt.toISOString(),
+        channel: created.channel,
+      },
+    });
+
     void this.webhooks.emitForBranch(branchId, 'reservation.created', {
       reservationId: created.id,
       customerName: created.customerName,
@@ -181,6 +200,7 @@ export class ReservationsService {
     branchId: string,
     id: string,
     status: ReservationStatusDto,
+    userId?: string,
   ) {
     const reservation = await this.prisma.reservation.findFirst({
       where: { id, branchId },
@@ -217,6 +237,14 @@ export class ReservationsService {
       }
 
       return result;
+    });
+
+    await this.audit.record({
+      userId,
+      action: 'reservation.status_changed',
+      entity: 'Reservation',
+      entityId: id,
+      metadata: { branchId, from: reservation.status, to: status },
     });
 
     this.realtime.emitToBranch(branchId, 'reservation.updated', {

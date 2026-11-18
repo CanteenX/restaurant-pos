@@ -1,4 +1,4 @@
-// Nodedr OrderRestro — Phase 0/1 core schema.
+// Nventra POS — Phase 0/1 core schema.
 // See ARCHITECTURE.md for why PostgreSQL is the primary target and how
 // multi-branch/single-location both map onto the same schema (a branch is
 // just a Branch row, not a different deployment mode).
@@ -42,16 +42,16 @@ enum TaxMode {
 
 model Restaurant {
   departments Department[]
-  id        String  @id @default(cuid())
-  name      String
-  legalName String?
+  id          String       @id @default(cuid())
+  name        String
+  legalName   String?
   // The restaurant's own branding, shown in the app shell (sidebar header,
-  // login screen) in place of the Nodedr OrderRestro product mark — this is
+  // login screen) in place of the Nventra POS product mark — this is
   // white-label self-hosted software, so the operator's brand should lead;
   // the product name stays as a small credit line instead (see BrandFooter).
-  logoUrl   String?
-  currency  String  @default("INR")
-  timezone  String  @default("Asia/Kolkata")
+  logoUrl     String?
+  currency    String       @default("INR")
+  timezone    String       @default("Asia/Kolkata")
 
   // UPI payee for the dynamic QR shown at checkout and on the customer
   // display (NPCI deep link, see apps/web/lib/upi.ts). Optional: when unset
@@ -75,6 +75,10 @@ model Restaurant {
   referralMinPurchase    Decimal @default(200) @db.Decimal(10, 2)
   // Smallest order a website / API customer may place. 0 = no minimum.
   onlineMinOrderAmount   Decimal @default(0) @db.Decimal(10, 2)
+  // Stock alerts: warn this many days before a batch expires (0 = only already-expired).
+  expiryAlertDays        Int     @default(7)
+  // Email a digital receipt after payment (only to guests who gave an address and consent).
+  digitalReceiptsEnabled Boolean @default(false)
   // Website / API ordering price change: PERCENT or AMOUNT (per item). Negative = cheaper, positive = costlier. 0 = off.
   onlinePriceAdjustKind  String  @default("PERCENT")
   onlinePriceAdjustValue Decimal @default(0) @db.Decimal(10, 2)
@@ -83,18 +87,25 @@ model Restaurant {
   // (as a share of the bill subtotal) needs the discounts.unlimited
   // permission or an owner/administrator role. 100 = no cap, which keeps
   // behaviour unchanged until a restaurant opts in.
-  maxManualDiscountPercent Decimal @default(100) @db.Decimal(5, 2)
-  requireDiscountReason    Boolean @default(false)
+  maxManualDiscountPercent Decimal  @default(100) @db.Decimal(5, 2)
+  requireDiscountReason    Boolean  @default(false)
+  // Expenses strictly above this amount stay PENDING until someone with
+  // expenses.approve (not the person who recorded it) approves them.
+  // null = approvals off, every expense counts immediately.
+  expenseApprovalThreshold Decimal? @db.Decimal(12, 2)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   branches               Branch[]
   roles                  Role[]
+  membershipTiers        MembershipTier[]
   users                  User[]
   integrationApiKeys     IntegrationApiKey[]
   webhookEndpoints       WebhookEndpoint[]
   integrationConnections IntegrationConnection[]
+  emailTemplates         EmailTemplate[]
+  emailBranding          EmailBranding?
 
   @@map("restaurants")
 }
@@ -113,6 +124,8 @@ model Branch {
   bankTransactions  BankTransaction[]
   reportSchedules   ReportSchedule[]
   cashClosings      CashClosing[]
+  pettyCashFloat    PettyCashFloat?
+  pettyCashEntries  PettyCashEntry[]
   coupons           Coupon[]
   promotions        Promotion[]
   campaigns         Campaign[]
@@ -186,6 +199,7 @@ model Branch {
   suppliers       Supplier[]
   purchaseOrders  PurchaseOrder[]
   goodsReceipts   GoodsReceipt[]
+  purchaseReturns PurchaseReturn[]
   stockBatches    StockBatch[]
   stockMovements  StockMovement[]
   wasteLogs       WasteLog[]
@@ -217,7 +231,7 @@ model Permission {
   label    String
   category String // grouping for the settings UI, e.g. "Orders", "Inventory"
 
-  roles RolePermission[]
+  roles         RolePermission[]
   userOverrides UserPermissionOverride[]
 
   @@map("permissions")
@@ -248,13 +262,13 @@ model Department {
 // temporary access (cover shift, audit week) self-revoking.
 model UserPermissionOverride {
   userId       String
-  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   permissionId String
-  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  permission   Permission       @relation(fields: [permissionId], references: [id], onDelete: Cascade)
   effect       PermissionEffect
   reason       String?
   expiresAt    DateTime?
-  createdAt    DateTime   @default(now())
+  createdAt    DateTime         @default(now())
 
   @@id([userId, permissionId])
   @@map("user_permission_overrides")
@@ -311,6 +325,8 @@ model User {
   twoFactorEnabled        Boolean  @default(false)
   twoFactorRecoveryHashes String[] @default([]) // bcrypt hashes of unused one-time recovery codes
   twoFactorLastStep       Int? // last accepted TOTP step: a code works once
+  // Bumped to revoke every session at once; JWTs carry it as `tv`.
+  tokenVersion            Int      @default(0)
 
   // Delivery rider app: on duty, and the last position the rider's phone reported.
   riderOnline     Boolean   @default(false)
@@ -328,19 +344,23 @@ model User {
   refundsIssued Refund[]
   notifications Notification[] @relation("NotificationRecipient")
   deviceTokens  DeviceToken[]
+  authTokens    AuthToken[]
 
-  purchaseOrdersCreated PurchaseOrder[] @relation("PurchaseOrderCreatedBy")
-  goodsReceiptsReceived GoodsReceipt[]  @relation("GoodsReceiptReceivedBy")
-  stockMovementsCreated StockMovement[] @relation("StockMovementCreatedBy")
-  wasteLogsCreated      WasteLog[]      @relation("WasteLogCreatedBy")
-  attendance            Attendance[]
-  deliveriesDriven      Order[]         @relation("OrderDriver")
-  shifts                Shift[]
-  leaveRequests         LeaveRequest[]  @relation("LeaveRequester")
-  leaveDecided          LeaveRequest[]  @relation("LeaveDecider")
-  payProfile            StaffPay?
-  payrollLines          PayrollLine[]
-  expensesCreated       Expense[]
+  purchaseOrdersCreated  PurchaseOrder[]  @relation("PurchaseOrderCreatedBy")
+  goodsReceiptsReceived  GoodsReceipt[]   @relation("GoodsReceiptReceivedBy")
+  stockMovementsCreated  StockMovement[]  @relation("StockMovementCreatedBy")
+  wasteLogsCreated       WasteLog[]       @relation("WasteLogCreatedBy")
+  purchaseReturnsCreated PurchaseReturn[] @relation("PurchaseReturnCreatedBy")
+  attendance             Attendance[]
+  deliveriesDriven       Order[]          @relation("OrderDriver")
+  shifts                 Shift[]
+  leaveRequests          LeaveRequest[]   @relation("LeaveRequester")
+  leaveDecided           LeaveRequest[]   @relation("LeaveDecider")
+  payProfile             StaffPay?
+  payrollLines           PayrollLine[]
+  expensesCreated        Expense[]
+  expensesDecided        Expense[]        @relation("ExpenseDecider")
+  pettyCashEntries       PettyCashEntry[] @relation("PettyCashEntryCreatedBy")
 
   purchaseRequestsRequested PurchaseRequest[]   @relation("PurchaseRequestRequestedBy")
   purchaseRequestsApproved  PurchaseRequest[]   @relation("PurchaseRequestApprovedBy")
@@ -381,6 +401,26 @@ model StaffApiKey {
 
   @@index([userId])
   @@map("staff_api_keys")
+}
+
+// Single-use emailed links (#224 password reset, #223 staff invite). Only a
+// SHA-256 hash of the secret half of the token is stored; the link carries
+// `<id>.<secret>`. Stays on this install (sync LOCAL_TABLES).
+model AuthToken {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurantId String
+  purpose      String // PASSWORD_RESET | STAFF_INVITE
+  tokenHash    String
+  expiresAt    DateTime  @db.Timestamptz(3)
+  usedAt       DateTime? @db.Timestamptz(3)
+  createdById  String?
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, purpose])
+  @@index([expiresAt])
+  @@map("auth_tokens")
 }
 
 // A restaurant-issued credential for an EXTERNAL system (a partner
@@ -535,6 +575,27 @@ model BackupConfig {
   @@map("backup_config")
 }
 
+// Local (folder / USB / NAS) backups — issue #29. One instance-wide row.
+// Null config fields fall back to LOCAL_BACKUP_* env vars; the directory is
+// always resolved inside LOCAL_BACKUP_ROOT (env only, never settable from the
+// app). The last-success/last-failure columns back GET /backups/local/status.
+model LocalBackupConfig {
+  id                String    @id @default("singleton")
+  enabled           Boolean?
+  directory         String?
+  intervalHours     Int?
+  retainCount       Int?
+  lastSuccessAt     DateTime?
+  lastSuccessPath   String?
+  lastSizeBytes     BigInt?
+  lastFailureAt     DateTime?
+  lastFailureReason String?
+  updatedById       String?
+  updatedAt         DateTime  @updatedAt
+
+  @@map("local_backup_config")
+}
+
 // ---------------------------------------------------------------------------
 // Floor & Table management
 // ---------------------------------------------------------------------------
@@ -655,10 +716,12 @@ enum SpiceLevel {
 // ---------------------------------------------------------------------------
 // Inventory & Store Management (Phase 4)
 //
-// Deliberate scope-cut vs. the full spec ("units + unit conversion"): each
-// Ingredient has ONE base unit, used consistently for its recipe quantities,
-// PO/GRN quantities, and stock. A real conversion engine (buy a 25kg bag,
-// stock/recipe in kg) is deferred — see ROADMAP.md — rather than guessed at.
+// Each Ingredient has ONE base unit, used consistently for its recipe
+// quantities, PO/GRN quantities, and stock. Other units are accepted at the
+// API boundary and converted into the base unit before anything is stored
+// (src/modules/inventory/unit-conversion.ts): a fixed global table (KG/G,
+// L/ML, DOZEN/PIECE) plus per-ingredient pack sizes (IngredientUnitConversion,
+// e.g. 1 PACK = 25 KG). The unit the user typed is kept alongside for display.
 //
 // Costing is weighted-average (WAC), recomputed on every GRN receipt:
 // newCost = ((oldStock * oldCost) + (receivedQty * receivedCost)) /
@@ -692,28 +755,38 @@ model Ingredient {
   unit         IngredientUnit
   reorderLevel Decimal        @default(0) @db.Decimal(12, 3)
 
+  // Reorder planning (all optional): days from order to delivery, units per
+  // pack (suggestions round up to whole packs) and the usual supplier.
+  leadTimeDays        Int?
+  packSize            Decimal?  @db.Decimal(12, 3)
+  preferredSupplierId String?
+  preferredSupplier   Supplier? @relation("IngredientPreferredSupplier", fields: [preferredSupplierId], references: [id], onDelete: SetNull)
+
   // Cached from the StockMovement ledger — see note above on why these are
   // safe (transactional read-then-set, never `increment`).
   currentStock Decimal @default(0) @db.Decimal(12, 3)
-  costPerUnit  Decimal @default(0) @db.Decimal(12, 4) // weighted-average cost
+  costPerUnit  Decimal @default(0) @db.Decimal(14, 6) // weighted-average cost per base unit
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  recipeLines        RecipeIngredient[]
-  directMenuItems    MenuItem[]          @relation("DirectStockItem")
-  purchaseOrderItems PurchaseOrderItem[]
-  goodsReceiptItems  GoodsReceiptItem[]
-  stockBatches       StockBatch[]
-  stockMovements     StockMovement[]
-  wasteLogs          WasteLog[]
+  recipeLines         RecipeIngredient[]
+  directMenuItems     MenuItem[]           @relation("DirectStockItem")
+  purchaseOrderItems  PurchaseOrderItem[]
+  goodsReceiptItems   GoodsReceiptItem[]
+  stockBatches        StockBatch[]
+  stockMovements      StockMovement[]
+  wasteLogs           WasteLog[]
+  purchaseReturnItems PurchaseReturnItem[]
 
   purchaseRequestItems   PurchaseRequestItem[]
   supplierQuotationItems SupplierQuotationItem[]
+  unitConversions        IngredientUnitConversion[]
 
   @@unique([branchId, name])
   @@index([branchId])
+  @@index([preferredSupplierId])
   @@map("ingredients")
 }
 
@@ -724,13 +797,32 @@ model RecipeIngredient {
   ingredientId String
   ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
 
-  quantity  Decimal  @db.Decimal(12, 3) // in ingredient.unit
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  quantity        Decimal         @db.Decimal(12, 3) // in ingredient.unit (base)
+  // What the user typed, when not the base unit (display only; null = base).
+  enteredUnit     IngredientUnit?
+  enteredQuantity Decimal?        @db.Decimal(12, 3)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
 
   @@unique([menuItemId, ingredientId])
   @@index([menuItemId])
   @@map("recipe_ingredients")
+}
+
+// Per-ingredient pack size: 1 `unit` = `factor` of the ingredient's base unit.
+// Only for units the global table cannot convert (PACK, BOX, or a
+// cross-dimension size such as grams of a counted item).
+model IngredientUnitConversion {
+  id           String         @id @default(cuid())
+  ingredientId String
+  ingredient   Ingredient     @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  unit         IngredientUnit
+  factor       Decimal        @db.Decimal(14, 6)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@unique([ingredientId, unit])
+  @@map("ingredient_unit_conversions")
 }
 
 model Supplier {
@@ -755,6 +847,9 @@ model Supplier {
 
   quotations SupplierQuotation[]
   invoices   SupplierInvoice[]
+  returns    PurchaseReturn[]
+
+  preferredFor Ingredient[] @relation("IngredientPreferredSupplier")
 
   @@index([branchId])
   @@map("suppliers")
@@ -833,6 +928,7 @@ model GoodsReceipt {
 
   items    GoodsReceiptItem[]
   invoices SupplierInvoice[]
+  returns  PurchaseReturn[]
 
   @@unique([branchId, grnNumber])
   @@index([branchId])
@@ -849,13 +945,18 @@ model GoodsReceiptItem {
   purchaseOrderItemId String?
   purchaseOrderItem   PurchaseOrderItem? @relation(fields: [purchaseOrderItemId], references: [id], onDelete: SetNull)
 
-  quantity    Decimal   @db.Decimal(12, 3)
-  unitCost    Decimal   @db.Decimal(12, 4)
-  batchNumber String
-  expiryDate  DateTime?
-  createdAt   DateTime  @default(now())
+  quantity        Decimal         @db.Decimal(12, 3) // base unit
+  unitCost        Decimal         @db.Decimal(14, 6) // per base unit
+  // As written on the supplier's paperwork, when not the base unit.
+  enteredUnit     IngredientUnit?
+  enteredQuantity Decimal?        @db.Decimal(12, 3)
+  enteredUnitCost Decimal?        @db.Decimal(14, 6)
+  batchNumber     String
+  expiryDate      DateTime?
+  createdAt       DateTime        @default(now())
 
-  stockBatch StockBatch?
+  stockBatch  StockBatch?
+  returnItems PurchaseReturnItem[]
 
   @@index([goodsReceiptId])
   @@map("goods_receipt_items")
@@ -1030,15 +1131,78 @@ model StockBatch {
   batchNumber       String
   quantityReceived  Decimal   @db.Decimal(12, 3)
   quantityRemaining Decimal   @db.Decimal(12, 3)
-  unitCost          Decimal   @db.Decimal(12, 4)
+  unitCost          Decimal   @db.Decimal(14, 6)
   expiryDate        DateTime?
   receivedAt        DateTime  @default(now())
 
   stockMovements StockMovement[]
   wasteLogs      WasteLog[]
+  returnItems    PurchaseReturnItem[]
 
   @@index([branchId, ingredientId, receivedAt])
   @@map("stock_batches")
+}
+
+// Goods sent back to a supplier (damaged / wrong / expired), always against
+// one goods receipt so the returned quantity can be capped at what was
+// received. `totalAmount` is the debit note value: server-computed from each
+// line's received batch unit cost, never from client input. The supplier's
+// payable balance (invoices - payments - returns) is derived on demand.
+enum PurchaseReturnReason {
+  DAMAGED
+  WRONG_ITEM
+  EXPIRED
+  QUALITY
+  EXCESS
+  OTHER
+}
+
+model PurchaseReturn {
+  id       String @id @default(cuid())
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  supplierId     String
+  supplier       Supplier     @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  goodsReceiptId String
+  goodsReceipt   GoodsReceipt @relation(fields: [goodsReceiptId], references: [id], onDelete: Restrict)
+
+  returnNumber String // also the debit note number, e.g. DN-0001
+  reason       PurchaseReturnReason
+  notes        String?
+  totalAmount  Decimal              @db.Decimal(12, 2)
+
+  createdById String
+  createdBy   User     @relation("PurchaseReturnCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  items PurchaseReturnItem[]
+
+  @@unique([branchId, returnNumber])
+  @@index([branchId, supplierId])
+  @@index([goodsReceiptId])
+  @@map("purchase_returns")
+}
+
+model PurchaseReturnItem {
+  id               String         @id @default(cuid())
+  purchaseReturnId String
+  purchaseReturn   PurchaseReturn @relation(fields: [purchaseReturnId], references: [id], onDelete: Cascade)
+
+  goodsReceiptItemId String
+  goodsReceiptItem   GoodsReceiptItem @relation(fields: [goodsReceiptItemId], references: [id], onDelete: Restrict)
+  ingredientId       String
+  ingredient         Ingredient       @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+  stockBatchId       String?
+  stockBatch         StockBatch?      @relation(fields: [stockBatchId], references: [id], onDelete: SetNull)
+
+  quantity  Decimal @db.Decimal(12, 3)
+  unitCost  Decimal @db.Decimal(14, 6) // per base unit, same scale as GRN items
+  lineTotal Decimal @db.Decimal(12, 2)
+
+  @@index([purchaseReturnId])
+  @@index([goodsReceiptItemId])
+  @@map("purchase_return_items")
 }
 
 enum StockMovementType {
@@ -1047,6 +1211,7 @@ enum StockMovementType {
   ADJUSTMENT
   CONSUMPTION
   REVERSAL // compensating +qty when sold items are physically returned
+  PURCHASE_RETURN // -qty sent back to the supplier (debit note)
 }
 
 // How selling a menu item moves inventory.
@@ -1105,7 +1270,7 @@ model WasteLog {
 
   quantity        Decimal     @db.Decimal(12, 3)
   reason          WasteReason
-  unitCostAtWaste Decimal     @db.Decimal(12, 4)
+  unitCostAtWaste Decimal     @db.Decimal(14, 6)
   notes           String?
 
   createdById String
@@ -1245,15 +1410,22 @@ model Customer {
   referralCode    String? @unique
   // Opted out of marketing messages; excluded from every campaign audience.
   marketingOptOut Boolean @default(false)
+  // The address this guest agreed to receive digital receipts at (set at
+  // checkout), and when. Kept apart from `email` on purpose: marketing reads
+  // `email` only, so a receipt-only guest is never a campaign recipient.
+  receiptEmail     String?
+  receiptConsentAt DateTime? @db.Timestamptz(3)
   walletBalance   Decimal @default(0) @db.Decimal(12, 2) // store credit
 
-  createdAt        DateTime          @default(now())
+  createdAt        DateTime              @default(now())
   orders           Order[]
   giftCards        GiftCard[]
   addresses        CustomerAddress[]
-  referralsMade    Referral[]        @relation("ReferralReferrer")
-  referralReceived Referral?         @relation("ReferralReferred")
+  referralsMade    Referral[]            @relation("ReferralReferrer")
+  referralReceived Referral?             @relation("ReferralReferred")
   pointsLedger     PointsLedger[]
+  walletEntries    CustomerWalletEntry[]
+  memberships      CustomerMembership[]
 
   @@index([branchId, phone])
   @@map("customers")
@@ -1501,6 +1673,7 @@ model Order {
   items               OrderItem[]
   kots                Kot[]
   payments            Payment[]
+  gatewayPayments     GatewayPayment[]
   giftCardRedemptions GiftCardRedemption[]
   refunds             Refund[]
 
@@ -1511,6 +1684,7 @@ model Order {
   @@index([branchId, deliveryStatus])
   @@index([integrationKeyId])
   @@map("orders")
+  receiptEmail ReceiptEmail?
 }
 
 model OrderItem {
@@ -1726,6 +1900,52 @@ model Payment {
   @@unique([orderId, clientRequestId])
   @@index([orderId])
   @@map("payments")
+}
+
+// One online payment attempt through a gateway adapter (see docs/PAYMENTS.md).
+// The order is only settled once, through checkout, keyed on this row's id;
+// paymentId points at the Payment that settlement created.
+enum GatewayPaymentStatus {
+  CREATED
+  PENDING
+  SUCCEEDED
+  FAILED
+  EXPIRED
+}
+
+model GatewayPayment {
+  id           String @id @default(cuid())
+  restaurantId String
+  branchId     String
+  orderId      String
+  order        Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  provider       String // integration-hub provider key, e.g. "razorpay"
+  method         PaymentMethod
+  amount         Decimal              @db.Decimal(12, 2)
+  currency       String               @default("INR")
+  status         GatewayPaymentStatus @default(CREATED)
+  // Client-supplied key: the same key on the same order is the same attempt.
+  idempotencyKey String
+  externalId     String? // the gateway's payment id
+  action         Json? // what the till shows the guest (UPI link, redirect)
+  failureCode    String?
+  failureMessage String?
+
+  // Set once the order payment exists. settlementError: the gateway took the
+  // money but the order could not take it (closed meanwhile) - needs a refund.
+  paymentId       String?   @unique
+  settledAt       DateTime?
+  settlementError String?
+
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([orderId, idempotencyKey])
+  @@unique([provider, externalId])
+  @@index([restaurantId, status])
+  @@map("gateway_payments")
 }
 
 model Refund {
@@ -1970,23 +2190,40 @@ model PayrollLine {
 // Accounting (Phase 6)
 // ---------------------------------------------------------------------------
 
+enum ExpenseStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model Expense {
   id       String @id @default(cuid())
   branchId String
   branch   Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
 
-  spentOn      DateTime @db.Date
-  category     String
-  amount       Decimal  @db.Decimal(12, 2)
-  note         String?
+  spentOn        DateTime        @db.Date
+  category       String
+  amount         Decimal         @db.Decimal(12, 2)
+  note           String?
   // Paid out of the till: counted against expected cash at day close.
-  paidFromCash Boolean  @default(false)
+  paidFromCash   Boolean         @default(false)
+  // Set when the expense was paid out of the petty-cash float (#72); such an
+  // expense is never paidFromCash, so day close does not count it twice.
+  pettyCashEntry PettyCashEntry?
 
   createdById String
   createdBy   User     @relation(fields: [createdById], references: [id])
   createdAt   DateTime @default(now())
 
+  // Only APPROVED expenses count in reports, cash close and bank matching.
+  status       ExpenseStatus @default(APPROVED)
+  decidedById  String?
+  decidedBy    User?         @relation("ExpenseDecider", fields: [decidedById], references: [id])
+  decidedAt    DateTime?
+  decisionNote String?
+
   @@index([branchId, spentOn])
+  @@index([branchId, status])
   @@map("expenses")
 }
 
@@ -1997,20 +2234,66 @@ model CashClosing {
   branchId String
   branch   Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
 
-  businessDate DateTime @db.Date
-  openingFloat Decimal  @default(0) @db.Decimal(12, 2)
-  cashSales    Decimal  @db.Decimal(12, 2)
-  cashExpenses Decimal  @default(0) @db.Decimal(12, 2)
-  expectedCash Decimal  @db.Decimal(12, 2)
-  countedCash  Decimal  @db.Decimal(12, 2)
-  variance     Decimal  @db.Decimal(12, 2)
-  note         String?
+  businessDate    DateTime @db.Date
+  openingFloat    Decimal  @default(0) @db.Decimal(12, 2)
+  cashSales       Decimal  @db.Decimal(12, 2)
+  cashExpenses    Decimal  @default(0) @db.Decimal(12, 2)
+  // Cash moved from the till into the petty-cash float that day (#72).
+  pettyCashTopUps Decimal  @default(0) @db.Decimal(12, 2)
+  expectedCash    Decimal  @db.Decimal(12, 2)
+  countedCash     Decimal  @db.Decimal(12, 2)
+  variance        Decimal  @db.Decimal(12, 2)
+  note            String?
 
   closedById String
   createdAt  DateTime @default(now())
 
   @@unique([branchId, businessDate])
   @@map("cash_closings")
+}
+
+// Petty-cash float (#72), separate from the till drawer. The running balance
+// is read-modify-written (rounded `set`, guarded on the value read), never a
+// DB increment. Every movement is a PettyCashEntry with the balance after it.
+model PettyCashFloat {
+  branchId  String   @id
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  balance   Decimal  @default(0) @db.Decimal(12, 2)
+  updatedAt DateTime @updatedAt
+
+  @@map("petty_cash_floats")
+}
+
+enum PettyCashKind {
+  TOP_UP
+  PAYOUT
+  ADJUST
+}
+
+model PettyCashEntry {
+  id       String @id @default(cuid())
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  businessDate DateTime      @db.Date
+  kind         PettyCashKind
+  // Signed: + into the float (top-up, found), - out of it (payout, missing).
+  amount       Decimal       @db.Decimal(12, 2)
+  balanceAfter Decimal       @db.Decimal(12, 2)
+  reason       String
+  receiptRef   String?
+  // TOP_UP taken from the till drawer: subtracted from that day's expected cash.
+  fromTill     Boolean       @default(false)
+  // PAYOUT: the Expense it booked (counted once in P&L).
+  expenseId    String?       @unique
+  expense      Expense?      @relation(fields: [expenseId], references: [id], onDelete: NoAction)
+
+  createdById String
+  createdBy   User     @relation("PettyCashEntryCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([branchId, businessDate])
+  @@map("petty_cash_entries")
 }
 
 // ---------------------------------------------------------------------------
@@ -2270,7 +2553,7 @@ model StockTransfer {
   ingredientName String
   unit           String
   quantity       Decimal  @db.Decimal(12, 3)
-  unitCost       Decimal  @db.Decimal(12, 4)
+  unitCost       Decimal  @db.Decimal(14, 6)
   note           String?
   createdById    String
   createdAt      DateTime @default(now())
@@ -2418,34 +2701,109 @@ model VerifactuRecord {
 // Two-way server sync (see src/sync). Raw-SQL managed by triggers; modelled
 // here only so `prisma migrate dev` doesn't see drift.
 model SyncState {
-  id          Int       @id @default(1)
-  enabled     Boolean   @default(false)
-  role        String    @default("client")
-  deviceId    String    @default(dbgenerated("md5(((random())::text || (clock_timestamp())::text))"))
-  serverUrl   String?
-  apiKey      String?
-  seeded      Boolean   @default(false)
-  lastPullSeq BigInt    @default(0)
-  lastPushSeq BigInt    @default(0)
-  lastSyncAt  DateTime?
-  lastError   String?
-  conflicts   Json      @default("[]")
+  id            Int       @id @default(1)
+  enabled       Boolean   @default(false)
+  role          String    @default("client")
+  deviceId      String    @default(dbgenerated("md5(((random())::text || (clock_timestamp())::text))"))
+  serverUrl     String?
+  apiKey        String?
+  seeded        Boolean   @default(false)
+  lastPullSeq   BigInt    @default(0)
+  lastPushSeq   BigInt    @default(0)
+  lastSyncAt    DateTime?
+  lastError     String?
+  conflicts     Json      @default("[]")
+  schemaVersion String?
+  // #82: per-peer key issued by HQ at registration, the branches this
+  // install owns, retry backoff and why transfer is paused (schema / clock).
+  peerKey       String?
+  branchIds     String[]  @default([])
+  failures      Int       @default(0)
+  nextAttemptAt DateTime? @db.Timestamptz(3)
+  pausedReason  String?
 
   @@map("sync_state")
 }
 
+// HQ side (#82): a branch install registered with the bootstrap SYNC_API_KEY.
+// Its own key is stored hashed; the device id used for routing comes from
+// this record, never from the request.
+model SyncPeer {
+  id         String    @id
+  name       String
+  branchIds  String[]
+  keyHash    String
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  lastSeenAt DateTime? @db.Timestamptz(3)
+  revokedAt  DateTime? @db.Timestamptz(3)
+
+  @@map("sync_peers")
+}
+
+// HQ side (#82): a synced PAID order whose lines, total and payments don't
+// reconcile. Removed again once a later change makes it consistent.
+model SyncOrderFlag {
+  orderId   String   @id
+  branchId  String?
+  peer      String
+  problems  Json
+  flaggedAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@map("sync_order_flags")
+}
+
 model SyncChange {
-  seq    BigInt   @id @default(autoincrement())
-  tbl    String
-  pk     Json
-  pkKey  String
-  op     String   @db.Char(1)
-  row    Json?
-  ts     DateTime @db.Timestamptz(3)
-  origin String
+  seq           BigInt   @id @default(autoincrement())
+  tbl           String
+  pk            Json
+  pkKey         String
+  op            String   @db.Char(1)
+  row           Json?
+  ts            DateTime @db.Timestamptz(3)
+  origin        String
+  hlc           BigInt   @default(0)
+  peer          String   @default("")
+  branchId      String?
+  schemaVersion String?
 
   @@index([tbl, pkKey], map: "sync_changes_row_idx")
   @@map("sync_changes")
+}
+
+// Newest known version (or delete tombstone) of each synced row.
+model SyncVersion {
+  tbl      String
+  pkKey    String
+  hlc      BigInt
+  peer     String
+  deleted  Boolean  @default(false)
+  branchId String?
+  ts       DateTime @default(now()) @db.Timestamptz(3)
+
+  @@id([tbl, pkKey])
+  @@map("sync_versions")
+}
+
+// Changes a peer rejected; kept instead of pruned with the acknowledged page.
+model SyncRejected {
+  id     BigInt   @id @default(autoincrement())
+  side   String
+  tbl    String
+  pkKey  String
+  change Json?
+  error  String
+  at     DateTime @default(now()) @db.Timestamptz(3)
+
+  @@map("sync_rejected")
+}
+
+// Server side: how far each client has pulled (for outbox compaction).
+model SyncCursor {
+  device String   @id
+  seq    BigInt   @default(0)
+  seenAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@map("sync_cursors")
 }
 
 // ---------------------------------------------------------------------------
@@ -2484,7 +2842,8 @@ model IntegrationConnection {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  logs IntegrationLog[]
+  logs   IntegrationLog[]
+  outbox IntegrationOutbox[]
 
   @@unique([restaurantId, provider])
   @@map("integration_connections")
@@ -2501,6 +2860,33 @@ model IntegrationLog {
 
   @@index([connectionId, createdAt])
   @@map("integration_logs")
+}
+
+// Outbound calls to a platform (order statuses now, item availability and
+// menu pushes in #59), retried with backoff and dead-lettered when they keep
+// failing. Rows are written in the same transaction as the POS change they
+// report, so a status is never lost or invented (docs/AGGREGATORS.md 4.3).
+model IntegrationOutbox {
+  id            String                @id @default(cuid())
+  connectionId  String
+  connection    IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  kind          String // order.status | item.availability | menu.push
+  dedupeKey     String // e.g. "order.status:<externalOrderId>:READY"
+  // Our order, when the row is about one; rows for one order go out in order.
+  orderId       String?
+  branchId      String?
+  payload       Json
+  status        String                @default("PENDING") // PENDING | DONE | DEAD
+  attempts      Int                   @default(0)
+  nextAttemptAt DateTime              @default(now())
+  lastError     String?
+  createdAt     DateTime              @default(now())
+  doneAt        DateTime?
+
+  @@unique([connectionId, dedupeKey])
+  @@index([status, nextAttemptAt])
+  @@index([connectionId, orderId, createdAt])
+  @@map("integration_outbox")
 }
 
 enum ReferralStatus {
@@ -2537,6 +2923,25 @@ model Referral {
 
 // Every change to a customer's points balance from referrals / redemptions /
 // earning, with a unique idempotency key so replaying the same event is a no-op.
+// Store-credit ledger (#82). Every change to Customer.walletBalance is one
+// row and the balance is their rounded sum (wallet-ledger.ts); sync
+// recomputes it from here after apply instead of trusting the wire.
+model CustomerWalletEntry {
+  id             String   @id @default(cuid())
+  branchId       String
+  customerId     String
+  customer       Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  delta          Decimal  @db.Decimal(12, 2)
+  reason         String // OPENING | REFUND_CREDIT
+  refundId       String?
+  orderId        String?
+  idempotencyKey String   @unique
+  createdAt      DateTime @default(now())
+
+  @@index([customerId, createdAt])
+  @@map("customer_wallet_entries")
+}
+
 model PointsLedger {
   id             String   @id @default(cuid())
   branchId       String
@@ -2553,6 +2958,50 @@ model PointsLedger {
   @@map("points_ledger")
 }
 
+// A membership level (e.g. Silver/Gold) defined once per restaurant. Benefits
+// are read server-side by MembershipService.benefitFor; nothing trusts a
+// client-sent discount or multiplier.
+model MembershipTier {
+  id               String     @id @default(cuid())
+  restaurantId     String
+  restaurant       Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  name             String
+  rank             Int        @default(0) // higher = better; upgrades move up
+  discountPercent  Decimal    @default(0) @db.Decimal(5, 2)
+  pointsMultiplier Decimal    @default(1) @db.Decimal(4, 2)
+  durationDays     Int? // null = never expires
+  description      String?
+  active           Boolean    @default(true)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  memberships CustomerMembership[]
+
+  @@unique([restaurantId, name])
+  @@map("membership_tiers")
+}
+
+// One enrolment period. A customer has at most one current row: endedAt null
+// and expiresAt null or in the future. Upgrades and manual expiry close the
+// current row (endedAt) and keep it as history.
+model CustomerMembership {
+  id          String         @id @default(cuid())
+  customerId  String
+  customer    Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tierId      String
+  tier        MembershipTier @relation(fields: [tierId], references: [id], onDelete: Restrict)
+  startsAt    DateTime       @default(now())
+  expiresAt   DateTime?
+  endedAt     DateTime?
+  endReason   String? // UPGRADED | EXPIRED
+  createdById String?
+  createdAt   DateTime       @default(now())
+
+  @@index([customerId, startsAt])
+  @@index([tierId])
+  @@map("customer_memberships")
+}
+
 // A phone that signed in to the mobile app and can receive push notifications.
 model DeviceToken {
   id         String   @id @default(cuid())
@@ -2566,4 +3015,70 @@ model DeviceToken {
 
   @@index([userId])
   @@map("device_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Email templates (#220). A row exists only once a restaurant customises an
+// email; otherwise the code default in modules/email/templates/defaults.ts is
+// used. `key` is one of EMAIL_TEMPLATE_KEYS in packages/types (validated by
+// the API, kept as text so adding a key needs no migration).
+// ---------------------------------------------------------------------------
+model EmailTemplate {
+  id           String     @id @default(cuid())
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  key          String
+  subject      String
+  heading      String     @default("")
+  body         String     @default("")
+  buttonText   String?
+  buttonUrl    String?
+  footer       String?
+  enabled      Boolean    @default(true)
+  createdAt    DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime   @updatedAt @db.Timestamptz(3)
+  updatedBy    String?
+
+  @@unique([restaurantId, key])
+  @@map("email_templates")
+}
+
+// Restaurant-wide look of every email: header band colour and text, footer
+// line, optional logo and Reply-To address.
+model EmailBranding {
+  id           String     @id @default(cuid())
+  restaurantId String     @unique
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  primaryColor String     @default("#9F1239")
+  headerText   String?
+  footerText   String?
+  logoUrl      String?
+  replyTo      String?
+  createdAt    DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime   @updatedAt @db.Timestamptz(3)
+  updatedBy    String?
+
+  @@map("email_branding")
+}
+
+// Digital receipt email for one paid order (#222). One row per order, so a
+// payment can never mail two receipts; the guest's address and consent time
+// are kept here so a resend needs no new consent.
+model ReceiptEmail {
+  id           String    @id @default(cuid())
+  orderId      String    @unique
+  order        Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  restaurantId String
+  toEmail      String
+  consentAt    DateTime  @db.Timestamptz(3)
+  // PENDING (waiting for full payment), SENDING, SENT, FAILED, SKIPPED (turned off)
+  status       String    @default("PENDING")
+  sendCount    Int       @default(0)
+  sentAt       DateTime? @db.Timestamptz(3)
+  lastError    String? // error kind only, never an address
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@index([restaurantId])
+  @@map("receipt_emails")
 }

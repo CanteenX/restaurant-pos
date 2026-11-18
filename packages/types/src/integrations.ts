@@ -9,6 +9,12 @@ import { deliveryInfoSchema } from "./orders";
 export const INTEGRATION_SCOPES = [
   { key: "locations:read", label: "View locations", description: "List active branches and their basic info." },
   { key: "menu:read", label: "View menu", description: "Read a location's menu, categories, and prices." },
+  {
+    key: "menu:availability",
+    label: "Turn dishes on/off",
+    description:
+      "Mark a menu item available or sold out through the GraphQL API. Delivery platforms are updated as if staff had changed it.",
+  },
   { key: "orders:write", label: "Create orders", description: "Place a new takeaway/delivery order for a location." },
   {
     key: "orders:read",
@@ -20,6 +26,12 @@ export const INTEGRATION_SCOPES = [
     label: "View order customer & delivery details",
     description:
       "Also read the customer's name, mobile number, email and delivery address on orders this key placed. Grant only to a backend that needs it to fulfil orders.",
+  },
+  {
+    key: "customers:read",
+    label: "View customers",
+    description:
+      "Read customer profiles (name, mobile number, email, loyalty points) through the GraphQL API. Grant only to a backend you trust with personal data.",
   },
   {
     key: "reservations:write",
@@ -138,3 +150,23 @@ export const createIntegrationReservationSchema = z.object({
   specialRequests: z.string().optional(),
 });
 export type CreateIntegrationReservationDto = z.infer<typeof createIntegrationReservationSchema>;
+
+// Item mapping for a delivery channel (settings > integrations, #60). A patch,
+// never the whole map: the server merges it onto what is stored, so two
+// people editing different dishes never wipe each other's mappings.
+const menuItemIdSchema = z.string().trim().min(1).max(60);
+const platformItemIdSchema = z.string().trim().min(1).max(120);
+
+export const integrationItemMapPatchSchema = z
+  .object({
+    /** Our menu item id -> the platform's item id, added or changed. */
+    set: z
+      .record(menuItemIdSchema, platformItemIdSchema)
+      .refine((o) => Object.keys(o).length <= 2000, "At most 2000 items")
+      .default({}),
+    /** Our menu item ids whose mapping is removed. */
+    remove: z.array(menuItemIdSchema).max(2000).default([]),
+  })
+  .refine((p) => Object.keys(p.set).length + p.remove.length > 0, "Nothing to change")
+  .refine((p) => !p.remove.some((id) => id in p.set), "An item cannot be both set and removed");
+export type IntegrationItemMapPatchDto = z.infer<typeof integrationItemMapPatchSchema>;

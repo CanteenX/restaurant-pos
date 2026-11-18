@@ -3,6 +3,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { io } from "socket.io-client";
+import { patchDriverLocation, type RiderLocationEvent } from "@/lib/rider-map";
+import type { Driver } from "@/hooks/use-delivery";
 import { REALTIME_EVENTS, realtimeInvalidations } from "@/lib/realtime-keys";
 import { setRealtimeState } from "@/lib/realtime-status";
 import { resolveWsUrl } from "@/lib/ws-url";
@@ -36,7 +38,14 @@ export function useRealtime(branchId: string | null) {
       wasDown = true;
       setRealtimeState("offline");
     };
-    socket.on("disconnect", down);
+    socket.on("disconnect", (reason) => {
+      down();
+      // The server drops a revoked session's sockets ("Log out of all
+      // devices", #17): re-check the session so this tab leaves at once.
+      if (reason === "io server disconnect") {
+        void queryClient.invalidateQueries({ queryKey: ["auth", "me"] });
+      }
+    });
     socket.on("connect_error", down);
 
     for (const event of REALTIME_EVENTS) {
@@ -46,6 +55,11 @@ export function useRealtime(branchId: string | null) {
         );
       });
     }
+
+    // Rider GPS pings patch the cached driver list in place (no refetch per ping).
+    socket.on("rider.location", (ev: RiderLocationEvent) => {
+      queryClient.setQueryData<Driver[]>(["deliveries", "drivers", branchId], (old) => patchDriverLocation(old, ev));
+    });
 
     return () => {
       socket.disconnect();

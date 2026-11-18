@@ -11,7 +11,11 @@ import {
   UsePipes,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import type { SessionUser } from '@nodedr-restaurant/types';
+import {
+  tallyMappingSchema,
+  type SessionUser,
+  type TallyMappingDto,
+} from '@nventra/types';
 import { z } from 'zod';
 import { AuditAction } from '../../audit/audit-action';
 import { Auth } from '../../common/decorators/auth.decorator';
@@ -19,6 +23,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { BranchAccessService } from '../../common/services/branch-access.service';
 import { LedgerService } from './ledger.service';
+import { TallyMappingService } from './tally-mapping.service';
 
 const budgetSchema = z.object({
   month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
@@ -34,6 +39,7 @@ const matchSchema = z.object({ expenseId: z.string().min(1) });
 export class LedgerController {
   constructor(
     private readonly ledger: LedgerService,
+    private readonly tally: TallyMappingService,
     private readonly branchAccess: BranchAccessService,
   ) {}
 
@@ -160,5 +166,22 @@ export class LedgerController {
   ) {
     await this.access(u, branchId);
     return this.ledger.balanceSheet(branchId, asOf);
+  }
+
+  @Auth('accounting.manage')
+  @Get('tally-mapping')
+  tallyMapping(@CurrentUser() u: SessionUser) {
+    return this.tally.get(u.restaurantId);
+  }
+
+  @Auth('accounting.manage')
+  @AuditAction('tally.mapping_saved', 'Restaurant')
+  @Put('tally-mapping')
+  @UsePipes(new ZodValidationPipe(tallyMappingSchema))
+  saveTallyMapping(
+    @CurrentUser() u: SessionUser,
+    @Body() body: TallyMappingDto,
+  ) {
+    return this.tally.save(u.restaurantId, body);
   }
 }

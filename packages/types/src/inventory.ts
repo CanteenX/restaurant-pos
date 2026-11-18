@@ -13,17 +13,73 @@ export const ingredientUnitSchema = z.enum([
 ]);
 export type IngredientUnit = z.infer<typeof ingredientUnitSchema>;
 
-export const ingredientSchema = z.object({
+// Base fields with NO defaults, shared by create and update (zod 4 keeps
+// .default() inside .partial(), which would reset omitted fields on PATCH).
+const ingredientFields = z.object({
   name: z.string().min(1),
   sku: z.string().optional(),
   unit: ingredientUnitSchema,
-  reorderLevel: z.coerce.number().nonnegative().default(0),
-  isActive: z.boolean().default(true),
+  reorderLevel: z.coerce.number().nonnegative(),
+  // capped like the reorder `days` window (1..365)
+  leadTimeDays: z.coerce
+    .number()
+    .int()
+    .nonnegative()
+    .max(365)
+    .nullable()
+    .optional(),
+  packSize: z.coerce.number().positive().nullable().optional(),
+  preferredSupplierId: z.string().min(1).nullable().optional(),
+  isActive: z.boolean(),
+});
+
+export const ingredientSchema = ingredientFields.extend({
+  reorderLevel: ingredientFields.shape.reorderLevel.default(0),
+  isActive: ingredientFields.shape.isActive.default(true),
 });
 export type IngredientDto = z.infer<typeof ingredientSchema>;
 
+/** Branch scope for inventory routes; a missing branchId is a 400, never "any branch". */
+export const inventoryBranchQuerySchema = z.object({
+  branchId: z.string().trim().min(1, "branchId is required"),
+});
+export type InventoryBranchQueryDto = z.infer<
+  typeof inventoryBranchQuerySchema
+>;
+
+/** PATCH: only the fields sent are written; omitted fields keep their value. */
+export const ingredientUpdateSchema = ingredientFields.partial();
+export type IngredientUpdateDto = z.infer<typeof ingredientUpdateSchema>;
+
+// Quantities on recipe lines, goods receipts, waste and adjustments may be
+// entered in any unit convertible to the ingredient's base unit (KG<->G,
+// L<->ML, DOZEN<->PIECE, or a pack size set on the ingredient). Omitted =
+// the base unit. The server converts and stores base units only.
+const enteredUnit = ingredientUnitSchema.optional();
+
+export const unitConversionSchema = z.object({
+  unit: ingredientUnitSchema,
+  // How many base units one `unit` holds, e.g. PACK = 25 (KG). Stored as
+  // DECIMAL(14,6), so at most 6 decimal places: anything finer would be
+  // rounded (or zeroed) silently and skew every later conversion.
+  factor: z.coerce
+    .number()
+    .min(0.000001)
+    .max(1_000_000)
+    .refine((v) => Number(v.toFixed(6)) === v, {
+      message: "Use at most 6 decimal places",
+    }),
+});
+export type UnitConversionDto = z.infer<typeof unitConversionSchema>;
+
+export const setUnitConversionsSchema = z.object({
+  conversions: z.array(unitConversionSchema).max(8),
+});
+export type SetUnitConversionsDto = z.infer<typeof setUnitConversionsSchema>;
+
 export const stockAdjustmentSchema = z.object({
   quantity: z.coerce.number(), // signed: positive to add, negative to remove
+  unit: enteredUnit,
   note: z.string().min(1),
 });
 export type StockAdjustmentDto = z.infer<typeof stockAdjustmentSchema>;
@@ -31,6 +87,7 @@ export type StockAdjustmentDto = z.infer<typeof stockAdjustmentSchema>;
 export const recipeLineSchema = z.object({
   ingredientId: z.string(),
   quantity: z.coerce.number().positive(),
+  unit: enteredUnit,
 });
 export type RecipeLineDto = z.infer<typeof recipeLineSchema>;
 
@@ -95,6 +152,7 @@ export const goodsReceiptItemSchema = z.object({
   ingredientId: z.string(),
   purchaseOrderItemId: z.string().optional(),
   quantity: z.coerce.number().positive(),
+  unit: enteredUnit, // unit of both quantity and unitCost
   unitCost: z.coerce.number().nonnegative(),
   batchNumber: z.string().optional(), // auto-generated server-side if omitted
   expiryDate: z.coerce.date().optional(),
@@ -109,6 +167,44 @@ export const goodsReceiptSchema = z.object({
 });
 export type GoodsReceiptDto = z.infer<typeof goodsReceiptSchema>;
 
+// Purchase returns (debit notes): goods sent back to the supplier against a
+// specific goods receipt. Amounts are never taken from the client — each
+// line is valued at the received batch's own unit cost on the server.
+export const purchaseReturnReasonSchema = z.enum([
+  "DAMAGED",
+  "WRONG_ITEM",
+  "EXPIRED",
+  "QUALITY",
+  "EXCESS",
+  "OTHER",
+]);
+export type PurchaseReturnReason = z.infer<typeof purchaseReturnReasonSchema>;
+
+export const purchaseReturnListQuerySchema = inventoryBranchQuerySchema.extend({
+  supplierId: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => v || undefined),
+});
+export type PurchaseReturnListQueryDto = z.infer<
+  typeof purchaseReturnListQuerySchema
+>;
+
+export const purchaseReturnItemSchema = z.object({
+  goodsReceiptItemId: z.string().min(1),
+  quantity: z.coerce.number().positive().max(1_000_000),
+});
+export type PurchaseReturnItemDto = z.infer<typeof purchaseReturnItemSchema>;
+
+export const purchaseReturnSchema = z.object({
+  goodsReceiptId: z.string().min(1),
+  reason: purchaseReturnReasonSchema,
+  notes: z.string().trim().max(500).optional(),
+  items: z.array(purchaseReturnItemSchema).min(1).max(200),
+});
+export type PurchaseReturnDto = z.infer<typeof purchaseReturnSchema>;
+
 export const wasteReasonSchema = z.enum([
   "EXPIRED",
   "SPOILED",
@@ -122,6 +218,7 @@ export type WasteReason = z.infer<typeof wasteReasonSchema>;
 export const wasteLogSchema = z.object({
   ingredientId: z.string(),
   quantity: z.coerce.number().positive(),
+  unit: enteredUnit,
   reason: wasteReasonSchema,
   notes: z.string().optional(),
 });
@@ -166,7 +263,9 @@ export const supplierQuotationItemSchema = z.object({
   quantityQuoted: z.coerce.number().positive(),
   unitPrice: z.coerce.number().nonnegative(),
 });
-export type SupplierQuotationItemDto = z.infer<typeof supplierQuotationItemSchema>;
+export type SupplierQuotationItemDto = z.infer<
+  typeof supplierQuotationItemSchema
+>;
 
 export const supplierQuotationSchema = z.object({
   supplierId: z.string(),
@@ -202,3 +301,11 @@ export const supplierPaymentSchema = z.object({
   reference: z.string().optional(),
 });
 export type SupplierPaymentDto = z.infer<typeof supplierPaymentSchema>;
+
+export const reorderSuggestionsQuerySchema = z.object({
+  branchId: z.string().min(1),
+  days: z.coerce.number().int().min(1).max(365).default(30),
+});
+export type ReorderSuggestionsQuery = z.infer<
+  typeof reorderSuggestionsQuerySchema
+>;

@@ -7,6 +7,8 @@ import type {
   PurchaseOrderDto,
   PurchaseOrderStatus,
   PurchaseRequestDto,
+  PurchaseReturnDto,
+  PurchaseReturnReason,
   PurchaseRequestStatus,
   QuotationStatus,
   StockAdjustmentDto,
@@ -16,7 +18,7 @@ import type {
   SupplierQuotationDto,
   WasteLogDto,
   WasteReason,
-} from "@nodedr-restaurant/types";
+} from "@nventra/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
@@ -72,8 +74,22 @@ export interface PurchaseOrderDetail extends PurchaseOrder {
     grnNumber: string;
     receivedAt: string;
     receivedBy: { id: string; name: string };
-    items: unknown[];
+    items: { id: string; ingredientId: string; quantity: string; unitCost: string }[];
   }[];
+}
+
+export interface PurchaseReturn {
+  id: string;
+  returnNumber: string;
+  reason: PurchaseReturnReason;
+  notes: string | null;
+  totalAmount: string;
+  createdAt: string;
+  goodsReceiptId: string;
+  supplier: { id: string; name: string };
+  goodsReceipt: { id: string; grnNumber: string };
+  createdBy: { id: string; name: string };
+  items: { id: string; goodsReceiptItemId: string; ingredientId: string; quantity: string }[];
 }
 
 export interface StockBatch {
@@ -267,7 +283,7 @@ export function useRecipe(branchId: string | null, menuItemId: string | null) {
 export function useSetRecipe(branchId: string | null, menuItemId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (lines: { ingredientId: string; quantity: number }[]) =>
+    mutationFn: (lines: { ingredientId: string; quantity: number; unit?: IngredientUnit }[]) =>
       api.patch<Recipe>(`/inventory/menu-items/${menuItemId}/recipe?branchId=${branchId}`, {
         lines,
       }),
@@ -409,6 +425,32 @@ export function useGoodsReceipts(branchId: string | null) {
   });
 }
 
+// --- Purchase returns ------------------------------------------------------------
+
+export function usePurchaseReturns(branchId: string | null, supplierId?: string) {
+  return useQuery({
+    queryKey: ["inventory", "purchase-returns", branchId, supplierId ?? "all"],
+    queryFn: () =>
+      api.get<PurchaseReturn[]>(
+        `/inventory/purchase-returns?branchId=${branchId}${supplierId ? `&supplierId=${supplierId}` : ""}`,
+      ),
+    enabled: !!branchId,
+  });
+}
+
+export function useCreatePurchaseReturn(branchId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (dto: PurchaseReturnDto) =>
+      api.post(`/inventory/purchase-returns?branchId=${branchId}`, dto),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["inventory", "purchase-returns", branchId] });
+      qc.invalidateQueries({ queryKey: ["inventory", "ingredients", branchId] });
+      qc.invalidateQueries({ queryKey: ["inventory", "purchase-orders", branchId] });
+    },
+  });
+}
+
 // --- Waste -----------------------------------------------------------------------
 
 export function useWasteLogs(branchId: string | null) {
@@ -438,6 +480,35 @@ export function usePurchaseRequests(branchId: string | null, status?: PurchaseRe
     queryFn: () =>
       api.get<PurchaseRequest[]>(
         `/inventory/purchase-requests?branchId=${branchId}${status ? `&status=${status}` : ""}`,
+      ),
+    enabled: !!branchId,
+  });
+}
+
+export interface ReorderSuggestionLine {
+  ingredientId: string;
+  name: string;
+  unit: string;
+  currentStock: number;
+  reorderLevel: number;
+  avgDailyConsumption: number;
+  suggestedQuantity: number;
+  packSize: number | null;
+  packs: number | null;
+}
+
+export interface ReorderSuggestionGroup {
+  supplierId: string | null;
+  supplierName: string | null;
+  suggestions: ReorderSuggestionLine[];
+}
+
+export function useReorderSuggestions(branchId: string | null) {
+  return useQuery({
+    queryKey: ["inventory", "reorder-suggestions", branchId],
+    queryFn: () =>
+      api.get<{ days: number; groups: ReorderSuggestionGroup[] }>(
+        `/inventory/reorder-suggestions?branchId=${branchId}`,
       ),
     enabled: !!branchId,
   });
@@ -555,5 +626,18 @@ export function useSupplierPerformance(branchId: string | null, supplierId: stri
     queryFn: () =>
       api.get<SupplierPerformance>(`/inventory/suppliers/${supplierId}/performance?branchId=${branchId}`),
     enabled: !!branchId && !!supplierId,
+  });
+}
+
+// --- Unit conversions (pack sizes) -----------------------------------------------
+
+export function useIngredientConversions(branchId: string | null, ingredientId: string | null) {
+  return useQuery({
+    queryKey: ["inventory", "conversions", branchId, ingredientId],
+    queryFn: () =>
+      api.get<{ unit: IngredientUnit; factor: string }[]>(
+        `/inventory/ingredients/${ingredientId}/conversions?branchId=${branchId}`,
+      ),
+    enabled: !!branchId && !!ingredientId,
   });
 }

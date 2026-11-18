@@ -1,8 +1,8 @@
 # Integrations hub
 
-Settings → Integrations lets a restaurant connect OrderRestro to outside
+Settings → Integrations lets a restaurant connect Nventra POS to outside
 platforms **using its own accounts and credentials**. Nothing routes through a
-central Nodedr server; the credentials belong to the restaurant and are stored
+central vendor server; the credentials belong to the restaurant and are stored
 on its own installation, encrypted.
 
 ## What works today
@@ -14,14 +14,15 @@ on its own installation, encrypted.
 | Outgoing webhooks (HMAC-signed, retries, delivery history) | Working (Settings → Webhooks) |
 | Incoming orders / API access (scoped, expiring, rotatable keys) | Working (Settings → API Keys; `/api/v1/integrations/*`) |
 | **Zomato, Swiggy, other aggregators** | **Working: signed inbound webhook** (see below) |
+| **Channel manager (partner API)** | **Working: inbound orders + accept / reject / ready / dispatched / delivered / cancelled sent back, with retries** (see below) |
 
 ## Zomato, Swiggy and aggregators
 
 Zomato and Swiggy have no public order API: restaurants receive their orders
 through the platform's merchant webhook or an aggregator / channel manager
 (UrbanPiper, Petpooja, Dotpe and similar) that the restaurant has an account
-with. OrderRestro therefore exposes one signed endpoint per restaurant and
-provider (`zomato`, `swiggy`, `aggregator`); Settings -> Integrations shows the
+with. Nventra POS therefore exposes one signed endpoint per restaurant and
+provider (`zomato`, `swiggy`, `aggregator`, `partner-api`); Settings -> Integrations shows the
 exact URL and a secret generator.
 
     POST /api/v1/integration-hub/webhook/<restaurantId>/<provider>
@@ -33,7 +34,7 @@ Events (JSON body):
 | `event` | Effect |
 |---|---|
 | `ping` | Proves the secret works; marks the card **Connected**. |
-| `order.created` | Creates an ONLINE order awaiting acceptance (`externalSource` = provider, `externalOrderId` = `orderId`). `customer{name,phone,email?,ref?}`, `delivery{address,pincode?}` (required for `type: DELIVERY`, the default), `items[{name or menuItemId, quantity, kitchenNote?}]`, optional `branchId` (required when the restaurant has several branches), `notes`, `paymentMode` (`PREPAID` / `COD`, written into the order note). |
+| `order.created` | Creates an ONLINE order awaiting acceptance (`externalSource` = provider, `externalOrderId` = `orderId`). `customer{name,phone,email?,ref?}`, `delivery{address,pincode?}` (required for `type: DELIVERY`, the default), `items[{name or menuItemId, quantity, kitchenNote?, modifiers?[{name or modifierId}]}]` (add-ons must belong to that dish, else 422), optional `branchId` or `outletId` (the platform outlet, mapped to a branch with the connection's `outlets` setting; one of them is required when the restaurant has several branches), `notes`, `paymentMode` (`PREPAID` / `COD`, written into the order note), and `platformTotal` / `packagingCharge` / `platformDiscount` (recorded in the note only; a `platformTotal` more than 1.00 off our total logs a `price_mismatch` warning). |
 | `order.cancelled` | Declines the order if it is still waiting for acceptance; if staff already accepted it, an activity-log warning asks a person to decide. |
 
 Guarantees: the signature covers the exact bytes received and is compared in
@@ -46,10 +47,44 @@ visible in the activity log) rather than silently dropping a line. Items in a
 category hidden from the website are refused too.
 
 The card turns **Connected** only after a correctly signed delivery really
-arrived; saving the secret or pressing *Check status* never does. Not built:
-sending accept / reject / ready back to the platform (that needs each
-platform's outbound API and sandbox), so staff still confirm status inside the
-platform or the aggregator.
+arrived; saving the secret or pressing *Check status* never does. The plain
+`zomato` / `swiggy` / `aggregator` providers are inbound only.
+
+### Sending statuses back (`partner-api`)
+
+The **Channel manager (partner API)** provider (`partner-api`) also tells the
+partner what happened, using the canonical calls in
+[AGGREGATORS.md](AGGREGATORS.md#42-new-provider-partnerapiprovider)
+(`POST {baseUrl}/v1/orders/{orderId}/status`, signed like inbound deliveries,
+`Authorization: Bearer <apiKey>`, `Idempotency-Key`). Credentials: `baseUrl`,
+`apiKey`, `webhookSecret` (all stored encrypted). *Check status* calls
+`GET /v1/ping`.
+
+| In POS | Sent |
+|---|---|
+| Accept | `ACCEPTED` |
+| Decline | `REJECTED` (with the reason) |
+| Cancel after accepting | `CANCELLED` |
+| Last kitchen ticket ready | `READY` |
+| Own rider picked up / delivered | `DISPATCHED` / `DELIVERED` |
+| Platform cancelled it (`order.cancelled`) | nothing (no echo) |
+
+Each status is queued in `integration_outbox` in the same transaction as the
+change, at most once per order and status, and sent by a 10 s worker. For one
+order, statuses leave in the order they happened. Network errors, timeouts,
+408, 429 and 5xx are retried after 1m, 5m, 30m, 2h and 12h; other 4xx give up
+at once. A call that gives up sets the card to **Sync error** (or **Auth
+expired** for 401/403), writes an ERROR activity line and notifies everyone
+with `settings.manage`. `GET /api/v1/integration-hub` shows
+`connection.outbox: { pending, dead }`; `POST
+/api/v1/integration-hub/partner-api/outbox/retry` re-queues the failed calls.
+The outlet map is saved with `PUT /api/v1/integration-hub/partner-api`
+(`{ "outlets": { "<outletId>": "<branchId>" } }`). Partner URLs go through the
+same SSRF guard as outgoing webhooks (https, no private addresses).
+
+The audit of what is missing and the chosen design for the outbound side
+(status loop, retries, item on/off, menu sync) is in
+[AGGREGATORS.md](AGGREGATORS.md).
 
 ## Statuses
 

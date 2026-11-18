@@ -10,7 +10,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { hasPermission, useCurrentUser } from "@/hooks/use-auth";
 import { useBranch } from "@/hooks/use-branch";
 import { api, ApiError } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
+import { DayHourHeatmap, TableHeatmap } from "@/components/reports/heatmap";
+import { PriceVarianceTable } from "@/components/reports/price-variance-table";
 import { SchedulesPanel } from "@/components/reports/schedules-panel";
 
 interface CatalogEntry {
@@ -28,6 +31,7 @@ interface ReportResult {
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 
 export default function ReportsPage() {
+  const { t } = useI18n();
   const { branchId } = useBranch();
   const { data: me } = useCurrentUser();
   const canExport = hasPermission(me?.user, "data.export");
@@ -54,12 +58,12 @@ export default function ReportsPage() {
   return (
     <div className="flex flex-col gap-6">
       <div className="print:hidden">
-        <h1 className="text-[32px] font-semibold tracking-tight text-foreground">Reports</h1>
-        <p className="text-sm text-muted-foreground">Filter by date, print, export to Excel, PDF or CSV, or email on a schedule</p>
+        <h1 className="text-[32px] font-semibold tracking-tight text-foreground">{t("reports.title")}</h1>
+        <p className="text-sm text-muted-foreground">{t("reports.subtitle")}</p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
-        <nav className="flex flex-col gap-4 print:hidden" aria-label="Reports">
+        <nav className="flex flex-col gap-4 print:hidden" aria-label={t("reports.title")}>
           {groups.map((g) => (
             <div key={g} className="flex flex-col gap-1">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{g}</p>
@@ -87,7 +91,7 @@ export default function ReportsPage() {
             <Input type="date" className="w-40" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} />
             <Input type="date" className="w-40" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} />
             <Button variant="outline" size="sm" onClick={() => window.print()}>
-              <Printer className="mr-2 h-4 w-4" /> Print
+              <Printer className="mr-2 h-4 w-4" /> {t("reports.print")}
             </Button>
             {canExport &&
               (["xlsx", "pdf", "csv"] as const).map((f) => (
@@ -96,7 +100,7 @@ export default function ReportsPage() {
                   href={`/api/v1/reports/${key}/export?${qs}&format=${f}`}
                   className="inline-flex h-8 items-center rounded-lg border border-border px-3 text-sm hover:bg-secondary"
                 >
-                  <Download className="mr-2 h-4 w-4" /> {f === "xlsx" ? "Excel" : f.toUpperCase()}
+                  <Download className="mr-2 h-4 w-4" /> {f === "xlsx" ? t("reports.excel") : f.toUpperCase()}
                 </a>
               ))}
           </div>
@@ -104,13 +108,19 @@ export default function ReportsPage() {
           <Card className="overflow-x-auto p-4">
             <h2 className="mb-3 text-lg font-semibold text-foreground">{data?.title ?? catalog?.find((c) => c.key === key)?.title}</h2>
             <p className="mb-3 hidden text-xs text-muted-foreground print:block">
-              {range.from} to {range.to}
+              {t("reports.range", { from: range.from, to: range.to })}
             </p>
             {isLoading ? (
               <Skeleton className="h-32" />
             ) : error ? (
-              <p className="text-sm text-destructive">{error instanceof ApiError ? error.message : "Could not load report"}</p>
+              <p className="text-sm text-destructive">{error instanceof ApiError ? error.message : t("reports.loadError")}</p>
             ) : data && data.rows.length > 0 ? (
+              <>
+              {key === "peak-hours" && <DayHourHeatmap rows={data.rows} />}
+              {key === "table-turnover" && <TableHeatmap rows={data.rows} />}
+              {key === "price-variance" ? (
+                <PriceVarianceTable columns={data.columns} rows={data.rows} csvHref={canExport ? `/api/v1/reports/${key}/export?${qs}&format=csv` : null} />
+              ) : (
               <table className="w-full text-sm">
                 <thead className="text-left text-xs text-muted-foreground">
                   <tr>
@@ -129,8 +139,10 @@ export default function ReportsPage() {
                   ))}
                 </tbody>
               </table>
+              )}
+              </>
             ) : (
-              <p className="py-8 text-center text-sm text-muted-foreground">No data for this period.</p>
+              <p className="py-8 text-center text-sm text-muted-foreground">{t("reports.noData")}</p>
             )}
           </Card>
 

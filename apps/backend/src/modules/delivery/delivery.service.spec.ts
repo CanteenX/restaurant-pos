@@ -17,16 +17,19 @@ function setup(order: Record<string, unknown> | null, zoneClash = false) {
         .mockResolvedValue(zoneClash ? { name: 'Central' } : null),
       create: jest.fn().mockResolvedValue({ id: 'z1' }),
     },
+    $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn(prisma)),
   };
   const realtime = { emitToBranch: jest.fn(), emitToUsers: jest.fn() };
   const webhooks = { emitForBranch: jest.fn() };
+  const outbox = { enqueueOrderStatus: jest.fn() };
   const svc = new DeliveryService(
     prisma as never,
     realtime as never,
     webhooks as never,
     { sendToUsers: jest.fn() } as never,
+    outbox as never,
   );
-  return { svc, prisma, realtime };
+  return { svc, prisma, realtime, outbox };
 }
 
 describe('DeliveryService', () => {
@@ -87,6 +90,27 @@ describe('DeliveryService', () => {
     expect(
       prisma.order.update.mock.calls[0][0].data.deliveredAt,
     ).toBeInstanceOf(Date);
+  });
+
+  it('tells a delivery platform about own-fleet pickup and drop-off, in the same transaction', async () => {
+    const { svc, prisma, outbox } = setup({
+      id: 'o1',
+      deliveryStatus: 'ASSIGNED',
+      driverId: 'd1',
+    });
+    await svc.setStatus('b1', 'o1', 'PICKED_UP');
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(outbox.enqueueOrderStatus).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({ id: 'o1' }),
+      'DISPATCHED',
+    );
+  });
+
+  it('does not queue a platform status for assignment', async () => {
+    const { svc, outbox } = setup({ id: 'o1', deliveryStatus: 'UNASSIGNED' });
+    await svc.assignDriver('b1', 'o1', 'd1');
+    expect(outbox.enqueueOrderStatus).not.toHaveBeenCalled();
   });
 
   it('rejects a pincode already covered by another active zone', async () => {

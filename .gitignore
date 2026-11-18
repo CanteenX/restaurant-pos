@@ -19,3 +19,10 @@ docker-compose.override.yml
 # own ./out directory; these are only produced by a local `dotnet build`.
 windows/msix/Launcher/bin/
 windows/msix/Launcher/obj/
+
+# Playwright
+e2e/node_modules/
+e2e/playwright-report/
+e2e/test-results/
+.claude/worktrees/
+playwright/.auth/

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { IntegrationItemMapPatchDto } from "@nventra/types";
 import { api } from "@/lib/api";
 
 export type IntegrationStatus =
@@ -21,6 +22,12 @@ export interface IntegrationConnection {
   lastSyncAt: string | null;
   lastSuccessAt: string | null;
   lastError: string | null;
+  /** Our menu item id -> the platform's item id. */
+  itemMap: Record<string, string>;
+  /** Platform calls queued (pending) and given up (dead). */
+  outbox: { pending: number; dead: number };
+  /** When the newest order from this channel arrived. */
+  lastOrderAt: string | null;
 }
 
 export interface IntegrationProviderInfo {
@@ -77,6 +84,16 @@ export function useIntegrationActions() {
     setEnabled: useMutation({
       mutationFn: (v: { provider: string; enabled: boolean }) =>
         api.post(`/integration-hub/${v.provider}/enabled`, { enabled: v.enabled }),
+      onSuccess: done,
+    }),
+    /** Merged on the server: only the dishes named here change. */
+    patchItemMap: useMutation({
+      mutationFn: (v: { provider: string; patch: IntegrationItemMapPatchDto }) =>
+        api.patch(`/integration-hub/${v.provider}/item-map`, v.patch),
+      onSuccess: done,
+    }),
+    retryFailed: useMutation({
+      mutationFn: (provider: string) => api.post<{ requeued: number }>(`/integration-hub/${provider}/outbox/retry`),
       onSuccess: done,
     }),
     disconnect: useMutation({

@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 set -a; . ./.env; set +a
-IMG=ghcr.io/raktim94/nodedr-restaurant-pos
+IMG=ghcr.io/canteenx/nventra-pos
 N=orderrestro-demo
 docker network inspect $N >/dev/null 2>&1 || docker network create $N >/dev/null
 docker volume inspect $N-pg >/dev/null 2>&1 || docker volume create $N-pg >/dev/null
@@ -17,7 +17,7 @@ docker start $N-db >/dev/null
 until docker exec $N-db pg_isready -U demo >/dev/null 2>&1; do sleep 1; done
 docker run -d --name $N-backend --restart unless-stopped --network $N --network-alias backend --memory 512m \
   -e DATABASE_URL="postgresql://demo:${DEMO_DB_PASSWORD}@$N-db:5432/demo" -e JWT_SECRET="$DEMO_JWT_SECRET" \
-  -e JWT_EXPIRES_IN=12h -e PORT=4000 -e CORS_ORIGIN="$DEMO_ORIGIN" -e COOKIE_SECURE="${DEMO_COOKIE_SECURE:-true}" \
+  -e SESSION_IDLE_MINUTES=60 -e SESSION_MAX_HOURS=12 -e PORT=4000 -e CORS_ORIGIN="$DEMO_ORIGIN" -e COOKIE_SECURE="${DEMO_COOKIE_SECURE:-true}" \
   -e TRUST_PROXY=1 -e UPLOADS_DIR=/data/uploads $IMG-backend:"$APP_VERSION" >/dev/null
 docker run -d --name $N-web --restart unless-stopped --network $N --memory 384m -p 127.0.0.1:19951:3000 \
   $IMG-web:"$APP_VERSION" >/dev/null

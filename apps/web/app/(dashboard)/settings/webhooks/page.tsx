@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { toast } from "@/lib/toast";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { Button } from "@/components/ui/button";
@@ -9,14 +9,28 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWebhookActions, useWebhookDeliveries, useWebhookEvents, useWebhooks } from "@/hooks/use-webhooks";
 import { ApiError } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong");
+// Inline markup helper for translated strings.
+function rich(text: string, tags: Record<string, (children: string) => ReactNode>): ReactNode[] {
+  const out: ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(/<(\w+)>(.*?)<\/\1>/g)) {
+    const at = m.index ?? 0;
+    out.push(text.slice(last, at));
+    out.push(<Fragment key={at}>{tags[m[1]]?.(m[2]) ?? m[2]}</Fragment>);
+    last = at + m[0].length;
+  }
+  out.push(text.slice(last));
+  return out;
+}
 
 function Deliveries({ id }: { id: string }) {
+  const { t, plural } = useI18n();
   const { data } = useWebhookDeliveries(id);
   if (!data) return <Skeleton className="h-10" />;
-  if (data.length === 0) return <p className="text-xs text-muted-foreground">Nothing sent yet.</p>;
+  if (data.length === 0) return <p className="text-xs text-muted-foreground">{t("settings.webhooks.nothingSent")}</p>;
   return (
     <ul className="flex flex-col gap-1 text-xs">
       {data.map((d) => (
@@ -29,7 +43,7 @@ function Deliveries({ id }: { id: string }) {
               d.status === "PENDING" && "text-muted-foreground",
             )}
           >
-            {d.status.toLowerCase()} · {d.attempts} attempt{d.attempts === 1 ? "" : "s"}
+            {d.status.toLowerCase()} · {plural("settings.webhooks.attempts", d.attempts)}
             {d.lastError && ` · ${d.lastError}`}
           </span>
         </li>
@@ -39,6 +53,8 @@ function Deliveries({ id }: { id: string }) {
 }
 
 export default function WebhooksPage() {
+  const { t } = useI18n();
+  const errMsg = (e: unknown) => (e instanceof ApiError ? e.message : t("settings.webhooks.error"));
   const { data: hooks, isLoading } = useWebhooks();
   const { data: allEvents } = useWebhookEvents();
   const { create, setActive, remove, test } = useWebhookActions();
@@ -53,36 +69,35 @@ export default function WebhooksPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-[32px] font-semibold tracking-tight text-foreground">Settings</h1>
-        <p className="text-sm text-muted-foreground">Restaurant, branch, and staff configuration</p>
+        <h1 className="text-[32px] font-semibold tracking-tight text-foreground">{t("settings.webhooks.title")}</h1>
+        <p className="text-sm text-muted-foreground">{t("settings.webhooks.subtitle")}</p>
       </div>
       <SettingsTabs />
 
       <Card className="flex max-w-3xl flex-col gap-4 p-6">
         <div>
-          <h2 className="text-lg font-semibold text-foreground">Webhooks</h2>
+          <h2 className="text-lg font-semibold text-foreground">{t("settings.webhooks.card.title")}</h2>
           <p className="text-sm text-muted-foreground">
-            Send signed events to a URL when something happens — connect accounting, WhatsApp/SMS, payment or
-            delivery tools through an automation service (n8n, Zapier, Make) or your own server.
+            {t("settings.webhooks.card.desc")}
           </p>
         </div>
 
         {secret && (
           <div className="rounded-xl border border-primary/30 bg-primary/5 p-4 text-sm">
-            <p className="font-medium text-foreground">Signing secret — copy it now, it won&rsquo;t be shown again</p>
+            <p className="font-medium text-foreground">{t("settings.webhooks.secret.title")}</p>
             <p className="mt-1 select-all break-all font-mono text-xs">{secret}</p>
             <div className="mt-2 flex gap-2">
-              <Button size="sm" variant="outline" onClick={() => navigator.clipboard.writeText(secret).then(() => toast.success("Copied"))}>
-                Copy
+              <Button size="sm" variant="outline" onClick={() => navigator.clipboard.writeText(secret).then(() => toast.success(t("settings.webhooks.copied")))}>
+                {t("settings.webhooks.copy")}
               </Button>
-              <Button size="sm" onClick={() => setSecret(null)}>Done</Button>
+              <Button size="sm" onClick={() => setSecret(null)}>{t("settings.webhooks.done")}</Button>
             </div>
           </div>
         )}
 
         <div className="flex flex-col gap-3">
-          <Input placeholder="https://example.com/orderrestro-hook" value={url} onChange={(e) => setUrl(e.target.value)} />
-          <Input placeholder="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
+          <Input placeholder={t("settings.webhooks.urlPlaceholder")} value={url} onChange={(e) => setUrl(e.target.value)} />
+          <Input placeholder={t("settings.webhooks.descPlaceholder")} value={description} onChange={(e) => setDescription(e.target.value)} />
           <div className="flex flex-wrap gap-1.5">
             {allEvents?.map((e) => (
               <button
@@ -115,7 +130,7 @@ export default function WebhooksPage() {
                 )
               }
             >
-              Add webhook
+              {t("settings.webhooks.add")}
             </Button>
           </div>
         </div>
@@ -141,36 +156,33 @@ export default function WebhooksPage() {
                       test.mutate(h.id, {
                         onSuccess: (r) =>
                           r.status === "SUCCESS"
-                            ? toast.success(`Receiver answered ${r.lastStatusCode}`)
-                            : toast.error(r.lastError ?? "Receiver did not accept the test (it will be retried)"),
+                            ? toast.success(t("settings.webhooks.receiverAnswered", { code: r.lastStatusCode ?? "" }))
+                            : toast.error(r.lastError ?? t("settings.webhooks.testRejected")),
                         onError: (e) => toast.error(errMsg(e)),
                       })
                     }
                   >
-                    Send test
+                    {t("settings.webhooks.sendTest")}
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => setOpen(open === h.id ? null : h.id)}>Log</Button>
+                  <Button size="sm" variant="outline" onClick={() => setOpen(open === h.id ? null : h.id)}>{t("settings.webhooks.log")}</Button>
                   <Button size="sm" variant="outline" onClick={() => setActive.mutate({ id: h.id, isActive: !h.isActive })}>
-                    {h.isActive ? "Pause" : "Resume"}
+                    {h.isActive ? t("settings.webhooks.pause") : t("settings.webhooks.resume")}
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => confirm("Delete this webhook?") && remove.mutate(h.id)}>Delete</Button>
+                  <Button size="sm" variant="outline" onClick={() => confirm(t("settings.webhooks.deleteConfirm")) && remove.mutate(h.id)}>{t("settings.webhooks.delete")}</Button>
                 </div>
               </div>
               {open === h.id && <Deliveries id={h.id} />}
             </div>
           ))
         ) : (
-          <p className="p-6 text-center text-sm text-muted-foreground">No webhooks yet.</p>
+          <p className="p-6 text-center text-sm text-muted-foreground">{t("settings.webhooks.empty")}</p>
         )}
       </Card>
 
       <Card className="max-w-3xl p-6 text-sm text-muted-foreground">
-        <p className="font-medium text-foreground">Verifying a request</p>
+        <p className="font-medium text-foreground">{t("settings.webhooks.verify.title")}</p>
         <p className="mt-1">
-          Each request has an <code>X-OrderRestro-Signature</code> header: <code>t=&lt;unix time&gt;,v1=&lt;hex&gt;</code>,
-          where <code>v1</code> is the HMAC-SHA256 of <code>{"{t}.{raw body}"}</code> with your signing secret. Reject
-          anything older than five minutes. Failed deliveries are retried up to 6 times (1 min, 5 min, 30 min, 2 h,
-          12 h). Respond with any 2xx to accept.
+          {rich(t("settings.webhooks.verify.body"), { code: (text) => <code>{text}</code> })}
         </p>
       </Card>
     </div>

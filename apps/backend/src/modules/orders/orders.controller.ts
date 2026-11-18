@@ -3,6 +3,7 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -18,6 +19,8 @@ import {
   billPreviewSchema,
   checkoutSchema,
   createOrderSchema,
+  labelPrintSchema,
+  type LabelPrintDto,
   cancelOrderSchema,
   deleteOrdersSchema,
   mergeOrdersSchema,
@@ -32,7 +35,7 @@ import {
   type UpdateOrderDto,
   type UpdateOrderItemDto,
   type SessionUser,
-} from '@nodedr-restaurant/types';
+} from '@nventra/types';
 import { Auth } from '../../common/decorators/auth.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -44,10 +47,11 @@ import {
   buildTestSlip,
   resolveProfile,
   type EscposKotOrder,
-  type EscposReceiptOrder,
   type PrintResult,
 } from './escpos-receipt';
 import { probeNetworkPrinter } from './escpos-network';
+import { buildTspl } from './label-tspl';
+import { buildZpl } from './label-zpl';
 import {
   PrinterNotFoundError,
   findPrinterDescriptor,
@@ -60,11 +64,16 @@ import {
   type BranchPrinterTarget,
 } from './printer-transport';
 import { OrdersService } from './orders.service';
+import { ReceiptEmailService } from './receipt-email.service';
 import { buildKotHtml } from './kot.html';
 import { buildReceiptHtml } from './receipt.html';
+import {
+  toEscposOrder,
+  type BillOverrides,
+  type ReceiptData,
+} from './receipt-order';
 import { VerifactuService } from '../verifactu/verifactu.service';
 
-type ReceiptData = Awaited<ReturnType<OrdersService['getReceiptData']>>;
 
 function branchPrinterProfile(branch: {
   printerPaperWidthMm: number;
@@ -92,64 +101,6 @@ function toKotOrder(order: ReceiptData): EscposKotOrder {
       quantity: item.quantity,
       kitchenNote: item.kitchenNote,
       modifiers: item.modifiers.map((m) => ({ nameSnapshot: m.nameSnapshot })),
-    })),
-  };
-}
-
-// Figures that replace the stored ones on a printed bill (an open order's
-// bill is priced from what the cashier entered, not from what is saved yet).
-type BillOverrides = {
-  subtotal: number;
-  discountAmount: number;
-  discountPercent: number;
-  taxAmount: number;
-  tipAmount: number;
-  loyaltyPointsRedeemed: number;
-  loyaltyDiscountAmount: number;
-  totalAmount: number;
-  amountPaid: number;
-  balanceDue: number;
-  isProvisional: boolean;
-};
-
-function toEscposOrder(
-  order: ReceiptData,
-  overrides?: BillOverrides,
-): EscposReceiptOrder {
-  return {
-    orderNumber: order.orderNumber,
-    type: order.type,
-    createdAt: order.createdAt,
-    table: order.table
-      ? { label: order.table.name ?? `#${order.table.number}` }
-      : null,
-    customer: order.customer
-      ? { name: order.customer.name ?? 'Guest', phone: order.customer.phone }
-      : null,
-    subtotal: Number(order.subtotal),
-    discountAmount: Number(order.discountAmount),
-    taxAmount: Number(order.taxAmount),
-    tipAmount: Number(order.tipAmount),
-    loyaltyPointsRedeemed: order.loyaltyPointsRedeemed,
-    loyaltyDiscountAmount: Number(order.loyaltyDiscountAmount),
-    totalAmount: Number(order.totalAmount),
-    ...overrides,
-    items: order.items.map((item) => ({
-      nameSnapshot: item.nameSnapshot,
-      quantity: item.quantity,
-      unitPriceSnapshot: Number(item.unitPriceSnapshot),
-      lineTotal: Number(item.lineTotal),
-      taxRateSnapshot: Number(item.taxRateSnapshot),
-      modifiers: item.modifiers.map((m) => ({
-        nameSnapshot: m.nameSnapshot,
-        priceAdjSnapshot: Number(m.priceAdjSnapshot),
-      })),
-    })),
-    payments: order.payments.map((p) => ({
-      method: p.method,
-      amount: Number(p.amount),
-      tendered: p.tendered ? Number(p.tendered) : null,
-      changeGiven: p.changeGiven ? Number(p.changeGiven) : null,
     })),
   };
 }
@@ -200,6 +151,7 @@ export class OrdersController {
     private readonly branchAccess: BranchAccessService,
     private readonly kotPrint: KotPrintService,
     private readonly verifactu: VerifactuService,
+    private readonly receiptEmails: ReceiptEmailService,
   ) {}
 
   @Auth('orders.create')
@@ -492,6 +444,32 @@ export class OrdersController {
     res.type('html').send(html);
   }
 
+  // Digital receipt state for the order screen (address masked).
+  @Auth('bills.print')
+  @Get(':id/receipt-email')
+  async receiptEmailStatus(
+    @CurrentUser() user: SessionUser,
+    @Query('branchId') branchId: string,
+    @Param('id') id: string,
+  ) {
+    await this.branchAccess.assertAccess(user.restaurantId, branchId);
+    return this.receiptEmails.status(user.restaurantId, id);
+  }
+
+  // Resend the digital receipt to the address the guest gave (own permission,
+  // rate-limited). Explains itself when the template or feature is off.
+  @Auth('bills.resendReceipt')
+  @Post(':id/receipt-email/resend')
+  @HttpCode(200)
+  async resendReceiptEmail(
+    @CurrentUser() user: SessionUser,
+    @Query('branchId') branchId: string,
+    @Param('id') id: string,
+  ) {
+    await this.branchAccess.assertAccess(user.restaurantId, branchId);
+    return this.receiptEmails.resend(user.restaurantId, id, user.id, branchId);
+  }
+
   @Auth('orders.create')
   @Get(':id/kot')
   async kot(
@@ -600,6 +578,37 @@ export class OrdersController {
     }
     await this.deliver(target, buffer);
     return { ok: true, profile };
+  }
+
+  // Shelf / packaging / expiry labels (ZPL or TSPL) through the branch's
+  // printer transport. Golden-output tested only; not verified on hardware.
+  @Auth('bills.print')
+  @Post('labels/print')
+  async printLabels(
+    @CurrentUser() user: SessionUser,
+    @Body(new ZodValidationPipe(labelPrintSchema)) dto: LabelPrintDto,
+    @Query('branchId') branchId?: string,
+    @Query('via') via?: string,
+  ) {
+    const buffer = dto.language === 'TSPL' ? buildTspl(dto) : buildZpl(dto);
+    if (via === 'preview') {
+      return {
+        ok: true,
+        language: dto.language,
+        commands: buffer.toString('utf8'),
+      };
+    }
+    let target: BranchPrinterTarget = {
+      printerConnection: 'USB',
+      printerHost: null,
+      printerPort: 9100,
+    };
+    if (branchId) {
+      await this.branchAccess.assertAccess(user.restaurantId, branchId);
+      target = await this.ordersService.printerTarget(branchId);
+    }
+    await this.deliver(target, buffer);
+    return { ok: true, language: dto.language, labels: dto.labels.length };
   }
 
   // Opens the cash drawer wired to the thermal printer ("No sale" / test).

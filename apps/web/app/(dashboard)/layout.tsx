@@ -8,8 +8,11 @@ import { BranchProvider, useBranch } from "@/hooks/use-branch";
 import { useRealtime } from "@/hooks/use-realtime";
 import { NativeBridge } from "@/components/native/native-bridge";
 import { BtPrinterDialog } from "@/components/native/bt-printer-dialog";
-import { NAV_ITEMS } from "@/components/layout/nav-items";
+import { IdleLogoutDialog } from "@/components/layout/idle-logout-dialog";
+import { EXTRA_ROUTE_GATES, NAV_ITEMS } from "@/components/layout/nav-items";
 import { canOpen, firstAllowedHref } from "@/lib/route-access";
+
+const ROUTE_GATES = [...NAV_ITEMS, ...EXTRA_ROUTE_GATES];
 
 // Subscribes every route in this layout group to realtime push (order/KOT/
 // table updates) instead of only the one page (KDS) that happened to call
@@ -30,7 +33,7 @@ export default function DashboardGroupLayout({ children }: { children: React.Rea
   const pathname = usePathname();
   const { data, isLoading, isError } = useCurrentUser();
   const permissions = data?.user.permissions;
-  const allowed = !permissions || canOpen(pathname ?? "", permissions, NAV_ITEMS);
+  const allowed = !permissions || canOpen(pathname ?? "", permissions, ROUTE_GATES);
   const fallback = permissions ? firstAllowedHref(permissions, NAV_ITEMS) : undefined;
 
   useEffect(() => {
@@ -66,6 +69,7 @@ export default function DashboardGroupLayout({ children }: { children: React.Rea
       <RealtimeBridge />
       <NativeBridge />
       <BtPrinterDialog />
+      <IdleLogoutDialog />
       <AppShell user={data.user}>{children}</AppShell>
     </BranchProvider>
   );

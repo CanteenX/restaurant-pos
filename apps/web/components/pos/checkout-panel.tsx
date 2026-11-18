@@ -1,6 +1,6 @@
 "use client";
 
-import { kitchenProgress, type PaymentMethodDto } from "@nodedr-restaurant/types";
+import { kitchenProgress, type PaymentMethodDto } from "@nventra/types";
 import { ArrowLeft, CheckCircle2, ChefHat, Pencil, Printer } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -11,6 +11,12 @@ import { Label } from "@/components/ui/label";
 import { QueryError } from "@/components/ui/query-error";
 import { PaymentMethodButtons } from "@/components/pos/payment-method-buttons";
 import { CustomerPicker } from "@/components/pos/customer-picker";
+import { ReceiptEmailField, RECEIPT_EMAIL_PATTERN } from "@/components/pos/receipt-email-field";
+import { useReceiptEmailStatus, useResendReceiptEmail } from "@/hooks/use-receipt-email";
+import { SplitBillDialog } from "@/components/pos/split-bill-dialog";
+import { GatewayUpiQr } from "@/components/pos/gateway-upi-qr";
+import { useAvailableGateways, useOpenGatewayAttempt } from "@/hooks/use-payment-gateway";
+import { gatewayHold, type GatewayQrPhase } from "@/lib/gateway-qr";
 import type { Customer } from "@/hooks/use-customers";
 import { lookupGiftCard } from "@/hooks/use-gift-cards";
 import { CancelOrderDialog, useCanCancelOrders } from "@/components/orders/cancel-order-dialog";
@@ -28,7 +34,8 @@ import { usePrintKot, usePrintOrderUsb, type PrintJobResult } from "@/hooks/use-
 import { useDisplaySettings } from "@/hooks/use-settings";
 import { api, ApiError } from "@/lib/api";
 import { discountSummary, parseMoney, planPayment } from "@/lib/bill";
-import { formatCurrency } from "@/lib/format";
+import { useI18n } from "@/lib/i18n/context";
+import type { TranslationKey } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 import { publishDisplay } from "@/lib/customer-display";
 import { playPaymentReceived } from "@/lib/celebrate";
@@ -40,12 +47,12 @@ import { round2 } from "@/lib/pricing-preview";
 
 const METHODS: PaymentMethodDto[] = ["CASH", "CARD", "UPI", "OTHER"];
 
-const KITCHEN_LABEL: Record<string, string> = {
-  NEW: "Waiting for the kitchen",
-  ACCEPTED: "Kitchen accepted",
-  PREPARING: "Being prepared",
-  READY: "Ready to serve",
-  SERVED: "Served",
+const KITCHEN_LABEL: Record<string, TranslationKey> = {
+  NEW: "pos.kitchen.new",
+  ACCEPTED: "pos.kitchen.accepted",
+  PREPARING: "pos.kitchen.preparing",
+  READY: "pos.kitchen.ready",
+  SERVED: "pos.kitchen.served",
 };
 
 /** Re-evaluates a value after the user has stopped changing it for `ms`. */
@@ -72,6 +79,7 @@ export function CheckoutPanel({
   // The order passed in is a snapshot from when it was sent; the live copy
   // carries edits (removed lines, new totals), payments already taken, the
   // kitchen's progress, and a cancel/pay by someone else.
+  const { t, formatCurrency } = useI18n();
   const { data: live } = useOrder(branchId, orderSnapshot.id);
   const order: CreatedOrder = live
     ? {
@@ -95,6 +103,7 @@ export function CheckoutPanel({
   const [giftCardBalance, setGiftCardBalance] = useState<number | null>(null);
   const [checkingGiftCard, setCheckingGiftCard] = useState(false);
   const [splitCount, setSplitCount] = useState("1");
+  const [splitOpen, setSplitOpen] = useState(false);
   const [customer, setCustomer] = useState<Customer | null>(initialCustomer);
   const [couponInput, setCouponInput] = useState("");
   const [appliedCoupon, setAppliedCoupon] = useState("");
@@ -111,8 +120,8 @@ export function CheckoutPanel({
   const printKot = usePrintKot(branchId);
   const onPrinted = (r: PrintJobResult) =>
     r.unsupportedChars?.length
-      ? toast.warning(`Sent, but ${r.unsupportedChars.join(" ")} cannot be printed by this printer's code page. Use browser print for the full text.`)
-      : toast.success("Sent to the thermal printer");
+      ? toast.warning(t("pos.checkout.printSentUnsupported", { chars: r.unsupportedChars.join(" ") }))
+      : toast.success(t("pos.checkout.printSent"));
   // First print sends only tickets not yet printed. If they already went out
   // (e.g. a double tap or retry) the server refuses to print a duplicate and we
   // offer an explicit, REPRINT-stamped copy instead.
@@ -122,21 +131,32 @@ export function CheckoutPanel({
       {
         onSuccess: (r) => {
           onPrinted(r);
-          if (reprint) toast.success("Reprint sent — marked REPRINT on paper");
+          if (reprint) toast.success(t("pos.checkout.reprintSent"));
         },
         onError: (err) => {
           if (err instanceof ApiError && err.code === "ALREADY_PRINTED") {
-            toast.info("The kitchen ticket was already printed", {
-              action: { label: "Print a REPRINT", onClick: () => printKotNow(true) },
+            toast.info(t("pos.checkout.kotAlreadyPrinted"), {
+              action: { label: t("pos.checkout.printReprint"), onClick: () => printKotNow(true) },
             });
             return;
           }
-          toast.error(err instanceof Error ? err.message : "Could not print to the kitchen printer");
+          toast.error(err instanceof Error ? err.message : t("pos.checkout.kitchenPrintFailed"));
         },
       },
     );
   const [completed, setCompleted] = useState<CheckoutResult | null>(null);
   const { data: settings } = useDisplaySettings(branchId);
+  const receiptsOn = !!settings?.restaurant.digitalReceiptsEnabled;
+  const [receiptEmail, setReceiptEmail] = useState(initialCustomer?.receiptEmail ?? "");
+  const [receiptConsent, setReceiptConsent] = useState(!!initialCustomer?.receiptEmail);
+  const canResendReceipt = hasPermission(me?.user, "bills.resendReceipt");
+  const receiptStatus = useReceiptEmailStatus(completed?.id ?? null, branchId, receiptsOn && !!completed);
+  const resendReceipt = useResendReceiptEmail(order.id, branchId);
+  const selectCustomer = (c: Customer | null) => {
+    setCustomer(c);
+    setReceiptEmail(c?.receiptEmail ?? "");
+    setReceiptConsent(!!c?.receiptEmail);
+  };
 
   // What the guest has typed in, as numbers. Once a payment has been taken the
   // server locks the figures, so these stop mattering (and are not sent).
@@ -178,7 +198,7 @@ export function CheckoutPanel({
       await api.post(`/orders/${order.id}/bill-preview?branchId=${branchId}`, { couponCode: code });
       setAppliedCoupon(code);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not apply coupon");
+      toast.error(err instanceof ApiError ? err.message : t("pos.checkout.couponFailed"));
     }
   };
 
@@ -195,7 +215,7 @@ export function CheckoutPanel({
     try {
       const card = await lookupGiftCard(branchId, giftCardCode);
       if (!card) {
-        toast.error("No gift card found with that code");
+        toast.error(t("pos.checkout.giftCardNotFound"));
         setGiftCardBalance(null);
         return;
       }
@@ -209,14 +229,35 @@ export function CheckoutPanel({
   const upiAmount = plan.valid ? plan.applied : remainingDue;
   const upiVpa = settings?.restaurant.upiVpa;
   const upiName = settings?.restaurant.upiPayeeName || settings?.restaurant.name;
+  // A connected gateway (Razorpay) replaces the static QR with a dynamic one.
+  const { data: gateways } = useAvailableGateways();
+  const gateway = gateways?.[0] ?? null;
+  // The server is the source of truth for an open QR (survives reloads and
+  // method switches, and a gateway switched off with a QR open); the mounted
+  // QR's own phase covers the moment before.
+  const { data: openQr } = useOpenGatewayAttempt(branchId, order.id, remainingDue > 0);
+  const openAttempt = openQr?.attempt ?? null;
+  const [gatewayPhase, setGatewayPhase] = useState<GatewayQrPhase | null>(null);
+  // While a gateway QR can still be paid, any manual payment could collect the
+  // bill twice; the server refuses it too unless the cashier overrides.
+  const [overrideFor, setOverrideFor] = useState<string | null>(null);
+  const hold = gatewayHold({
+    gateway,
+    localPhase: gatewayPhase,
+    serverOpen: openAttempt,
+    overridden: overrideFor === order.id,
+    method,
+  });
+  const overrideQr = hold.live && !hold.held;
+  const manualUpiHeld = hold.held;
   const upiUri =
-    method !== "UPI" || !upiVpa || !(upiAmount > 0)
+    method !== "UPI" || gateway || !upiVpa || !(upiAmount > 0)
       ? null
       : buildUpiUri({
           vpa: upiVpa,
           name: upiName,
           amount: upiAmount,
-          note: `Order ${order.id.slice(-6).toUpperCase()}`,
+          note: t("pos.checkout.upiNote", { ref: order.id.slice(-6).toUpperCase() }),
           ref: order.id,
         });
 
@@ -240,8 +281,20 @@ export function CheckoutPanel({
     return attempt.current.id;
   };
 
+  // Digital receipt: the address goes with the payment only when the guest
+  // agreed; unticking a saved consent withdraws it.
+  const receiptAddress = receiptEmail.trim();
+  const receiptEmailBad = receiptsOn && receiptConsent && receiptAddress !== "" && !RECEIPT_EMAIL_PATTERN.test(receiptAddress);
+  const receiptDto: { receiptEmail?: string; receiptEmailConsent?: boolean } = !receiptsOn
+    ? {}
+    : receiptConsent && receiptAddress !== "" && !receiptEmailBad
+      ? { receiptEmail: receiptAddress, receiptEmailConsent: true }
+      : customer?.receiptEmail && !receiptConsent
+        ? { receiptEmailConsent: false }
+        : {};
+
   const handleCheckout = () => {
-    if (!bill || repricing) return;
+    if (!bill || repricing || manualUpiHeld || receiptEmailBad) return;
     const payments =
       plan.applied > 0
         ? [
@@ -261,6 +314,8 @@ export function CheckoutPanel({
       giftCardCode: giftCardBalance !== null ? giftCardCode : undefined,
       payments,
       allowPartial: plan.partial || undefined,
+      ...(overrideQr ? { overrideOpenGatewayQr: true } : {}),
+      ...receiptDto,
     };
     checkout.mutate(
       { orderId: order.id, dto: { ...dto, requestId: requestIdFor(dto) } },
@@ -272,15 +327,18 @@ export function CheckoutPanel({
             setCompleted(result);
             publishDisplay({ kind: "paid", total: Number(result.totalAmount), method });
             playPaymentReceived(formatCurrency(result.totalAmount));
-            toast.success("Payment recorded");
+            toast.success(t("pos.checkout.paymentRecorded"));
           } else {
             toast.success(
-              `Part payment of ${formatCurrency(result.settlement.amountPaid)} recorded — ${formatCurrency(result.settlement.balanceDue)} still due`,
+              t("pos.checkout.partRecorded", {
+                paid: formatCurrency(result.settlement.amountPaid),
+                due: formatCurrency(result.settlement.balanceDue),
+              }),
             );
           }
         },
         onError: (err) =>
-          toast.error(err instanceof ApiError ? err.message : "Checkout failed"),
+          toast.error(err instanceof ApiError ? err.message : t("pos.checkout.failed")),
       },
     );
   };
@@ -292,7 +350,7 @@ export function CheckoutPanel({
       {
         onSuccess: onPrinted,
         onError: (err) =>
-          toast.error(err instanceof Error ? err.message : "Could not print to the thermal printer"),
+          toast.error(err instanceof Error ? err.message : t("pos.checkout.thermalPrintFailed")),
       },
     );
 
@@ -303,20 +361,45 @@ export function CheckoutPanel({
         <StatusNote note={note} onClear={clearNote} className="w-full text-left" />
         <CheckCircle2 className="h-10 w-10 text-success" />
         <p className="text-lg font-semibold text-foreground">
-          Order #{order.orderNumber} paid
+          {t("pos.checkout.orderPaid", { number: order.orderNumber })}
         </p>
         <p className="text-2xl font-semibold tabular-nums text-foreground">
           {formatCurrency(completed.totalAmount)}
         </p>
         {settlement.changeDue > 0 && (
           <p className="rounded-lg bg-success/10 px-4 py-2 text-lg font-semibold tabular-nums text-success">
-            Change due {formatCurrency(settlement.changeDue)}
+            {t("pos.checkout.changeDue", { amount: formatCurrency(settlement.changeDue) })}
           </p>
         )}
         {Number(completed.loyaltyDiscountAmount) > 0 && (
           <p className="text-xs text-muted-foreground">
-            {completed.loyaltyPointsRedeemed} points redeemed
+            {t("pos.checkout.pointsRedeemed", { count: completed.loyaltyPointsRedeemed })}
           </p>
+        )}
+        {receiptsOn && receiptStatus.data?.hasEmail && (
+          <div className="flex flex-col items-center gap-1 text-xs text-muted-foreground" data-testid="receipt-email-status">
+            <p>
+              {receiptStatus.data.status === "SENT"
+                ? t("pos.checkout.receiptEmail.sentTo", { email: receiptStatus.data.maskedEmail ?? "" })
+                : t("pos.checkout.receiptEmail.notSent", { email: receiptStatus.data.maskedEmail ?? "" })}
+            </p>
+            {canResendReceipt && (
+              <Button
+                variant="outline"
+                className="h-11"
+                disabled={resendReceipt.isPending}
+                onClick={() =>
+                  resendReceipt.mutate(undefined, {
+                    onSuccess: () => toast.success(t("pos.checkout.receiptEmail.resent")),
+                    onError: (err) =>
+                      toast.error(err instanceof ApiError ? err.message : t("pos.checkout.receiptEmail.resendFailed")),
+                  })
+                }
+              >
+                {t("pos.checkout.receiptEmail.resend")}
+              </Button>
+            )}
+          </div>
         )}
         <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
           <Button
@@ -324,7 +407,7 @@ export function CheckoutPanel({
             className="h-11"
             onClick={() => branchId && openReceiptPrint(completed.id, branchId)}
           >
-            {phone ? "Print / Save PDF" : "Print receipt (browser)"}
+            {phone ? t("pos.checkout.printReceiptPhone") : t("pos.checkout.printReceiptBrowser")}
           </Button>
           <Button
             variant="outline"
@@ -334,13 +417,13 @@ export function CheckoutPanel({
               printUsb.mutate({ orderId: completed.id, drawer: completed.payments?.some((p) => p.method === "CASH") }, {
                 onSuccess: onPrinted,
                 onError: (err) =>
-                  toast.error(err instanceof Error ? err.message : "Could not print to the thermal printer"),
+                  toast.error(err instanceof Error ? err.message : t("pos.checkout.thermalPrintFailed")),
               })
             }
           >
-            {printUsb.isPending ? "Printing…" : phone ? "Bluetooth receipt" : "Thermal receipt"}
+            {printUsb.isPending ? t("pos.checkout.printing") : phone ? t("pos.checkout.receiptBluetooth") : t("pos.checkout.receiptThermal")}
           </Button>
-          <Button className="h-11" onClick={onDone}>New order</Button>
+          <Button className="h-11" onClick={onDone}>{t("pos.checkout.newOrder")}</Button>
         </div>
       </div>
     );
@@ -352,21 +435,23 @@ export function CheckoutPanel({
       <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
         <StatusNote note={note} onClear={clearNote} className="w-full text-left" />
         <p className="text-sm font-medium text-foreground">
-          Order #{order.orderNumber} was {order.status === "CANCELLED" ? "cancelled" : "already paid"}
+          {order.status === "CANCELLED"
+            ? t("pos.checkout.orderCancelled", { number: order.orderNumber })
+            : t("pos.checkout.orderAlreadyPaid", { number: order.orderNumber })}
         </p>
         <p className="text-xs text-muted-foreground">
           {order.status === "CANCELLED"
-            ? "The kitchen tickets were withdrawn and the table is free again. The order stays in History."
-            : "Nothing more to do here."}
+            ? t("pos.checkout.cancelledDetail")
+            : t("pos.checkout.nothingToDo")}
         </p>
-        <Button className="h-11" onClick={onDone}>Done</Button>
+        <Button className="h-11" onClick={onDone}>{t("common.done")}</Button>
       </div>
     );
   }
 
   const kitchen = live ? kitchenProgress(live.kots.map((k) => k.status)) : null;
   const paidSoFar = live?.payments ?? [];
-  const partialLabel = `Record partial payment · ${formatCurrency(plan.applied)}`;
+  const partialLabel = t("pos.checkout.partialLabel", { amount: formatCurrency(plan.applied) });
 
   return (
     <div className="flex h-full flex-col gap-5 overflow-y-auto">
@@ -380,13 +465,13 @@ export function CheckoutPanel({
           onClick={onDone}
         >
           <ArrowLeft className="h-4 w-4" />
-          Back
+          {t("common.back")}
         </Button>
         <div className="flex flex-wrap justify-end gap-2">
           {canEditRole && !locked && (
             <Button type="button" variant="outline" size="sm" onClick={() => setEditOpen(true)}>
               <Pencil className="h-4 w-4" />
-              Edit bill
+              {t("pos.checkout.editBill")}
             </Button>
           )}
           {canCancelRole && !locked && (
@@ -397,7 +482,7 @@ export function CheckoutPanel({
               className="text-destructive hover:text-destructive"
               onClick={() => setCancelOpen(true)}
             >
-              Cancel order
+              {t("pos.checkout.cancelOrder")}
             </Button>
           )}
         </div>
@@ -414,11 +499,11 @@ export function CheckoutPanel({
       <div>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-sm text-muted-foreground">Order #{order.orderNumber} sent to kitchen</p>
+            <p className="text-sm text-muted-foreground">{t("pos.checkout.sentToKitchen", { number: order.orderNumber })}</p>
             {kitchen && (
               <p className="mt-0.5 flex items-center gap-1.5 text-xs font-medium text-foreground">
                 <ChefHat className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                {KITCHEN_LABEL[kitchen]}
+                {KITCHEN_LABEL[kitchen] ? t(KITCHEN_LABEL[kitchen]) : kitchen}
               </p>
             )}
           </div>
@@ -431,7 +516,7 @@ export function CheckoutPanel({
             onClick={() => branchId && openKotPrint(order.id, branchId)}
           >
             <Printer className="h-4 w-4" />
-            {phone ? "KOT / PDF" : "KOT (browser)"}
+            {phone ? t("pos.checkout.kotPhone") : t("pos.checkout.kotBrowser")}
           </Button>
           <Button
             type="button"
@@ -442,21 +527,20 @@ export function CheckoutPanel({
             onClick={() => printKotNow(false)}
           >
             <Printer className="h-4 w-4" />
-            {printKot.isPending ? "Printing…" : phone ? "KOT (Bluetooth)" : "KOT (thermal)"}
+            {printKot.isPending ? t("pos.checkout.printing") : phone ? t("pos.checkout.kotBluetooth") : t("pos.checkout.kotThermal")}
           </Button>
           </div>
         </div>
         {!locked && (
           <p className="mt-2 rounded-lg bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
-            No need to pay right now — tap <span className="font-medium text-foreground">Back</span> to
-            help another table and come bill this one later from here or the Tables page.
+            {t("pos.checkout.noNeedToPay", { back: t("common.back") })}
           </p>
         )}
       </div>
 
       {paidSoFar.length > 0 && (
         <div className="rounded-xl border border-border px-3 py-2">
-          <p className="text-xs font-medium text-muted-foreground">Payments so far</p>
+          <p className="text-xs font-medium text-muted-foreground">{t("pos.checkout.paymentsSoFar")}</p>
           <ul className="mt-1 flex flex-col gap-0.5 text-sm">
             {paidSoFar.map((p) => (
               <li key={p.id} className="flex justify-between tabular-nums">
@@ -466,18 +550,27 @@ export function CheckoutPanel({
             ))}
           </ul>
           <p className="mt-1 text-xs text-muted-foreground">
-            Discount, tip and points are locked until this bill is settled.
+            {t("pos.checkout.lockedNote")}
           </p>
         </div>
       )}
 
-      <CustomerPicker branchId={branchId} customer={customer} onSelect={setCustomer} />
+      <CustomerPicker branchId={branchId} customer={customer} onSelect={selectCustomer} />
+
+      {receiptsOn && (
+        <ReceiptEmailField
+          email={receiptEmail}
+          consent={receiptConsent}
+          onEmail={setReceiptEmail}
+          onConsent={setReceiptConsent}
+        />
+      )}
 
       <div className="grid grid-cols-2 gap-4">
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-2">
-            <Label htmlFor="discount">Discount</Label>
-            <div role="group" aria-label="Discount type" className="flex overflow-hidden rounded-lg border border-border text-xs">
+            <Label htmlFor="discount">{t("pos.checkout.discount")}</Label>
+            <div role="group" aria-label={t("pos.checkout.discountType")} className="flex overflow-hidden rounded-lg border border-border text-xs">
               {(["PERCENT", "FLAT"] as const).map((m) => (
                 <button
                   key={m}
@@ -493,7 +586,7 @@ export function CheckoutPanel({
                     discountMode === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary",
                   )}
                 >
-                  {m === "PERCENT" ? "%" : "₹ Cash"}
+                  {m === "PERCENT" ? "%" : t("pos.checkout.discountFlat")}
                 </button>
               ))}
             </div>
@@ -510,7 +603,7 @@ export function CheckoutPanel({
             onChange={(e) => setDiscountValue(e.target.value)}
           />
           {canDiscount && !locked && (
-            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Discount presets">
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label={t("pos.checkout.discountPresets")}>
               {(discountMode === "PERCENT" ? [5, 10, 15, 20] : [10, 20, 50, 100]).map((v) => (
                 <button
                   key={v}
@@ -524,12 +617,12 @@ export function CheckoutPanel({
             </div>
           )}
           {!canDiscount && (
-            <p className="text-[11px] text-muted-foreground">Your role cannot apply discounts.</p>
+            <p className="text-[11px] text-muted-foreground">{t("pos.checkout.noDiscountRole")}</p>
           )}
           {canDiscount && !locked && Number(discountValue) > 0 && (
             <Input
-              aria-label="Discount reason"
-              placeholder="Reason for discount"
+              aria-label={t("pos.checkout.discountReason")}
+              placeholder={t("pos.checkout.discountReasonPlaceholder")}
               maxLength={200}
               className="h-9 text-sm"
               value={discountReason}
@@ -538,7 +631,7 @@ export function CheckoutPanel({
           )}
         </div>
         <div className="flex flex-col gap-2">
-          <Label htmlFor="tip">Tip</Label>
+          <Label htmlFor="tip">{t("pos.checkout.tip")}</Label>
           <Input
             id="tip"
             type="number"
@@ -554,7 +647,7 @@ export function CheckoutPanel({
       {customer && customer.loyaltyPoints > 0 && !locked && (
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <Label htmlFor="points">Redeem loyalty points</Label>
+            <Label htmlFor="points">{t("pos.checkout.redeemPoints")}</Label>
             <button
               type="button"
               className="text-xs font-medium text-primary hover:underline"
@@ -562,7 +655,7 @@ export function CheckoutPanel({
                 setPointsToRedeem(String(Math.min(customer.loyaltyPoints, Math.floor(bill?.totalDue ?? 0))))
               }
             >
-              Max ({customer.loyaltyPoints} available)
+              {t("pos.checkout.maxPoints", { count: customer.loyaltyPoints })}
             </button>
           </div>
           <Input
@@ -579,14 +672,14 @@ export function CheckoutPanel({
 
       {canDiscount && !locked && (
         <div className="flex flex-col gap-2">
-          <Label htmlFor="coupon">Coupon code (optional)</Label>
+          <Label htmlFor="coupon">{t("pos.checkout.couponLabel")}</Label>
           <div className="flex gap-2">
             <Input
               id="coupon"
               className="h-11"
               value={couponInput}
               onChange={(e) => setCouponInput(e.target.value)}
-              placeholder="e.g. SAVE10"
+              placeholder={t("pos.checkout.couponPlaceholder")}
             />
             <Button
               type="button"
@@ -595,7 +688,7 @@ export function CheckoutPanel({
               disabled={!couponInput.trim() && !appliedCoupon}
               onClick={applyCoupon}
             >
-              Apply
+              {t("pos.checkout.apply")}
             </Button>
           </div>
         </div>
@@ -603,7 +696,7 @@ export function CheckoutPanel({
 
       {!locked && (
         <div className="flex flex-col gap-2">
-          <Label htmlFor="gift-card">Gift card code (optional)</Label>
+          <Label htmlFor="gift-card">{t("pos.checkout.giftCardLabel")}</Label>
           <div className="flex gap-2">
             <Input
               id="gift-card"
@@ -613,7 +706,7 @@ export function CheckoutPanel({
                 setGiftCardCode(e.target.value);
                 setGiftCardBalance(null);
               }}
-              placeholder="e.g. 8A7B629E8EEA"
+              placeholder={t("pos.checkout.giftCardPlaceholder")}
             />
             <Button
               type="button"
@@ -622,12 +715,12 @@ export function CheckoutPanel({
               disabled={!giftCardCode || checkingGiftCard}
               onClick={checkGiftCard}
             >
-              {checkingGiftCard ? "…" : "Check"}
+              {checkingGiftCard ? "…" : t("pos.checkout.check")}
             </Button>
           </div>
           {giftCardBalance !== null && (
             <p className="text-xs text-success">
-              Balance {formatCurrency(giftCardBalance)} — applying {formatCurrency(giftCardApplied)}
+              {t("pos.checkout.giftCardBalance", { balance: formatCurrency(giftCardBalance), applied: formatCurrency(giftCardApplied) })}
             </p>
           )}
         </div>
@@ -636,7 +729,7 @@ export function CheckoutPanel({
       {billQuery.isError && !bill ? (
         <QueryError
           error={billQuery.error}
-          what="the bill"
+          what={t("pos.checkout.theBill")}
           onRetry={() => void billQuery.refetch()}
           retrying={billQuery.isFetching}
         />
@@ -644,14 +737,14 @@ export function CheckoutPanel({
         <>
           {remainingDue > 0 && (
             <div className="flex flex-col gap-2">
-              <Label>Payment method</Label>
+              <Label>{t("pos.checkout.paymentMethod")}</Label>
               <PaymentMethodButtons methods={METHODS} value={method} onChange={setMethod} />
             </div>
           )}
 
           {remainingDue > 0 && (
             <div className="flex flex-col gap-2">
-              <Label htmlFor="amount">{method === "CASH" ? "Cash received" : "Amount to pay now"}</Label>
+              <Label htmlFor="amount">{method === "CASH" ? t("pos.checkout.cashReceived") : t("pos.checkout.amountNow")}</Label>
               <Input
                 id="amount"
                 type="number"
@@ -665,35 +758,47 @@ export function CheckoutPanel({
               />
               {plan.valid && plan.change > 0 && (
                 <p className="rounded-lg bg-success/10 px-3 py-2 text-base font-semibold tabular-nums text-success" role="status">
-                  Change due {formatCurrency(plan.change)}
+                  {t("pos.checkout.changeDue", { amount: formatCurrency(plan.change) })}
                 </p>
               )}
               {plan.valid && plan.partial && (
                 <p className="rounded-lg bg-warning/10 px-3 py-2 text-sm text-warning" role="status">
-                  Part payment — {formatCurrency(plan.balanceAfter)} will stay due and the table stays open.
+                  {t("pos.checkout.partPayment", { amount: formatCurrency(plan.balanceAfter) })}
                 </p>
               )}
               {plan.clamped && (
                 <p className="text-xs text-muted-foreground" role="status">
-                  {method} can only pay the balance ({formatCurrency(remainingDue)}); only that will be charged.
+                  {t("pos.checkout.clamped", { method, amount: formatCurrency(remainingDue) })}
                 </p>
               )}
             </div>
           )}
 
-          {method === "UPI" && remainingDue > 0 && (
+          {method === "UPI" && remainingDue > 0 && !(manualUpiHeld && !gateway) && (
             <div className="flex flex-col items-center gap-2 rounded-xl border border-border bg-white p-4">
-              {upiUri ? (
+              {gateway && (
+                <GatewayUpiQr
+                  gateway={gateway}
+                  branchId={branchId}
+                  orderId={order.id}
+                  amount={upiAmount}
+                  isPartial={upiAmount < remainingDue}
+                  resume={openAttempt}
+                  onPhaseChange={setGatewayPhase}
+                />
+              )}
+              {!gateway && upiUri && (
                 <>
                   <QRCodeSVG value={upiUri} size={176} level="M" marginSize={1} />
                   <p className="text-xs font-medium text-[#17251d]">
-                    Scan with any UPI app · {formatCurrency(upiAmount)} pre-filled
+                    {t("pos.checkout.upiScan", { amount: formatCurrency(upiAmount) })}
                   </p>
-                  <p className="text-[11px] text-neutral-500">Also shown on the customer display</p>
+                  <p className="text-[11px] text-neutral-500">{t("pos.checkout.upiOnDisplay")}</p>
                 </>
-              ) : (
+              )}
+              {!gateway && !upiUri && (
                 <p className="text-center text-xs text-neutral-600">
-                  No UPI id set yet. <Link href="/settings" className="font-medium underline">Add your UPI id in Settings → Restaurant</Link> to show a payment QR here.
+                  {t("pos.checkout.noUpiBefore")} <Link href="/settings" className="font-medium underline">{t("pos.checkout.noUpiLink")}</Link> {t("pos.checkout.noUpiAfter")}
                 </p>
               )}
             </div>
@@ -701,7 +806,7 @@ export function CheckoutPanel({
 
           <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
             <Label htmlFor="split" className="text-xs text-muted-foreground">
-              Split between
+              {t("pos.checkout.splitBetween")}
             </Label>
             <div className="flex items-center gap-2">
               <Input
@@ -712,13 +817,32 @@ export function CheckoutPanel({
                 onChange={(e) => setSplitCount(e.target.value)}
                 className="h-8 w-16 text-center"
               />
-              <span className="text-xs text-muted-foreground">guests</span>
+              <span className="text-xs text-muted-foreground">{t("pos.checkout.guests")}</span>
             </div>
           </div>
+          {bill && (live?.items.length ?? 0) > 0 && (
+            <>
+              <Button type="button" variant="outline" className="h-10" onClick={() => setSplitOpen(true)}>
+                {t("pos.checkout.splitByGuest")}
+              </Button>
+              <SplitBillDialog
+                open={splitOpen}
+                onOpenChange={setSplitOpen}
+                lines={(live?.items ?? []).map((i) => ({
+                  id: i.id,
+                  name: i.nameSnapshot,
+                  quantity: i.quantity,
+                  total: Number(i.lineTotal),
+                }))}
+                bill={{ subtotal: bill.subtotal, taxAmount: bill.taxAmount, totalDue: bill.totalDue }}
+                balanceDue={remainingDue}
+                onPickAmount={(amt) => setAmountText(String(amt))}
+              />
+            </>
+          )}
           {split > 1 && bill && (
             <p className="-mt-2 text-center text-xs text-muted-foreground">
-              {formatCurrency(round2(balance / split))} each — enter each guest&apos;s share as a part
-              payment, or collect separately and complete payment once for the whole table.
+              {t("pos.checkout.splitHint", { amount: formatCurrency(round2(balance / split)) })}
             </p>
           )}
         </>
@@ -734,10 +858,10 @@ export function CheckoutPanel({
             className="h-11"
             disabled={!bill}
             onClick={printBill}
-            title="Prints the bill for the guest. Nothing is charged and the table stays open."
+            title={t("pos.checkout.printBillTitle")}
           >
             <Printer className="h-4 w-4" />
-            {phone ? "Print / Save PDF" : "Print bill"}
+            {phone ? t("pos.checkout.printReceiptPhone") : t("pos.checkout.printBill")}
           </Button>
           <Button
             type="button"
@@ -745,10 +869,10 @@ export function CheckoutPanel({
             className="h-11"
             disabled={!bill || printUsb.isPending}
             onClick={printBillThermal}
-            title="Prints the bill on the thermal printer. Nothing is charged and the cash drawer stays shut."
+            title={t("pos.checkout.printBillThermalTitle")}
           >
             <Printer className="h-4 w-4" />
-            {printUsb.isPending ? "Printing…" : phone ? "Print bill (Bluetooth)" : "Print bill (thermal)"}
+            {printUsb.isPending ? t("pos.checkout.printing") : phone ? t("pos.checkout.printBillBluetooth") : t("pos.checkout.printBillThermal")}
           </Button>
         </div>
 
@@ -756,20 +880,33 @@ export function CheckoutPanel({
 
       {/* Pinned to the bottom of the scrolling panel on phones, so billing is always one tap away. */}
       <div className="sticky bottom-0 z-10 -mx-1 bg-card px-1 pb-1 pt-2 max-lg:border-t max-lg:border-border max-lg:shadow-[0_-8px_12px_-10px_rgba(0,0,0,0.25)]">
+        {hold.live && (
+          <div className="mb-2 flex flex-col items-center gap-1 text-center" data-testid="gateway-qr-hold">
+            <p id="manual-upi-held" className="text-xs text-muted-foreground" role="status">
+              {overrideQr ? t("pos.gatewayQr.overrideOn") : t("pos.gatewayQr.manualHeld", { gateway: hold.gatewayName ?? "" })}
+            </p>
+            {hold.showOverride && (
+              <Button variant="outline" size="sm" onClick={() => setOverrideFor(order.id)}>
+                {t("pos.gatewayQr.override")}
+              </Button>
+            )}
+          </div>
+        )}
         <Button
           className="h-12 w-full text-base"
-          disabled={checkout.isPending || !bill || repricing || !plan.valid}
+          disabled={checkout.isPending || !bill || repricing || !plan.valid || manualUpiHeld}
           onClick={handleCheckout}
+          aria-describedby={manualUpiHeld ? "manual-upi-held" : undefined}
         >
           {checkout.isPending
-            ? "Processing…"
+            ? t("pos.checkout.processing")
             : plan.partial
               ? partialLabel
               : plan.change > 0
-                ? `Complete payment · change ${formatCurrency(plan.change)}`
+                ? t("pos.checkout.completeChange", { amount: formatCurrency(plan.change) })
                 : bill
-                  ? `Complete payment · ${formatCurrency(bill.totalDue)}`
-                  : "Complete payment"}
+                  ? t("pos.checkout.completeAmount", { amount: formatCurrency(bill.totalDue) })
+                  : t("pos.checkout.complete")}
         </Button>
       </div>
     </div>
@@ -786,50 +923,51 @@ function BillSummary({
   giftCardApplied: number;
   pending: boolean;
 }) {
+  const { t, formatCurrency } = useI18n();
   if (!bill) {
-    return <p className="text-sm text-muted-foreground">Pricing the bill…</p>;
+    return <p className="text-sm text-muted-foreground">{t("pos.checkout.pricing")}</p>;
   }
   const source = bill.couponCode
-    ? `coupon ${bill.couponCode}`
+    ? t("pos.checkout.sourceCoupon", { code: bill.couponCode })
     : bill.promotionName
       ? bill.promotionName
       : bill.discountType === "FIXED"
-        ? "flat discount"
+        ? t("pos.checkout.sourceFlat")
         : null;
   return (
     <div className={pending ? "opacity-70" : undefined} aria-busy={pending}>
       <dl className="flex flex-col gap-1 text-sm">
-        <Row label="Subtotal" value={formatCurrency(bill.subtotal)} />
+        <Row label={t("pos.checkout.subtotal")} value={formatCurrency(bill.subtotal)} />
         {bill.discountAmount > 0 && (
           <Row
-            label={`Discount${source ? ` (${source})` : ""}`}
+            label={`${t("pos.checkout.discount")}${source ? ` (${source})` : ""}`}
             value={`− ${discountSummary(bill.discountPercent, bill.discountAmount, formatCurrency)}`}
             accent
           />
         )}
-        <Row label="Tax (included)" value={formatCurrency(bill.taxAmount)} muted />
+        <Row label={t("pos.checkout.taxIncluded")} value={formatCurrency(bill.taxAmount)} muted />
         {bill.loyaltyDiscountAmount > 0 && (
           <Row
-            label={`Loyalty (${bill.loyaltyPointsRedeemed} pts)`}
+            label={t("pos.checkout.loyalty", { points: bill.loyaltyPointsRedeemed })}
             value={`− ${formatCurrency(bill.loyaltyDiscountAmount)}`}
             accent
           />
         )}
-        {bill.tipAmount > 0 && <Row label="Tip" value={formatCurrency(bill.tipAmount)} />}
-        {bill.deliveryFee > 0 && <Row label="Delivery fee" value={formatCurrency(bill.deliveryFee)} />}
+        {bill.tipAmount > 0 && <Row label={t("pos.checkout.tip")} value={formatCurrency(bill.tipAmount)} />}
+        {bill.deliveryFee > 0 && <Row label={t("pos.checkout.deliveryFee")} value={formatCurrency(bill.deliveryFee)} />}
       </dl>
       <div className="mt-2 flex items-center justify-between border-t border-border pt-2">
-        <span className="text-sm font-medium text-foreground">Total due</span>
+        <span className="text-sm font-medium text-foreground">{t("pos.checkout.totalDue")}</span>
         <span className="text-lg font-semibold tabular-nums text-foreground">{formatCurrency(bill.totalDue)}</span>
       </div>
       {bill.amountPaid > 0 && (
         <dl className="mt-1 flex flex-col gap-1 text-sm">
-          <Row label="Paid so far" value={formatCurrency(bill.amountPaid)} />
+          <Row label={t("pos.checkout.paidSoFar")} value={formatCurrency(bill.amountPaid)} />
         </dl>
       )}
-      {giftCardApplied > 0 && <Row label="Gift card" value={`− ${formatCurrency(giftCardApplied)}`} accent />}
+      {giftCardApplied > 0 && <Row label={t("pos.checkout.giftCard")} value={`− ${formatCurrency(giftCardApplied)}`} accent />}
       <div className="mt-1 flex items-center justify-between">
-        <span className="text-sm text-muted-foreground">Balance due</span>
+        <span className="text-sm text-muted-foreground">{t("pos.checkout.balanceDue")}</span>
         <span className="text-base font-semibold tabular-nums text-foreground">
           {formatCurrency(Math.max(round2(bill.balanceDue - giftCardApplied), 0))}
         </span>

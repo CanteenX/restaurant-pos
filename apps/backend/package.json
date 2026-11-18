@@ -1,7 +1,7 @@
 {
-  "name": "@nodedr-restaurant/backend",
+  "name": "@nventra/backend",
   "version": "0.0.1",
-  "description": "Nodedr OrderRestro API",
+  "description": "Nventra POS API",
   "author": "Raktim Ranjit <mail@raktimranjit.com> (https://github.com/Raktim94)",
   "private": true,
   "license": "AGPL-3.0-only",
@@ -13,7 +13,8 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
+    "lint:fix": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -23,7 +24,10 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "prisma:seed": "ts-node prisma/seed.ts"
+    "db:upgrade-identity": "ts-node src/system/db-identity-upgrade.cli.ts",
+    "reset-owner-password": "ts-node src/system/reset-owner-password.cli.ts",
+    "prisma:seed": "ts-node prisma/seed.ts",
+    "mock:aggregator": "ts-node test/mocks/run-aggregator-mock.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1110.0",
@@ -39,7 +43,7 @@
     "@nestjs/swagger": "^8.1.1",
     "@nestjs/throttler": "^6.7.0",
     "@nestjs/websockets": "^11.2.6",
-    "@nodedr-restaurant/types": "workspace:*",
+    "@nventra/types": "workspace:*",
     "@prisma/client": "^6.19.3",
     "archiver": "^7.0.1",
     "bcrypt": "^6.0.0",
@@ -47,9 +51,10 @@
     "class-validator": "^0.14.4",
     "cookie-parser": "^1.4.7",
     "exceljs": "^4.4.0",
+    "graphql": "16.11.0",
     "helmet": "^8.3.0",
     "multer": "^2.5.0",
-    "node-forge": "^1.4.2",
+    "node-forge": "^1.4.3",
     "nodemailer": "^10.1.4",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
@@ -114,6 +119,10 @@
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "roots": [
+      "<rootDir>",
+      "<rootDir>/../test/mocks"
+    ]
   }
 }

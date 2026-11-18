@@ -4,3 +4,4 @@
 Dockerfile text eol=lf
 **/Dockerfile text eol=lf
 updater/** text eol=lf
+apps/backend/src/**/__golden__/** text eol=lf

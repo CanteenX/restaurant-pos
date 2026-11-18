@@ -4,6 +4,8 @@ import { AlertTriangle } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { ImportCsvDialog } from "@/components/imports/import-csv-dialog";
+import Link from "next/link";
+import { buttonVariants } from "@/components/ui/button";
 import { AddIngredientDialog } from "@/components/inventory/add-ingredient-dialog";
 import { AdjustStockDialog } from "@/components/inventory/adjust-stock-dialog";
 import { InventoryTabs } from "@/components/inventory/inventory-tabs";
@@ -23,8 +25,10 @@ import { hasPermission, useCurrentUser } from "@/hooks/use-auth";
 import { useBranch } from "@/hooks/use-branch";
 import { useIngredients, useTrackingStatus } from "@/hooks/use-inventory";
 import { formatCurrency } from "@/lib/format";
+import { useI18n } from "@/lib/i18n/context";
 
 function InventoryView() {
+  const { t, plural } = useI18n();
   const { branchId } = useBranch();
   const { data: me } = useCurrentUser();
   const canImport = hasPermission(me?.user, "inventory.manage");
@@ -45,12 +49,15 @@ function InventoryView() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[32px] font-semibold tracking-tight text-foreground">Inventory</h1>
+          <h1 className="text-[32px] font-semibold tracking-tight text-foreground">{t("inv.title")}</h1>
           <p className="text-sm text-muted-foreground">
-            Ingredients, recipe costing, purchase orders, and waste
+            {t("inv.subtitle")}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Link href="/labels?source=inventory" className={buttonVariants({ variant: "outline" })}>
+            {t("inv.printLabels")}
+          </Link>
           {canImport && <ImportCsvDialog kind="ingredients" branchId={branchId} />}
           <AddIngredientDialog branchId={branchId} />
         </div>
@@ -63,10 +70,10 @@ function InventoryView() {
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
           <div className="flex flex-col gap-1">
             <p className="font-medium text-foreground">
-              {trackingStatus.problems.length} stock-tracked menu item{trackingStatus.problems.length === 1 ? "" : "s"} will deduct nothing when sold
+              {plural("inv.untrackedItems", trackingStatus.problems.length)}
             </p>
             <p className="text-muted-foreground">
-              Add a recipe or pick the stock item (Menu → Edit item → Stock when sold):{" "}
+              {t("inv.untrackedHint")}{" "}
               {trackingStatus.problems.map((p) => p.name).join(", ")}
             </p>
           </div>
@@ -75,7 +82,7 @@ function InventoryView() {
 
       <div className="flex flex-wrap items-center gap-3">
         <Input
-          placeholder="Search ingredients…"
+          placeholder={t("inv.searchIngredients")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="max-w-sm"
@@ -91,7 +98,7 @@ function InventoryView() {
               : "border-border text-muted-foreground hover:bg-secondary")
           }
         >
-          Low stock only
+          {t("inv.lowStockOnly")}
         </button>
       </div>
 
@@ -106,12 +113,12 @@ function InventoryView() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Ingredient</TableHead>
-                <TableHead>Unit</TableHead>
-                <TableHead className="text-right">Current stock</TableHead>
-                <TableHead className="text-right">Reorder level</TableHead>
-                <TableHead className="text-right">Avg. cost / unit</TableHead>
-                <TableHead className="text-right">Stock value</TableHead>
+                <TableHead>{t("inv.col.ingredient")}</TableHead>
+                <TableHead>{t("inv.col.unit")}</TableHead>
+                <TableHead className="text-right">{t("inv.col.currentStock")}</TableHead>
+                <TableHead className="text-right">{t("inv.col.reorderLevel")}</TableHead>
+                <TableHead className="text-right">{t("inv.col.avgCost")}</TableHead>
+                <TableHead className="text-right">{t("inv.col.stockValue")}</TableHead>
                 <TableHead />
               </TableRow>
             </TableHeader>
@@ -126,7 +133,7 @@ function InventoryView() {
                         {isLow && (
                           <Badge variant="destructive" className="gap-1">
                             <AlertTriangle className="h-3 w-3" />
-                            Low stock
+                            {t("inv.lowStock")}
                           </Badge>
                         )}
                       </div>
@@ -152,9 +159,9 @@ function InventoryView() {
           </Table>
         ) : (
           <div className="flex flex-col items-center gap-2 py-16 text-center">
-            <p className="text-sm font-medium text-foreground">No ingredients yet</p>
+            <p className="text-sm font-medium text-foreground">{t("inv.empty.title")}</p>
             <p className="text-sm text-muted-foreground">
-              Add your raw materials to start recipe costing and stock tracking.
+              {t("inv.empty.body")}
             </p>
           </div>
         )}

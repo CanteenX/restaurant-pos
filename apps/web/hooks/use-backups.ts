@@ -1,6 +1,6 @@
 "use client";
 
-import type { RestoreBackupDto, SetBackupConfigDto } from "@nodedr-restaurant/types";
+import type { RestoreBackupDto, SetBackupConfigDto } from "@nventra/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
@@ -105,3 +105,18 @@ export function backupDownloadUrl(id: string): string {
 
 // Fresh on-demand backup streamed to the browser (no S3 needed).
 export const LOCAL_BACKUP_URL = "/api/v1/backups/export";
+
+export interface LocalBackupStatus {
+  enabled: boolean;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastFailureReason: string | null;
+}
+
+export function useLocalBackupStatus(enabled = true) {
+  return useQuery({
+    enabled,
+    queryKey: ["backups", "local-status"],
+    queryFn: () => api.get<LocalBackupStatus>("/backups/local/status"),
+  });
+}

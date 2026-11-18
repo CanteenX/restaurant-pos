@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { PERMISSIONS } from '@nodedr-restaurant/types';
+import { PERMISSIONS } from '@nventra/types';
 import { PrismaService } from '../prisma/prisma.service';
 
 // Roles this deep are meant to always hold every permission that exists —
@@ -17,6 +17,9 @@ const ALWAYS_FULL_ACCESS_ROLES = ['OWNER', 'ADMINISTRATOR'] as const;
 // admin who later removes it is not overruled on the next restart.
 const GRANT_WHEN_CREATED: Record<string, string[]> = {
   'delivery.rider': ['DELIVERY_STAFF'],
+  'memberships.manage': ['RESTAURANT_MANAGER'],
+  'expenses.approve': ['RESTAURANT_MANAGER'],
+  'petty_cash.manage': ['RESTAURANT_MANAGER', 'ACCOUNTANT'],
 };
 
 @Injectable()

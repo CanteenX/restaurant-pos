@@ -15,7 +15,7 @@ import {
   customerAddressUpdateSchema,
   customerSchema,
   type SessionUser,
-} from '@nodedr-restaurant/types';
+} from '@nventra/types';
 import { Auth } from '../../common/decorators/auth.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -76,7 +76,7 @@ export class CustomersController {
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
-    return this.customersService.create(branchId, body as never);
+    return this.customersService.create(branchId, body as never, user.id);
   }
 
   @Auth('customers.manage')
@@ -89,7 +89,7 @@ export class CustomersController {
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
-    return this.customersService.update(branchId, id, body as never);
+    return this.customersService.update(branchId, id, body as never, user.id);
   }
 
   @Auth('customers.manage')
@@ -100,7 +100,7 @@ export class CustomersController {
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
-    return this.customersService.remove(branchId, id);
+    return this.customersService.remove(branchId, id, user.id);
   }
 
   @Auth('customers.manage')

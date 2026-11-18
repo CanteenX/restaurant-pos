@@ -8,7 +8,7 @@ import {
   TAX_REGIME_PRESETS,
   type BranchSettingsDto,
   type RestaurantSettingsDto,
-} from '@nodedr-restaurant/types';
+} from '@nventra/types';
 import { AuditService } from '../../audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -38,6 +38,7 @@ export class SettingsService {
         loyaltyEarnPerCurrency: true,
         maxManualDiscountPercent: true,
         requireDiscountReason: true,
+        digitalReceiptsEnabled: true,
       },
     });
     const branch = await this.prisma.branch.findFirst({

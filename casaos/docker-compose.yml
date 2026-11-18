@@ -3,19 +3,19 @@ name: nodedr-restaurant-pos
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: nodedr-restaurant-pos-postgres
-    hostname: nodedr-restaurant-pos-postgres
+    container_name: nventra-pos-postgres
+    hostname: nventra-pos-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: nodedr
+      POSTGRES_USER: nventra
       POSTGRES_PASSWORD: "please-change-this-password"
-      POSTGRES_DB: nodedr_restaurant
+      POSTGRES_DB: nventra_pos
     volumes:
       - type: bind
         source: /DATA/AppData/$AppID/postgres
         target: /var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nodedr"]
+      test: ["CMD-SHELL", "pg_isready -U nventra -d nventra_pos"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -23,12 +23,21 @@ services:
       - nodedr-restaurant-pos
 
   backend:
-    image: ghcr.io/raktim94/nodedr-restaurant-pos-backend:1.20.0
-    container_name: nodedr-restaurant-pos-backend
-    hostname: nodedr-restaurant-pos-backend
+    image: ghcr.io/canteenx/nventra-pos-backend:1.20.0
+    container_name: nventra-pos-backend
+    # Lets the updater (updater/server.js) tell a good update from a broken
+    # one: a new version that never reports healthy is rolled back. The long
+    # start_period covers `prisma migrate deploy` on a slow box.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    hostname: nventra-pos-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgresql://nodedr:please-change-this-password@nodedr-restaurant-pos-postgres:5432/nodedr_restaurant"
+      DATABASE_URL: "postgresql://nventra:please-change-this-password@nventra-pos-postgres:5432/nventra_pos"
       # No JWT_SECRET here on purpose — the app generates a real random one
       # itself on first boot and persists it to the /data/state volume
       # below (see apps/backend/src/main.ts's resolveJwtSecret()). A
@@ -37,7 +46,8 @@ services:
       # update made the app refuse to boot with a known placeholder value,
       # a broken install out of the box — this way nobody ever has to
       # touch it and it still works correctly.
-      JWT_EXPIRES_IN: "12h"
+      SESSION_IDLE_MINUTES: "60"
+      SESSION_MAX_HOURS: "12"
       PORT: "4000"
       CORS_ORIGIN: "http://localhost:1995"
       COOKIE_SECURE: "false"
@@ -48,8 +58,11 @@ services:
       # PCs (Settings > Server Sync). Empty = sync server off.
       SYNC_API_KEY: ""
       # In-app "Update now" button (Settings > Updates) -> the updater below.
-      UPDATER_URL: "http://nodedr-restaurant-pos-updater:8080"
-      UPDATER_TOKEN: "nodedr-restaurant-updater"
+      UPDATER_URL: "http://nventra-pos-updater:8080"
+      # Change to the SAME long random value here and in the updater service
+      # (e.g. `openssl rand -hex 32`). The updater refuses this placeholder,
+      # so in-app updates stay off until you do.
+      UPDATER_TOKEN: "change-me-to-a-long-random-updater-token"
     volumes:
       - type: bind
         source: /DATA/AppData/$AppID/uploads
@@ -76,6 +89,9 @@ services:
         - container: COOKIE_SECURE
           description:
             en_US: Set to true only when served over real HTTPS. Leave false for plain local/LAN use — a true value on plain HTTP silently breaks login (the session cookie gets dropped by the browser).
+        - container: UPDATER_TOKEN
+          description:
+            en_US: Secret shared with the updater (which controls Docker). Set the same long random value (e.g. openssl rand -hex 32) here and in the updater. The placeholder is refused, so in-app updates stay off until you change it.
       volumes:
         - container: /data/uploads
           description:
@@ -85,9 +101,16 @@ services:
             en_US: Auto-generated login security key. Created automatically on first launch — leave it alone.
 
   web:
-    image: ghcr.io/raktim94/nodedr-restaurant-pos-web:1.20.0
-    container_name: nodedr-restaurant-pos-web
-    hostname: nodedr-restaurant-pos-web
+    image: ghcr.io/canteenx/nventra-pos-web:1.20.0
+    container_name: nventra-pos-web
+    # Next binds to $HOSTNAME (the container's own address), not 127.0.0.1.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://'+(process.env.HOSTNAME||'127.0.0.1')+':3000/login',{redirect:'manual'}).then(r=>process.exit(r.status<500?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    hostname: nventra-pos-web
     restart: unless-stopped
     ports:
       - target: 3000
@@ -101,31 +124,36 @@ services:
       ports:
         - container: "3000"
           description:
-            en_US: Nodedr OrderRestro web interface
+            en_US: Nventra POS web interface
           protocol: tcp
 
-  # In-app "Update now" (Settings > Updates): pulls the newer OrderRestro
+  # In-app "Update now" (Settings > Updates): pulls the newer Nventra POS
   # images above and recreates those two containers (nothing else). Needs the
   # Docker socket to do that; data in /DATA/AppData is untouched. The updater
   # image is generic (it only manages the containers named below), so the
   # one published for NodeDR POS is reused.
   updater:
-    image: ghcr.io/raktim94/nodedr-pos-updater:1.5.1
-    container_name: nodedr-restaurant-pos-updater
-    hostname: nodedr-restaurant-pos-updater
+    image: ghcr.io/canteenx/nventra-pos-updater:latest
+    container_name: nventra-pos-updater
+    hostname: nventra-pos-updater
     restart: unless-stopped
     environment:
-      UPDATER_TOKEN: "nodedr-restaurant-updater"
-      TARGET_CONTAINERS: "nodedr-restaurant-pos-backend,nodedr-restaurant-pos-web"
+      # Must match the backend's UPDATER_TOKEN; see the note there.
+      UPDATER_TOKEN: "change-me-to-a-long-random-updater-token"
+      TARGET_CONTAINERS: "nventra-pos-backend,nventra-pos-web"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - nodedr-restaurant-pos
     x-casaos:
+      envs:
+        - container: UPDATER_TOKEN
+          description:
+            en_US: Secret shared with the updater (which controls Docker). Set the same long random value (e.g. openssl rand -hex 32) here and in the backend. The placeholder is refused, so in-app updates stay off until you change it.
       volumes:
         - container: /var/run/docker.sock
           description:
-            en_US: Docker socket, used only by the in-app "Update now" button to move the two OrderRestro containers to a newer version.
+            en_US: Docker socket, used only by the in-app "Update now" button to move the two Nventra POS containers to a newer version.
 
 networks:
   nodedr-restaurant-pos:
@@ -137,22 +165,22 @@ x-casaos:
     - amd64
     - arm64
   main: web
-  author: Nodedr Infotech Private Limited
-  developer: Raktim94
+  author: Nventra
+  developer: CanteenX
   category: Finance
-  icon: https://cdn.jsdelivr.net/gh/Raktim94/nodedr-restaurant-pos@master/casaos/icon.png
-  thumbnail: https://cdn.jsdelivr.net/gh/Raktim94/nodedr-restaurant-pos@master/casaos/thumbnail.png
+  icon: https://cdn.jsdelivr.net/gh/CanteenX/restaurant-pos@master/casaos/icon.png
+  thumbnail: https://cdn.jsdelivr.net/gh/CanteenX/restaurant-pos@master/casaos/thumbnail.png
   screenshot_link:
-    - https://cdn.jsdelivr.net/gh/Raktim94/nodedr-restaurant-pos@master/casaos/screenshot-1.png
-    - https://cdn.jsdelivr.net/gh/Raktim94/nodedr-restaurant-pos@master/casaos/screenshot-2.png
-    - https://cdn.jsdelivr.net/gh/Raktim94/nodedr-restaurant-pos@master/casaos/screenshot-3.png
+    - https://cdn.jsdelivr.net/gh/CanteenX/restaurant-pos@master/casaos/screenshot-1.png
+    - https://cdn.jsdelivr.net/gh/CanteenX/restaurant-pos@master/casaos/screenshot-2.png
+    - https://cdn.jsdelivr.net/gh/CanteenX/restaurant-pos@master/casaos/screenshot-3.png
   title:
-    en_US: Nodedr OrderRestro
+    en_US: Nventra POS
   tagline:
     en_US: Offline-first restaurant management — POS, kitchen display, tables, and reservations
   description:
     en_US: |
-      Nodedr OrderRestro is a free, open-source restaurant management system:
+      Nventra POS (a fork of Nodedr OrderRestro) is a free, open-source restaurant management system:
       point-of-sale ordering, a live kitchen display (KDS) split by station,
       table/floor management with QR-code table ordering, reservations and a
       waitlist, inventory with automatic ingredient deduction, customer CRM
@@ -173,6 +201,12 @@ x-casaos:
         both the `postgres` service's `POSTGRES_PASSWORD` and the
         `backend` service's `DATABASE_URL`. Leaving the default is not
         safe for a real installation.
+
+        To use the in-app **Update now** button, also set `UPDATER_TOKEN`
+        to the same long random value (e.g. `openssl rand -hex 32`) in
+        both the `backend` and `updater` services. The updater controls
+        Docker, so it refuses the placeholder and in-app updates stay off
+        until you change it.
 
         Your data (Postgres database + uploaded images) persists at
         `/DATA/AppData/nodedr-restaurant-pos/`, following CasaOS/ZimaOS's
@@ -302,7 +336,7 @@ x-casaos:
       Initial CasaOS/ZimaOS release: POS ordering, kitchen display, table
       management with QR ordering, reservations, inventory, customer
       loyalty/CRM, and billing.
-  website: "https://orderrestro.nodedr.com/"
-  repo: "https://github.com/Raktim94/nodedr-restaurant-pos"
-  support: "https://orderrestro.nodedr.com/contact"
-  docs: "https://github.com/Raktim94/nodedr-restaurant-pos#readme"
+  website: "https://github.com/CanteenX/restaurant-pos"
+  repo: "https://github.com/CanteenX/restaurant-pos"
+  support: "https://github.com/CanteenX/restaurant-pos/issues"
+  docs: "https://github.com/CanteenX/restaurant-pos#readme"

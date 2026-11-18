@@ -15,10 +15,13 @@ describe('AccountingService day windows', () => {
       expense: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
       },
+      pettyCashEntry: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
+      },
     };
     const time = { tzForBranch: jest.fn().mockResolvedValue('Asia/Kolkata') };
     return {
-      svc: new AccountingService(prisma as never, time as never),
+      svc: new AccountingService(prisma as never, time as never, {} as never),
       prisma,
     };
   }

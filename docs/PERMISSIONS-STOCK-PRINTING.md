@@ -33,6 +33,23 @@ INVENTORY_MANAGER therefore lose those reports until the permission is granted t
 - Removes `tables.manage` from the **system WAITER** role only. Custom roles are untouched; an owner
   can re-grant it per role. Because it is a one-time migration, later revokes are never undone.
 
+## Expense approvals
+
+Set **Settings → restaurant → `expenseApprovalThreshold`** (`PATCH /api/v1/settings/restaurant`,
+`settings.manage`). Empty/`null` = approvals off, which is the default.
+
+- An expense whose amount is **strictly above** the threshold is saved as `PENDING`; everything
+  else is `APPROVED` immediately. Existing expenses were migrated as `APPROVED`.
+- Only `APPROVED` expenses count in the cash close, P&L, balance sheet, budget vs actual and bank
+  reconciliation. `REJECTED` ones are kept for the record but never count.
+- `expenses.approve` holders on the branch (default: OWNER, ADMINISTRATOR, RESTAURANT_MANAGER) get a
+  notification. `GET /api/v1/accounting/expenses/pending?branchId=` is their queue;
+  `POST /api/v1/accounting/expenses/:id/approve|reject?branchId=` with an optional `{ "note" }`
+  decides it. Both decisions are audited and the recorder is notified.
+- Nobody can approve or reject an expense they recorded (403), and a decided expense cannot be
+  decided again (400). A cash expense cannot be approved into a day that is already closed.
+- `GET /api/v1/accounting/expenses` accepts `status=PENDING|APPROVED|REJECTED`.
+
 ## Inventory when items are sold
 
 Per menu item (Menu → Edit item → *Stock when sold*, needs `inventory.manage`):
@@ -82,7 +99,7 @@ Both **Bill** and **KOT** have two paths in the POS:
 - **The printer must be reachable from the backend.** The backend opens the connection, not the
   browser. A server hosted in the cloud cannot reach a USB printer or a private LAN address in the
   restaurant; there, use the browser print buttons, a VPN to the restaurant network, or run
-  OrderRestro on a machine inside it. This is why kitchen printing "did nothing" on remote servers.
+  Nventra POS on a machine inside it. This is why kitchen printing "did nothing" on remote servers.
 
 ### Kitchen tickets (KOT)
 - One ticket per kitchen round and station, built from that ticket's own lines: order number, table

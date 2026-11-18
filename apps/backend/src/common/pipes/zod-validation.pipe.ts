@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import type { ZodSchema } from 'zod';
 
-// Binds a shared Zod schema (from @nodedr-restaurant/types) into Nest's
+// Binds a shared Zod schema (from @nventra/types) into Nest's
 // pipe pipeline, so the same schema validates on the frontend and here —
 // one source of truth per DTO instead of hand-duplicated class-validator DTOs.
 //
@@ -16,10 +16,15 @@ import type { ZodSchema } from 'zod';
 // into a schema that expects the whole request-body object and fails with
 // a confusing "expected object, received string".
 export class ZodValidationPipe<T> implements PipeTransform<unknown, unknown> {
-  constructor(private readonly schema: ZodSchema<T>) {}
+  // `target` opts a parameter-level pipe into validating a different source,
+  // e.g. `@Query(new ZodValidationPipe(schema, 'query'))` for a query object.
+  constructor(
+    private readonly schema: ZodSchema<T>,
+    private readonly target: ArgumentMetadata['type'] = 'body',
+  ) {}
 
   transform(value: unknown, metadata: ArgumentMetadata): unknown {
-    if (metadata.type !== 'body') {
+    if (metadata.type !== this.target) {
       return value;
     }
 

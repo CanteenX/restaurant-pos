@@ -135,7 +135,7 @@ function choosePrinter() {
 
 async function printBluetooth(bytes) {
   const np = plugins().NativePrinter;
-  if (!np) return toast('Bluetooth printing works in the OrderRestro app.');
+  if (!np) return toast('Bluetooth printing works in the Nventra POS app.');
   let printer = savedPrinter();
   if (!printer) printer = await choosePrinter();
   if (!printer) return;

@@ -1,10 +1,11 @@
 "use client";
 
-import { ChevronLeft, MonitorSmartphone, ShoppingCart } from "lucide-react";
+import { ChevronLeft, MonitorSmartphone, Scale, ShoppingCart } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { StatusNote, useNoteToast } from "@/components/ui/status-note";
 import { publishDisplay } from "@/lib/customer-display";
+import { PairDisplayButton } from "@/components/pos/pair-display-button";
 import { BranchNotice } from "@/components/layout/branch-notice";
 import { CartPanel, type DeliveryDetails, type PosOrderType } from "@/components/pos/cart-panel";
 import { cartLineKey, portionText, type CartLine, type Portion } from "@/components/pos/cart-line";
@@ -12,11 +13,12 @@ import { clearDraft, switchTableDraft, type Drafts } from "@/lib/pos-drafts";
 import { CheckoutPanel } from "@/components/pos/checkout-panel";
 import { KitchenProgressWidget } from "@/components/pos/kitchen-progress-widget";
 import { ModifierPickerDialog } from "@/components/pos/modifier-picker-dialog";
+import { ScaleDialog } from "@/components/pos/scale-dialog";
 import { PosTablePicker } from "@/components/pos/pos-table-picker";
 import { ProductGrid } from "@/components/pos/product-grid";
 import { Card } from "@/components/ui/card";
 import { useBranch } from "@/hooks/use-branch";
-import type { MenuItem } from "@/hooks/use-menu";
+import { useMenuItems, type MenuItem } from "@/hooks/use-menu";
 import {
   useAddOrderItems,
   useCreateOrder,
@@ -27,6 +29,7 @@ import {
 import { useFloors, type RestaurantTable } from "@/hooks/use-tables";
 import { ApiError } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
+import { useI18n } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 
 export default function PosPage() {
@@ -38,6 +41,7 @@ export default function PosPage() {
 }
 
 function PosPageInner() {
+  const { t } = useI18n();
   const { branchId, isLoading: branchLoading } = useBranch();
   const { note, clear: clearNote, toast } = useNoteToast();
   const floorsQuery = useFloors(branchId);
@@ -62,6 +66,8 @@ function PosPageInner() {
   };
   const [selectedBillId, setSelectedBillId] = useState<string | null>(null);
   const [pickerItem, setPickerItem] = useState<MenuItem | null>(null);
+  const [scaleOpen, setScaleOpen] = useState(false);
+  const menuItemsQuery = useMenuItems(branchId);
   const [activeOrder, setActiveOrder] = useState<CreatedOrder | null>(null);
   const [activeCustomer, setActiveCustomer] = useState<OpenOrder["customer"]>(null);
   // /pos?tableId=... can change while this page stays mounted.
@@ -131,6 +137,11 @@ function PosPageInner() {
       return;
     }
     addLine(item.id, item.name, Number(item.price), [], "");
+  };
+
+  const handleWeighed = (item: MenuItem, label: string, price: number) => {
+    const portion: Portion = { kind: "CUSTOM", customLabel: label, customPrice: price };
+    addLine(item.id, `${item.name} (${label})`, price, [], "", portion);
   };
 
   const handleModifierConfirm = (modifierIds: string[], modifierLabel: string, portion?: Portion) => {
@@ -253,20 +264,36 @@ function PosPageInner() {
     <div className="flex h-[calc(100dvh-10rem)] flex-col gap-4 lg:h-[calc(100dvh-8rem)]">
       <StatusNote note={note} onClear={clearNote} />
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-full flex-1 max-sm:empty:hidden sm:min-w-0">
           <KitchenProgressWidget branchId={branchId} />
         </div>
+        <button
+          type="button"
+          onClick={() => setScaleOpen(true)}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        >
+          <Scale className="h-3.5 w-3.5" />
+          {t("pos.page.weigh")}
+        </button>
         <a
           href="/customer-display"
           target="_blank"
           rel="noreferrer"
           className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          title="Opens the customer-facing screen in a new window — drag it to the second monitor"
+          title={t("pos.page.customerDisplayHint")}
         >
           <MonitorSmartphone className="h-3.5 w-3.5" />
-          Customer display
+          {t("pos.page.customerDisplay")}
         </a>
+        <PairDisplayButton branchId={branchId} />
       </div>
+
+      <ScaleDialog
+        open={scaleOpen}
+        items={menuItemsQuery.data ?? []}
+        onClose={() => setScaleOpen(false)}
+        onConfirm={handleWeighed}
+      />
 
       <BranchNotice />
 
@@ -301,7 +328,7 @@ function PosPageInner() {
               className="mb-3 -ml-1 flex items-center gap-1 text-sm font-medium text-muted-foreground lg:hidden"
             >
               <ChevronLeft className="h-4 w-4" />
-              Back to menu
+              {t("pos.page.backToMenu")}
             </button>
             {activeOrder ? (
               <CheckoutPanel

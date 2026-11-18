@@ -1,7 +1,7 @@
-# Connecting your own website (Next.js on `www`, OrderRestro behind a Cloudflare Tunnel)
+# Connecting your own website (Next.js on `www`, Nventra POS behind a Cloudflare Tunnel)
 
 The common setup: the public site lives on separate hosting at
-`www.example.com`; OrderRestro runs on a machine in the restaurant and is
+`www.example.com`; Nventra POS runs on a machine in the restaurant and is
 reached from the internet through a Cloudflare Tunnel at `api.example.com`.
 
 ```
@@ -11,12 +11,12 @@ Visitor's browser ──HTTPS──▶ www.example.com  (Next.js, any host)
                       https://api.example.com/api/v1/integrations/...
                                    │  Cloudflare Tunnel (outbound from the restaurant)
                                    ▼
-        cloudflared ─▶ web:3000 (OrderRestro web) ─▶ backend:4000 ─▶ postgres:5432
+        cloudflared ─▶ web:3000 (Nventra POS web) ─▶ backend:4000 ─▶ postgres:5432
                                    └── only `web` is reachable; the rest stay on the private Docker network
 ```
 
-The browser never talks to OrderRestro and never sees the key: it calls the
-website's own backend, which calls OrderRestro.
+The browser never talks to Nventra POS and never sees the key: it calls the
+website's own backend, which calls Nventra POS.
 
 ## 1. Create the key
 
@@ -38,10 +38,10 @@ it issues a new secret with the same scopes and location, moves the old key's
 orders to it so status and customer lookups keep working, and revokes the old
 key immediately. Update the website's environment with the new secret.
 
-## 2. Expose OrderRestro with a Cloudflare Tunnel
+## 2. Expose Nventra POS with a Cloudflare Tunnel
 
 1. Add the domain to Cloudflare. In **Networking > Tunnels** create a
-   remotely-managed tunnel and install `cloudflared` on the OrderRestro machine
+   remotely-managed tunnel and install `cloudflared` on the Nventra POS machine
    (the dashboard shows the exact command with your token).
 2. On the tunnel's **Routes** tab choose **Add route > Published application**:
    subdomain `api`, domain `example.com`, **Service URL**:
@@ -72,13 +72,13 @@ services:
     depends_on: [web]
 ```
 
-### OrderRestro `.env` for HTTPS behind the tunnel
+### Nventra POS `.env` for HTTPS behind the tunnel
 
 ```env
 COOKIE_SECURE=true                      # staff logins over https://api.example.com
 FRONTEND_ORIGIN=https://api.example.com # the origin the dashboard is served from
 JWT_SECRET=<openssl rand -hex 32>
-# TRUST_PROXY=                           # leave unset (see below)
+WEB_TRUST_PROXY=1                       # only if ALL traffic uses the tunnel (see below)
 ```
 
 - **Public base URL** for the website: `https://api.example.com` (no port).
@@ -90,19 +90,20 @@ JWT_SECRET=<openssl rand -hex 32>
   inside the LAN), or you keep `COOKIE_SECURE=false` and not use the tunnel for
   the dashboard. The Integration API uses Bearer keys, not cookies, so it is
   unaffected, and there is no CSRF exposure on it.
-- **Proxy headers.** The backend ignores `X-Forwarded-*` unless `TRUST_PROXY`
-  is a number of hops (never `true`; anything else stops the backend from
-  starting). Measured behaviour of the web container: its `/api` proxy passes an
-  incoming `X-Forwarded-For` through **unchanged** and adds nothing, and the
-  backend's direct peer is the web container. So with `TRUST_PROXY=1` the
-  backend takes the right-most `X-Forwarded-For` entry, which Cloudflare sets to
-  the visitor's address (a value a visitor sends is placed to its left and
-  ignored). Cloudflare appending rather than replacing the header is its
-  documented behaviour and was not tested here. Set `TRUST_PROXY=1` only if
-  *all* traffic arrives through the tunnel: a LAN client reaching the web
-  container directly could send its own `X-Forwarded-For` and choose the
-  address the per-IP limiter sees. It is left unset by default so LAN-only
-  installs are unchanged. Integration limits are per API key and never depend
+- **Proxy headers.** The web container is the only published port, and it
+  rewrites `X-Forwarded-For` on every request to one client address before
+  proxying `/api` to the backend; the backend trusts exactly that one hop
+  (`TRUST_PROXY=1`, the compose default, never `true`). Which address the web
+  container picks is set by `WEB_TRUST_PROXY`: `0` (default) uses the
+  connecting address, so on a LAN each device gets its own login-throttle
+  bucket and a sent `X-Forwarded-For` is ignored. Behind the tunnel the
+  connecting address is `cloudflared`, so set `WEB_TRUST_PROXY=1`: the web
+  container then takes the right-most `X-Forwarded-For` entry, which
+  Cloudflare sets to the visitor (a value a visitor sends sits to its left and
+  is ignored; Cloudflare appending rather than replacing is its documented
+  behaviour and was not tested here). Use it only if *all* traffic arrives
+  through the tunnel: a LAN client reaching port 1995 directly could then
+  choose its own address. Integration limits are per API key and never depend
   on it.
 - **CORS.** Not needed: the website's backend calls the API server-to-server,
   and the dashboard is same-origin. `CORS_ORIGIN` / `FRONTEND_ORIGIN` accept a
@@ -161,13 +162,13 @@ export async function orderrestro<T>(
 
 export class OrderrestroError extends Error {
   constructor(public status: number, public body: string) {
-    super(`OrderRestro ${status}`); // never put request data (phone/address) in the message
+    super(`Nventra POS ${status}`); // never put request data (phone/address) in the message
   }
 }
 ```
 
 ```ts
-// app/api/order/route.ts   (the browser posts here, never to OrderRestro)
+// app/api/order/route.ts   (the browser posts here, never to Nventra POS)
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { orderrestro, OrderrestroError } from '@/lib/orderrestro';

@@ -1,5 +1,6 @@
 "use client";
 
+import { useI18n } from "@/lib/i18n/context";
 import { Smartphone } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useSyncExternalStore } from "react";
@@ -10,20 +11,20 @@ const origin = () => window.location.origin;
 
 /**
  * Settings > Mobile app. The QR holds this server's address: staff and riders
- * open the OrderRestro app, tap Scan QR code, then sign in as usual.
+ * open the Nventra POS app, tap Scan QR code, then sign in as usual.
  */
 export function MobileAppCard() {
+  const { t } = useI18n();
   const url = useSyncExternalStore(noop, origin, () => "");
   const local = /localhost|127\.0\.0\.1/.test(url);
   return (
     <Card className="flex flex-col gap-4 p-4 sm:p-6">
       <div className="flex items-center gap-2">
         <Smartphone className="h-[18px] w-[18px] text-muted-foreground" aria-hidden />
-        <h2 className="text-[18px] font-medium text-foreground">Mobile app</h2>
+        <h2 className="text-[18px] font-medium text-foreground">{t("settings.mobileApp.title")}</h2>
       </div>
       <p className="text-sm text-muted-foreground">
-        Staff and delivery riders can use OrderRestro on Android and iPhone. Install the app, tap Scan QR code and
-        sign in with the same login as here. Riders sign in with their phone number.
+        {t("settings.mobileApp.intro")}
       </p>
       {url && (
         <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
@@ -31,12 +32,11 @@ export function MobileAppCard() {
             <QRCodeSVG value={url} size={148} level="M" marginSize={0} />
           </div>
           <div className="text-sm">
-            <p className="text-muted-foreground">Server address</p>
+            <p className="text-muted-foreground">{t("settings.mobileApp.serverAddress")}</p>
             <p className="break-all font-mono text-foreground">{url}</p>
             {local && (
               <p className="mt-2 text-warning">
-                This address only works on this computer. Open Settings from the computer&apos;s network address
-                (for example http://192.168.1.20:1995) so phones can reach it.
+                {t("settings.mobileApp.localWarning")}
               </p>
             )}
           </div>

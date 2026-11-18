@@ -3,12 +3,14 @@ import {
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
-import { permissionSatisfied } from '@nodedr-restaurant/types';
+import { permissionSatisfied } from '@nventra/types';
 import { BranchTimeService } from '../../common/services/branch-time.service';
 import { localDate, localMinuteAndDay, zonedRange } from '../../common/time';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AccountingService } from '../accounting/accounting.service';
 import type { CsvValue } from './csv';
+import { computePriceVariance } from './price-variance';
+import { inventoryValuationRows } from './inventory-valuation';
 
 export interface ReportResult {
   key: string;
@@ -35,6 +37,11 @@ export const REPORT_CATALOG = [
   { key: 'reservations', title: 'Reservations', group: 'Operations' },
   { key: 'delivery', title: 'Deliveries', group: 'Operations' },
   { key: 'waste', title: 'Waste', group: 'Inventory' },
+  {
+    key: 'price-variance',
+    title: 'Purchase price variance',
+    group: 'Inventory',
+  },
   {
     key: 'inventory-valuation',
     title: 'Inventory valuation',
@@ -622,6 +629,85 @@ export class ReportsService {
         );
       }
 
+      case 'price-variance': {
+        const [items, quotes] = await Promise.all([
+          this.prisma.goodsReceiptItem.findMany({
+            where: { goodsReceipt: { branchId, receivedAt: range } },
+            select: {
+              ingredientId: true,
+              unitCost: true,
+              ingredient: { select: { name: true, unit: true } },
+              goodsReceipt: {
+                select: {
+                  receivedAt: true,
+                  supplierId: true,
+                  supplier: { select: { name: true } },
+                },
+              },
+            },
+          }),
+          this.prisma.supplierQuotationItem.findMany({
+            where: {
+              supplierQuotation: { branchId, status: { not: 'REJECTED' } },
+            },
+            select: {
+              ingredientId: true,
+              unitPrice: true,
+              supplierQuotation: {
+                select: { supplierId: true, createdAt: true },
+              },
+            },
+          }),
+        ]);
+        const priced = computePriceVariance(
+          items.map((i) => ({
+            ingredientId: i.ingredientId,
+            ingredientName: i.ingredient.name,
+            unit: i.ingredient.unit,
+            supplierId: i.goodsReceipt.supplierId,
+            supplierName: i.goodsReceipt.supplier.name,
+            unitCost: Number(i.unitCost),
+            receivedAt: i.goodsReceipt.receivedAt,
+          })),
+          quotes.map((q) => ({
+            ingredientId: q.ingredientId,
+            supplierId: q.supplierQuotation.supplierId,
+            unitPrice: Number(q.unitPrice),
+            quotedAt: q.supplierQuotation.createdAt,
+          })),
+        );
+        return out(
+          [
+            'Ingredient',
+            'Supplier',
+            'Unit',
+            'Receipts',
+            'Last cost',
+            'Average cost',
+            'Min cost',
+            'Max cost',
+            'Previous cost',
+            'Variance vs previous %',
+            'Quoted price',
+            'Variance vs quote %',
+          ],
+          priced.map((p) => [
+            p.ingredientName,
+            p.supplierName,
+            p.unit,
+            p.receipts,
+            p.lastCost,
+            p.avgCost,
+            p.minCost,
+            p.maxCost,
+            p.previousCost,
+            p.varianceVsPrevPct,
+            p.quotedPrice,
+            p.varianceVsQuotePct,
+          ]),
+        );
+      }
+
       default: {
         // inventory-valuation (a point-in-time report; the range is ignored)
         const ing = await this.prisma.ingredient.findMany({
@@ -634,25 +720,16 @@ export class ReportsService {
           },
           orderBy: { name: 'asc' },
         });
-        const rows = ing.map((i) => [
-          i.name,
-          i.unit,
-          Number(i.currentStock),
-          round2(Number(i.costPerUnit)),
-          round2(Number(i.currentStock) * Number(i.costPerUnit)),
-        ]);
         return out(
           ['Ingredient', 'Unit', 'In stock', 'Cost per unit', 'Value'],
-          [
-            ...rows,
-            [
-              'Total',
-              '',
-              '',
-              '',
-              round2(rows.reduce((s, r) => s + Number(r[4]), 0)),
-            ],
-          ],
+          inventoryValuationRows(
+            ing.map((i) => ({
+              name: i.name,
+              unit: i.unit,
+              currentStock: Number(i.currentStock),
+              costPerUnit: Number(i.costPerUnit),
+            })),
+          ),
         );
       }
     }

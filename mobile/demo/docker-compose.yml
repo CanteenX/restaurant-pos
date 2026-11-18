@@ -18,12 +18,13 @@ services:
     networks: [demo]
 
   backend:
-    image: ghcr.io/raktim94/nodedr-restaurant-pos-backend:${APP_VERSION:?set in .env}
+    image: ghcr.io/canteenx/nventra-pos-backend:${APP_VERSION:?set in .env}
     restart: unless-stopped
     environment:
       DATABASE_URL: "postgresql://demo:${DEMO_DB_PASSWORD}@db:5432/demo"
       JWT_SECRET: ${DEMO_JWT_SECRET:?set in .env}
-      JWT_EXPIRES_IN: "12h"
+      SESSION_IDLE_MINUTES: "60"
+      SESSION_MAX_HOURS: "12"
       PORT: "4000"
       CORS_ORIGIN: "${DEMO_ORIGIN:-http://localhost:19951}"
       COOKIE_SECURE: "${DEMO_COOKIE_SECURE:-true}"
@@ -34,7 +35,7 @@ services:
     networks: [demo]
 
   web:
-    image: ghcr.io/raktim94/nodedr-restaurant-pos-web:${APP_VERSION}
+    image: ghcr.io/canteenx/nventra-pos-web:${APP_VERSION}
     restart: unless-stopped
     ports: ["127.0.0.1:19951:3000"]
     depends_on: [backend]

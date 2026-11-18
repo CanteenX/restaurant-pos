@@ -1,0 +1,13 @@
+{
+  "name": "nventra-e2e",
+  "private": true,
+  "description": "Browser QA suite. Runs against a live stack started with ./install.sh --demo (default http://localhost:1995).",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}

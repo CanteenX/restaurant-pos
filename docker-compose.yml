@@ -1,12 +1,12 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: nodedr-restaurant-postgres
+    container_name: nventra-pos-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: nodedr
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nodedr_dev_pw}
-      POSTGRES_DB: nodedr_restaurant
+      POSTGRES_USER: nventra
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nventra_dev_pw}
+      POSTGRES_DB: nventra_pos
     # Not published to the host — only the backend needs it, over the
     # internal Docker network. Uncomment `ports` below for local psql access.
     expose:
@@ -16,7 +16,7 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nodedr"]
+      test: ["CMD-SHELL", "pg_isready -U nventra -d nventra_pos"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -30,22 +30,41 @@ services:
     # Same name CI publishes. `up --build` tags the local build with it, and
     # the in-app "Update now" button (see the `updater` service below) pulls
     # the published image of a newer version under it.
-    image: ghcr.io/raktim94/nodedr-restaurant-pos-backend:${APP_VERSION:-dev}
-    container_name: nodedr-restaurant-backend
+    image: ghcr.io/canteenx/nventra-pos-backend:${APP_VERSION:-dev}
+    container_name: nventra-pos-backend
+    # Lets the updater (updater/server.js) tell a good update from a broken
+    # one: a new version that never reports healthy is rolled back. The long
+    # start_period covers `prisma migrate deploy` on a slow box.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgresql://nodedr:${POSTGRES_PASSWORD:-nodedr_dev_pw}@postgres:5432/nodedr_restaurant"
+      DATABASE_URL: "postgresql://nventra:${POSTGRES_PASSWORD:-nventra_dev_pw}@postgres:5432/nventra_pos"
       JWT_SECRET: ${JWT_SECRET:?set a real JWT_SECRET in .env for anything beyond local dev}
-      JWT_EXPIRES_IN: "12h"
+      SESSION_IDLE_MINUTES: "${SESSION_IDLE_MINUTES:-60}"
+      SESSION_IDLE_SIGNOUT: "${SESSION_IDLE_SIGNOUT:-true}"
+      SESSION_MAX_HOURS: "${SESSION_MAX_HOURS:-12}"
       PORT: "4000"
       CORS_ORIGIN: "${FRONTEND_ORIGIN:-http://localhost:1995}"
       COOKIE_SECURE: "${COOKIE_SECURE:-false}"
-      # Number of trusted proxy hops in front of the backend (empty = ignore
-      # X-Forwarded-*). See docs/website-integration.md before setting it.
-      TRUST_PROXY: "${TRUST_PROXY:-}"
+      # Trusted proxy hops in front of the backend. 1 = the web container,
+      # which rewrites X-Forwarded-For to the client address it resolved, so
+      # login throttling keys per real client. Leave it at 1; to put a tunnel
+      # or reverse proxy in front, set WEB_TRUST_PROXY instead (web service).
+      TRUST_PROXY: "${TRUST_PROXY:-1}"
+      # Outgoing email (receipts, reports, alerts). Both empty = email disabled.
+      # SMTP_URL is a URL: URL-encode the @ in a username (user%40gmail.com).
+      # See docs/email.md for the Gmail app-password setup.
+      SMTP_URL: "${SMTP_URL:-}"
+      SMTP_FROM: "${SMTP_FROM:-}"
       # Integration API (website) limits per API key, per minute.
       INTEGRATION_WRITE_LIMIT_PER_MIN: "${INTEGRATION_WRITE_LIMIT_PER_MIN:-30}"
       INTEGRATION_READ_LIMIT_PER_MIN: "${INTEGRATION_READ_LIMIT_PER_MIN:-300}"
+      GRAPHQL_LIMIT_PER_MIN: "${GRAPHQL_LIMIT_PER_MIN:-120}"
       UPLOADS_DIR: "/data/uploads"
       # Spain VERI*FACTU (Settings > VERI*FACTU). The producer identifier is a legal fact only the software
       # producer can supply; leave it unset and the branch reports exactly what is missing. See docs/verifactu.md.
@@ -58,7 +77,14 @@ services:
       # container below to pull the latest published images. Unset these two
       # and the Update button simply says this install can't update itself.
       UPDATER_URL: "http://updater:8080"
-      UPDATER_TOKEN: "${UPDATER_TOKEN:-nodedr-restaurant-updater}"
+      # Shared secret with the updater, which holds the Docker socket. No
+      # default: install.sh generates a random one into .env.
+      UPDATER_TOKEN: "${UPDATER_TOKEN:?set UPDATER_TOKEN in .env (./install.sh generates one)}"
+      # Where releases come from (see .env.example). GHCR_TOKEN is only
+      # needed when the published images are private.
+      UPDATE_REPO: "${UPDATE_REPO:-CanteenX/restaurant-pos}"
+      UPDATE_IMAGE_REPO: "${UPDATE_IMAGE_REPO:-ghcr.io/canteenx/nventra-pos-backend}"
+      GHCR_TOKEN: "${GHCR_TOKEN:-}"
       # Optional: S3 backup config can also be set from Settings > Backup
       # (persisted to the `backup_config` DB row, which takes priority over
       # these). Uncomment for a headless/CasaOS-style deployment that
@@ -70,6 +96,14 @@ services:
       # S3_BACKUP_REGION: "auto"
       # S3_BACKUP_INTERVAL_DAYS: "3"
       # S3_BACKUP_RETAIN_COUNT: "2"
+      # Local scheduled backups to a USB drive / NAS folder (docs/BACKUPS.md).
+      # Off unless LOCAL_BACKUP_ROOT is set; uncomment it together with the
+      # matching volume line below. Interval/retention/sub-folder can also be
+      # changed from the app (PUT /api/v1/backups/local/config).
+      # LOCAL_BACKUP_ROOT: "/backups"
+      # LOCAL_BACKUP_DIR: ""                # sub-folder inside the root
+      # LOCAL_BACKUP_INTERVAL_HOURS: "24"
+      # LOCAL_BACKUP_RETAIN_COUNT: "7"
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,6 +114,9 @@ services:
       - "4000"
     volumes:
       - uploads_data:/data/uploads
+      # Local backups: mount the host drive/share (read-write) at the
+      # LOCAL_BACKUP_ROOT path above.
+      # - /media/usb-backup:/backups
       # Direct-USB thermal printing (see apps/backend/src/modules/orders/
       # escpos-usb.ts, ported from nodedr-pos's real hardware-verified
       # transport) needs the backend to see the host's USB device nodes.
@@ -113,11 +150,23 @@ services:
         # Next bakes rewrite destinations at BUILD time — this must be a
         # build ARG, not a runtime env (see apps/web/Dockerfile comment).
         BACKEND_URL: "http://backend:4000"
-    image: ghcr.io/raktim94/nodedr-restaurant-pos-web:${APP_VERSION:-dev}
-    container_name: nodedr-restaurant-web
+    image: ghcr.io/canteenx/nventra-pos-web:${APP_VERSION:-dev}
+    container_name: nventra-pos-web
+    # Next binds to $HOSTNAME (the container's own address), not 127.0.0.1.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://'+(process.env.HOSTNAME||'127.0.0.1')+':3000/login',{redirect:'manual'}).then(r=>process.exit(r.status<500?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
     ports:
       - "${HOST_PORT:-1995}:3000"
+    environment:
+      # Proxy hops in front of the web container whose X-Forwarded-For it may
+      # believe (0 = trust only the TCP peer). 1 for a Cloudflare Tunnel or a
+      # reverse proxy that ALL traffic goes through. See README "Client IPs".
+      WEB_TRUST_PROXY: "${WEB_TRUST_PROXY:-0}"
     depends_on:
       - backend
 
@@ -132,12 +181,13 @@ services:
   updater:
     build:
       context: ./updater
-    image: ghcr.io/raktim94/nodedr-restaurant-pos-updater:latest
-    container_name: nodedr-restaurant-updater
+    image: ghcr.io/canteenx/nventra-pos-updater:latest
+    container_name: nventra-pos-updater
     restart: unless-stopped
     environment:
-      UPDATER_TOKEN: "${UPDATER_TOKEN:-nodedr-restaurant-updater}"
-      TARGET_CONTAINERS: "nodedr-restaurant-backend,nodedr-restaurant-web"
+      UPDATER_TOKEN: "${UPDATER_TOKEN:?set UPDATER_TOKEN in .env (./install.sh generates one)}"
+      TARGET_CONTAINERS: "nventra-pos-backend,nventra-pos-web"
+      GHCR_TOKEN: "${GHCR_TOKEN:-}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 

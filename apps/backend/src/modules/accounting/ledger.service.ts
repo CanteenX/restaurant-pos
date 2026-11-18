@@ -7,6 +7,9 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { round2 } from '../../common/money';
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+// Petty-cash payouts (#72) are paid from the cash float, never through the
+// bank, so they must not be offered or matched against bank statement lines.
+const NOT_PETTY = { pettyCashEntry: { is: null } } as const;
 
 /** Parses one CSV line honouring double-quoted cells. */
 export function parseCsvLine(line: string): string[] {
@@ -145,7 +148,7 @@ export class LedgerService {
       }),
       this.prisma.expense.groupBy({
         by: ['category'],
-        where: { branchId, spentOn: { gte: from, lt: to } },
+        where: { branchId, spentOn: { gte: from, lt: to }, status: 'APPROVED' },
         _sum: { amount: true },
       }),
     ]);
@@ -229,7 +232,12 @@ export class LedgerService {
       ).map((t) => t.expenseId as string),
     );
     const expenses = await this.prisma.expense.findMany({
-      where: { branchId, paidFromCash: false },
+      where: {
+        branchId,
+        paidFromCash: false,
+        status: 'APPROVED',
+        ...NOT_PETTY,
+      },
     });
     let count = 0;
     for (const t of txs) {
@@ -344,6 +352,8 @@ export class LedgerService {
     return this.prisma.expense.findMany({
       where: {
         branchId,
+        status: 'APPROVED',
+        ...NOT_PETTY,
         id: { notIn: taken },
         spentOn: {
           gte: new Date(t.postedOn.getTime() - around),
@@ -358,7 +368,9 @@ export class LedgerService {
   async matchManually(branchId: string, id: string, expenseId: string) {
     const [t, e] = await Promise.all([
       this.prisma.bankTransaction.findFirst({ where: { id, branchId } }),
-      this.prisma.expense.findFirst({ where: { id: expenseId, branchId } }),
+      this.prisma.expense.findFirst({
+        where: { id: expenseId, branchId, status: 'APPROVED', ...NOT_PETTY },
+      }),
     ]);
     if (!t || !e)
       throw new NotFoundException('Transaction or expense not found');
@@ -408,7 +420,7 @@ export class LedgerService {
         _sum: { amount: true },
       }),
       this.prisma.expense.aggregate({
-        where: { branchId, spentOn: { lte: endDate } },
+        where: { branchId, spentOn: { lte: endDate }, status: 'APPROVED' },
         _sum: { amount: true },
       }),
       this.prisma.supplierPayment.aggregate({

@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { loginSchema, type LoginDto } from "@nodedr-restaurant/types";
+import { loginSchema, type LoginDto } from "@nventra/types";
 import { motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -15,10 +15,15 @@ import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { useLogin } from "@/hooks/use-auth";
 import { ApiError } from "@/lib/api";
+import { usePasswordResetEnabled } from "@/hooks/use-password-reset";
+import { useI18n } from "@/lib/i18n/context";
 
 export default function LoginPage() {
   const router = useRouter();
   const login = useLogin();
+  const { t } = useI18n();
+  // Hidden unless this server can email reset links (#224).
+  const resetEnabled = usePasswordResetEnabled().data?.enabled === true;
   // Set once the server says this account uses two-factor authentication.
   const [needsCode, setNeedsCode] = useState(false);
   // Shown inline under the form (a toast vanishes before it can be read).
@@ -72,7 +77,7 @@ export default function LoginPage() {
             <Logo size={44} />
           </Link>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            OrderRestro
+            Nventra POS
           </h1>
           <p className="text-sm text-muted-foreground">Sign in to manage your restaurant</p>
         </div>
@@ -113,6 +118,14 @@ export default function LoginPage() {
             {errors.password && (
               <p className="text-xs text-destructive">{errors.password.message}</p>
             )}
+            {resetEnabled && (
+              <Link
+                href="/forgot-password"
+                className="self-end text-xs font-medium text-primary hover:underline"
+              >
+                {t("auth.login.forgot")}
+              </Link>
+            )}
           </div>
 
           {needsCode && (
@@ -148,7 +161,13 @@ export default function LoginPage() {
           </Button>
         </form>
 
-        <p className="mt-8 text-center text-xs text-muted-foreground">
+        <p className="mt-6 text-center text-sm">
+          <Link href="/switch-user" className="font-medium text-primary hover:underline">
+            Switch user with PIN
+          </Link>
+        </p>
+
+        <p className="mt-6 text-center text-xs text-muted-foreground">
           New restaurant?{" "}
           <Link href="/signup" className="font-medium text-foreground hover:underline">
             Create an account

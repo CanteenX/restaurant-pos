@@ -1,7 +1,7 @@
 # Feature Checklist
 
 Cross-referenced against the actual codebase (`apps/backend`, `apps/web`,
-`apps/backend/prisma/schema.prisma`) as of 2026-08-14, not just roadmap
+`apps/backend/prisma/schema.prisma`) as of 2026-11-04, not just roadmap
 prose. This is the exhaustive taxonomy version of `ROADMAP.md` (which
 tracks the same ground phase-by-phase, engineering-oriented) — organized
 here by product category for public/roadmap use. Where a feature is
@@ -43,16 +43,16 @@ partially built, the note says what's missing.
 | Discount by order | Shipped | %/flat |
 | Percentage discount | Shipped | |
 | Fixed discount | Shipped | |
-| Coupon codes | Planned | No coupon/promo model |
+| Coupon codes | Shipped | Coupons in the Marketing module (`modules/marketing`, `discounts.ts`) (2026-11-04) |
 | Tax calculation | Shipped | GST/VAT backed out of inclusive price, server-authoritative |
 | Service charge | Planned | No service-charge field |
 | Tips | Shipped | Added on discounted subtotal, not taxed |
 | Rounding | Shipped | `round2` discipline throughout |
 | Multiple payment methods | Shipped | Cash/card/UPI/wallet/bank transfer |
-| Split payment | Planned | One payment method per order currently |
-| Cash + card / Cash + UPI / Card + UPI | Planned | Same as split payment |
+| Split payment | Partial | Several payment methods per bill via `payments[]` on checkout; no separate per-guest checks (2026-11-04) |
+| Cash + card / Cash + UPI / Card + UPI | Shipped | Any combination of methods in one checkout via `payments[]` (2026-11-04) |
 | Multiple currencies | Planned | Single `currency` field per restaurant (default INR), no multi-currency checkout |
-| Customer-facing display | Planned | |
+| Customer-facing display | Shipped | Second-screen page at `/customer-display` (2026-11-04) |
 | Receipt printing | Shipped | Self-printing HTML receipt via browser dialog |
 | Digital receipt | Planned | |
 | WhatsApp / SMS / Email receipt | Planned | No messaging integration in codebase |

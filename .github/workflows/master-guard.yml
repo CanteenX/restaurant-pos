@@ -1,0 +1,35 @@
+name: master guard
+
+# The free GitHub plan has no branch protection. master may only move by a
+# maintainer merging staging -> master. Any other push (e.g. an agent pushing
+# straight to master) opens an alert issue so a human can revert it.
+# Costs a few seconds per push to master.
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check the push came from a staging merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MSG: ${{ github.event.head_commit.message }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          if printf '%s' "$MSG" | grep -qiE "staging"; then
+            echo "OK: looks like a staging -> master merge"
+            exit 0
+          fi
+          gh issue create -R "${{ github.repository }}" \
+            --title "master guard: unexpected push to master by $ACTOR" \
+            --label "agent:blocked" \
+            --body "Commit ${{ github.sha }} was pushed to master without a staging merge. Review and revert if it was not intended. Only maintainers merge staging -> master."
+          exit 1

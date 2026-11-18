@@ -2,7 +2,8 @@
 
 import { AlertTriangle, CheckCircle2, CircleDashed, Copy, KeyRound, Link2, PauseCircle, ShieldAlert, Webhook } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { Fragment, useState, type ReactNode } from "react";
+import { ChannelHealthLine, ChannelItemsDialog } from "@/components/settings/online-channel";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,25 +22,39 @@ import {
   type IntegrationStatus,
 } from "@/hooks/use-integration-hub";
 import { ApiError } from "@/lib/api";
+import { useI18n, type TranslationKey } from "@/lib/i18n/context";
+
+// Inline markup helper for translated strings.
+function rich(text: string, tags: Record<string, (children: string) => ReactNode>): ReactNode[] {
+  const out: ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(/<(\w+)>(.*?)<\/\1>/g)) {
+    const at = m.index ?? 0;
+    out.push(text.slice(last, at));
+    out.push(<Fragment key={at}>{tags[m[1]]?.(m[2]) ?? m[2]}</Fragment>);
+    last = at + m[0].length;
+  }
+  out.push(text.slice(last));
+  return out;
+}
 
 // Status is always words plus an icon, never colour alone.
-const STATUS: Record<IntegrationStatus, { label: string; Icon: typeof CheckCircle2; tone: string }> = {
-  NOT_CONNECTED: { label: "Not connected", Icon: CircleDashed, tone: "text-muted-foreground" },
-  PENDING_CONFIGURATION: { label: "Pending configuration", Icon: AlertTriangle, tone: "text-warning" },
-  CONNECTED: { label: "Connected", Icon: CheckCircle2, tone: "text-success" },
-  SYNC_ERROR: { label: "Synchronization error", Icon: ShieldAlert, tone: "text-destructive" },
-  AUTH_EXPIRED: { label: "Authentication expired", Icon: ShieldAlert, tone: "text-destructive" },
-  DISABLED: { label: "Disabled", Icon: PauseCircle, tone: "text-muted-foreground" },
+const STATUS: Record<IntegrationStatus, { label: TranslationKey; Icon: typeof CheckCircle2; tone: string }> = {
+  NOT_CONNECTED: { label: "settings.integrations.status.NOT_CONNECTED", Icon: CircleDashed, tone: "text-muted-foreground" },
+  PENDING_CONFIGURATION: { label: "settings.integrations.status.PENDING_CONFIGURATION", Icon: AlertTriangle, tone: "text-warning" },
+  CONNECTED: { label: "settings.integrations.status.CONNECTED", Icon: CheckCircle2, tone: "text-success" },
+  SYNC_ERROR: { label: "settings.integrations.status.SYNC_ERROR", Icon: ShieldAlert, tone: "text-destructive" },
+  AUTH_EXPIRED: { label: "settings.integrations.status.AUTH_EXPIRED", Icon: ShieldAlert, tone: "text-destructive" },
+  DISABLED: { label: "settings.integrations.status.DISABLED", Icon: PauseCircle, tone: "text-muted-foreground" },
 };
 
-const when = (s: string | null) => (s ? new Date(s).toLocaleString() : "Never");
-
 function StatusBadge({ status }: { status: IntegrationStatus }) {
+  const { t } = useI18n();
   const { label, Icon, tone } = STATUS[status];
   return (
     <span className={`inline-flex items-center gap-1.5 text-sm font-medium ${tone}`}>
       <Icon className="h-4 w-4" aria-hidden />
-      {label}
+      {t(label)}
     </span>
   );
 }
@@ -54,13 +69,14 @@ const SAMPLE_PAYLOAD = `{
 }`;
 
 function CopyButton({ text, label }: { text: string; label: string }) {
+  const { t } = useI18n();
   const [done, setDone] = useState(false);
   return (
     <Button
       type="button"
       size="sm"
       variant="outline"
-      aria-label={`Copy ${label}`}
+      aria-label={label}
       onClick={() => {
         void navigator.clipboard?.writeText(text).then(() => {
           setDone(true);
@@ -69,50 +85,49 @@ function CopyButton({ text, label }: { text: string; label: string }) {
       }}
     >
       <Copy className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-      {done ? "Copied" : "Copy"}
+      {done ? t("settings.integrations.copied") : t("settings.integrations.copy")}
     </Button>
   );
 }
 
 function WebhookDetails({ p }: { p: IntegrationProviderInfo }) {
+  const { t } = useI18n();
   if (!p.webhookPath) return null;
   const url = `${typeof window === "undefined" ? "" : window.location.origin}${p.webhookPath}`;
   return (
     <details className="rounded-lg border border-border bg-secondary/40 p-3 text-xs">
-      <summary className="cursor-pointer font-medium text-foreground">Webhook setup</summary>
+      <summary className="cursor-pointer font-medium text-foreground">{t("settings.integrations.webhook.summary")}</summary>
       <div className="mt-2 flex flex-col gap-2 text-muted-foreground">
         <p>
-          Give your aggregator (UrbanPiper, Petpooja, Dotpe…) or {p.name} merchant webhook this URL. The server must be
-          reachable from the internet (a Cloudflare Tunnel works).
+          {t("settings.integrations.webhook.give", { name: p.name })}
         </p>
         <div className="flex items-center gap-2">
           <code className="min-w-0 flex-1 break-all rounded bg-background px-2 py-1 text-foreground">{url}</code>
-          <CopyButton text={url} label="webhook URL" />
+          <CopyButton text={url} label={t("settings.integrations.copyWebhookUrl")} />
         </div>
         <p>
-          Send <code>POST</code> JSON with headers <code>X-OrderRestro-Timestamp</code> (unix seconds) and{" "}
-          <code>X-OrderRestro-Signature: sha256=HMAC_SHA256(secret, timestamp + &quot;.&quot; + body)</code>. Items are matched by
-          menu item name or id; prices always come from your menu. Send <code>{`{"event":"ping"}`}</code> to test —
-          this card turns Connected only when a correctly signed event arrives.
+          {rich(t("settings.integrations.webhook.send"), { code: (text) => <code>{text}</code> })}
         </p>
         <pre className="overflow-x-auto rounded bg-background p-2 text-foreground">{SAMPLE_PAYLOAD}</pre>
-        <p>Orders arrive as online orders waiting for acceptance. Cancel with <code>order.cancelled</code>. Full reference: docs/INTEGRATIONS.md.</p>
+        <p>{rich(t("settings.integrations.webhook.orders"), { code: (text) => <code>{text}</code> })}</p>
       </div>
     </details>
   );
 }
 
-function ProviderCard({ p, onConfigure }: { p: IntegrationProviderInfo; onConfigure: () => void }) {
+function ProviderCard({ p, onConfigure, onItems }: { p: IntegrationProviderInfo; onConfigure: () => void; onItems: () => void }) {
+  const { t } = useI18n();
+  const when = (s: string | null) => (s ? new Date(s).toLocaleString() : t("settings.integrations.never"));
   const { test, setEnabled, disconnect } = useIntegrationActions();
   const { note, clear, toast } = useNoteToast();
   const [showLog, setShowLog] = useState(false);
   const logs = useIntegrationLogs(showLog ? p.key : null);
   const c = p.connection;
-  const fail = (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Something went wrong");
+  const fail = (e: unknown) => toast.error(e instanceof ApiError ? e.message : t("settings.integrations.error"));
   const unsupported = !p.capabilities.receiveOrders && !p.capabilities.webhooks;
 
   return (
-    <Card className="flex flex-col gap-3 p-5">
+    <Card data-testid={`channel-${p.key}`} className="flex flex-col gap-3 p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-[18px] font-medium text-foreground">{p.name}</h3>
@@ -121,7 +136,7 @@ function ProviderCard({ p, onConfigure }: { p: IntegrationProviderInfo; onConfig
         {c && (
           <div className="flex shrink-0 items-center gap-2">
             <Label htmlFor={`en-${p.key}`} className="text-xs text-muted-foreground">
-              {c.enabled ? "Enabled" : "Disabled"}
+              {c.enabled ? t("settings.integrations.enabled") : t("settings.integrations.disabled")}
             </Label>
             <Switch
               id={`en-${p.key}`}
@@ -135,9 +150,11 @@ function ProviderCard({ p, onConfigure }: { p: IntegrationProviderInfo; onConfig
 
       <StatusBadge status={c?.status ?? "NOT_CONNECTED"} />
 
+      <ChannelHealthLine p={p} />
+
       {unsupported && (
         <p className="rounded-lg bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
-          Live order sync is not active for {p.name}. {p.requirements}
+          {t("settings.integrations.unsupported", { name: p.name, requirements: p.requirements ?? "" })}
         </p>
       )}
 
@@ -145,11 +162,11 @@ function ProviderCard({ p, onConfigure }: { p: IntegrationProviderInfo; onConfig
 
       {c && (
         <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
-          <div className="flex gap-1.5"><dt className="text-muted-foreground">{p.accountIdLabel ?? "Account"}:</dt><dd className="min-w-0 break-words text-foreground">{c.externalAccountId ?? "—"}</dd></div>
-          <div className="flex gap-1.5"><dt className="text-muted-foreground">Last checked:</dt><dd className="text-foreground">{when(c.lastSyncAt)}</dd></div>
-          <div className="flex gap-1.5"><dt className="text-muted-foreground">Last success:</dt><dd className="text-foreground">{when(c.lastSuccessAt)}</dd></div>
+          <div className="flex gap-1.5"><dt className="text-muted-foreground">{p.accountIdLabel ?? t("settings.integrations.account")}:</dt><dd className="min-w-0 break-words text-foreground">{c.externalAccountId ?? "—"}</dd></div>
+          <div className="flex gap-1.5"><dt className="text-muted-foreground">{t("settings.integrations.lastChecked")}</dt><dd className="text-foreground">{when(c.lastSyncAt)}</dd></div>
+          <div className="flex gap-1.5"><dt className="text-muted-foreground">{t("settings.integrations.lastSuccess")}</dt><dd className="text-foreground">{when(c.lastSuccessAt)}</dd></div>
           {c.lastError && (
-            <div className="flex gap-1.5 sm:col-span-2"><dt className="text-muted-foreground">Last error:</dt><dd className="min-w-0 break-words text-destructive">{c.lastError}</dd></div>
+            <div className="flex gap-1.5 sm:col-span-2"><dt className="text-muted-foreground">{t("settings.integrations.lastError")}</dt><dd className="min-w-0 break-words text-destructive">{c.lastError}</dd></div>
           )}
         </dl>
       )}
@@ -157,7 +174,7 @@ function ProviderCard({ p, onConfigure }: { p: IntegrationProviderInfo; onConfig
       <StatusNote note={note} onClear={clear} />
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={onConfigure}>{c ? "Configure" : "Connect"}</Button>
+        <Button size="sm" onClick={onConfigure}>{c ? t("settings.integrations.configure") : t("settings.integrations.connect")}</Button>
         {c && (
           <>
             <Button
@@ -171,10 +188,13 @@ function ProviderCard({ p, onConfigure }: { p: IntegrationProviderInfo; onConfig
                 })
               }
             >
-              {test.isPending ? "Checking…" : p.webhookPath ? "Check status" : "Test connection"}
+              {test.isPending ? t("settings.integrations.checking") : p.webhookPath ? t("settings.integrations.checkStatus") : t("settings.integrations.testConnection")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={onItems}>
+              {t("settings.integrations.items.open")}
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setShowLog((v) => !v)} aria-expanded={showLog}>
-              Activity
+              {t("settings.integrations.activity")}
             </Button>
             <Button
               size="sm"
@@ -182,11 +202,11 @@ function ProviderCard({ p, onConfigure }: { p: IntegrationProviderInfo; onConfig
               className="text-destructive hover:text-destructive"
               disabled={disconnect.isPending}
               onClick={() => {
-                if (!confirm(`Disconnect ${p.name}? The saved credentials and activity log are deleted.`)) return;
+                if (!confirm(t("settings.integrations.disconnectConfirm", { name: p.name }))) return;
                 disconnect.mutate(p.key, { onError: fail });
               }}
             >
-              Disconnect
+              {t("settings.integrations.disconnect")}
             </Button>
           </>
         )}
@@ -194,8 +214,8 @@ function ProviderCard({ p, onConfigure }: { p: IntegrationProviderInfo; onConfig
 
       {showLog && (
         <ul className="flex max-h-48 flex-col divide-y divide-border overflow-y-auto rounded-lg border border-border text-xs">
-          {logs.isLoading && <li className="p-2 text-muted-foreground">Loading…</li>}
-          {logs.data?.length === 0 && <li className="p-2 text-muted-foreground">No activity yet.</li>}
+          {logs.isLoading && <li className="p-2 text-muted-foreground">{t("settings.integrations.loading")}</li>}
+          {logs.data?.length === 0 && <li className="p-2 text-muted-foreground">{t("settings.integrations.noActivity")}</li>}
           {logs.data?.map((l) => (
             <li key={l.id} className="flex gap-2 p-2">
               <span className="shrink-0 text-muted-foreground">{new Date(l.createdAt).toLocaleString()}</span>
@@ -210,6 +230,7 @@ function ProviderCard({ p, onConfigure }: { p: IntegrationProviderInfo; onConfig
 }
 
 function ConfigureDialog({ p, onClose }: { p: IntegrationProviderInfo; onClose: () => void }) {
+  const { t } = useI18n();
   const { save } = useIntegrationActions();
   const { note, clear, toast } = useNoteToast();
   const [account, setAccount] = useState(p.connection?.externalAccountId ?? "");
@@ -220,18 +241,19 @@ function ConfigureDialog({ p, onClose }: { p: IntegrationProviderInfo; onClose: 
     const credentials = Object.fromEntries(Object.entries(values).filter(([, v]) => v.trim() !== ""));
     save.mutate(
       { provider: p.key, externalAccountId: account || undefined, credentials },
-      { onSuccess: onClose, onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not save") },
+      { onSuccess: onClose, onError: (err) => toast.error(err instanceof ApiError ? err.message : t("settings.integrations.saveFailed")) },
     );
   };
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{p.connection ? "Configure" : "Connect"} {p.name}</DialogTitle>
+          <DialogTitle>{p.connection ? t("settings.integrations.configure") : t("settings.integrations.connect")} {p.name}</DialogTitle>
         </DialogHeader>
         <p className="text-xs text-muted-foreground">
-          Use the credentials {p.name} issued to <span className="font-medium text-foreground">your</span> restaurant.
-          They are stored encrypted and are never shown again, so copy a generated secret into your aggregator now.
+          {rich(t("settings.integrations.dialog.intro", { name: p.name }), {
+            b: (text) => <span className="font-medium text-foreground">{text}</span>,
+          })}
         </p>
         <form onSubmit={submit} className="flex flex-col gap-3" autoComplete="off">
           {p.accountIdLabel && (
@@ -246,7 +268,7 @@ function ConfigureDialog({ p, onClose }: { p: IntegrationProviderInfo; onClose: 
               <div key={f.key} className="flex flex-col gap-1.5">
                 <Label htmlFor={`hub-${f.key}`}>
                   {f.label}
-                  {f.required ? "" : " (optional)"}
+                  {f.required ? "" : ` ${t("settings.integrations.optional")}`}
                 </Label>
                 {f.help && <p className="text-xs text-muted-foreground">{f.help}</p>}
                 {f.key === "webhookSecret" && (
@@ -262,9 +284,9 @@ function ConfigureDialog({ p, onClose }: { p: IntegrationProviderInfo; onClose: 
                         setValues({ ...values, [f.key]: v });
                       }}
                     >
-                      Generate secret
+                      {t("settings.integrations.generateSecret")}
                     </Button>
-                    {values[f.key] && <CopyButton text={values[f.key]} label="secret" />}
+                    {values[f.key] && <CopyButton text={values[f.key]} label={t("settings.integrations.copySecret")} />}
                   </div>
                 )}
                 <Input
@@ -272,7 +294,7 @@ function ConfigureDialog({ p, onClose }: { p: IntegrationProviderInfo; onClose: 
                   type={f.secret && f.key !== "webhookSecret" ? "password" : "text"}
                   autoComplete="off"
                   maxLength={500}
-                  placeholder={isSet ? "Saved — leave blank to keep" : ""}
+                  placeholder={isSet ? t("settings.integrations.savedPlaceholder") : ""}
                   value={values[f.key] ?? ""}
                   onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
                 />
@@ -281,8 +303,8 @@ function ConfigureDialog({ p, onClose }: { p: IntegrationProviderInfo; onClose: 
           })}
           <StatusNote note={note} onClear={clear} />
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</Button>
+            <Button type="button" variant="outline" onClick={onClose}>{t("settings.integrations.cancel")}</Button>
+            <Button type="submit" disabled={save.isPending}>{save.isPending ? t("settings.integrations.saving") : t("settings.integrations.save")}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -291,6 +313,7 @@ function ConfigureDialog({ p, onClose }: { p: IntegrationProviderInfo; onClose: 
 }
 
 function LinkCard({ href, icon: Icon, title, text }: { href: string; icon: typeof Webhook; title: string; text: string }) {
+  const { t } = useI18n();
   return (
     <Link
       href={href}
@@ -300,28 +323,31 @@ function LinkCard({ href, icon: Icon, title, text }: { href: string; icon: typeo
       <div className="min-w-0">
         <h3 className="text-[18px] font-medium text-foreground">{title}</h3>
         <p className="text-sm text-muted-foreground">{text}</p>
-        <span className="mt-2 inline-block text-sm font-medium text-primary group-hover:underline">Open</span>
+        <span className="mt-2 inline-block text-sm font-medium text-primary group-hover:underline">{t("settings.integrations.open")}</span>
       </div>
     </Link>
   );
 }
 
 export default function IntegrationsPage() {
+  const { t } = useI18n();
   const { data, isLoading, isError, error } = useIntegrationHub();
   const [configuring, setConfiguring] = useState<string | null>(null);
+  const [mapping, setMapping] = useState<string | null>(null);
   const delivery = data?.filter((p) => p.category === "FOOD_DELIVERY") ?? [];
   const current = data?.find((p) => p.key === configuring);
+  const mapped = data?.find((p) => p.key === mapping && p.connection);
 
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-[32px] font-semibold tracking-tight text-foreground">Settings</h1>
-        <p className="text-sm text-muted-foreground">Connect OrderRestro to the platforms you use</p>
+        <h1 className="text-[32px] font-semibold tracking-tight text-foreground">{t("settings.integrations.title")}</h1>
+        <p className="text-sm text-muted-foreground">{t("settings.integrations.subtitle")}</p>
       </div>
       <SettingsTabs />
 
       <section aria-labelledby="int-delivery" className="flex flex-col gap-3">
-        <h2 id="int-delivery" className="text-[20px] font-medium text-foreground">Food delivery platforms</h2>
+        <h2 id="int-delivery" className="text-[20px] font-medium text-foreground">{t("settings.integrations.delivery.title")}</h2>
         {delivery.find((p) => p.webhookPath)?.requirements && (
           <p className="text-sm text-muted-foreground">{delivery.find((p) => p.webhookPath)?.requirements}</p>
         )}
@@ -329,31 +355,32 @@ export default function IntegrationsPage() {
           <Skeleton className="h-40 rounded-2xl" />
         ) : isError ? (
           <p role="alert" className="text-sm text-destructive">
-            {error instanceof ApiError ? error.message : "Could not load integrations"}
+            {error instanceof ApiError ? error.message : t("settings.integrations.loadFailed")}
           </p>
         ) : (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {delivery.map((p) => (
-              <ProviderCard key={p.key} p={p} onConfigure={() => setConfiguring(p.key)} />
+              <ProviderCard key={p.key} p={p} onConfigure={() => setConfiguring(p.key)} onItems={() => setMapping(p.key)} />
             ))}
           </div>
         )}
       </section>
 
       <section aria-labelledby="int-dev" className="flex flex-col gap-3">
-        <h2 id="int-dev" className="text-[20px] font-medium text-foreground">Automation, webhooks and custom API</h2>
+        <h2 id="int-dev" className="text-[20px] font-medium text-foreground">{t("settings.integrations.dev.title")}</h2>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <LinkCard href="/settings/webhooks" icon={Webhook} title="Outgoing webhooks" text="Send signed order and reservation events to your own systems, with delivery history and retries." />
-          <LinkCard href="/settings/api-keys" icon={KeyRound} title="API access" text="Create scoped, expiring API keys so your website or other software can place and read orders." />
+          <LinkCard href="/settings/webhooks" icon={Webhook} title={t("settings.integrations.dev.webhooks.title")} text={t("settings.integrations.dev.webhooks.text")} />
+          <LinkCard href="/settings/api-keys" icon={KeyRound} title={t("settings.integrations.dev.api.title")} text={t("settings.integrations.dev.api.text")} />
         </div>
       </section>
 
       <p className="flex items-start gap-2 text-xs text-muted-foreground">
         <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-        Payment gateway, accounting, marketing and messaging connectors are not built yet, so they are not listed here.
+        {t("settings.integrations.notBuilt")}
       </p>
 
       {current && <ConfigureDialog key={current.key} p={current} onClose={() => setConfiguring(null)} />}
+      {mapped && <ChannelItemsDialog key={mapped.key} p={mapped} onClose={() => setMapping(null)} />}
     </div>
   );
 }

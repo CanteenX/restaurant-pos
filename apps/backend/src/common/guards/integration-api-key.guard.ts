@@ -12,7 +12,11 @@ import { createHash } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { PrismaService } from '../../prisma/prisma.service';
 import { INTEGRATION_SCOPES_KEY } from '../decorators/require-scope.decorator';
-import { envLimit, KeyRateLimiter } from './key-rate-limiter';
+import {
+  envLimit,
+  hitIntegrationWrite,
+  KeyRateLimiter,
+} from './key-rate-limiter';
 
 // Authenticates every route on IntegrationsController — the public REST API
 // external websites use as a backend (see docs/integrations-api.md). A
@@ -23,8 +27,8 @@ import { envLimit, KeyRateLimiter } from './key-rate-limiter';
 @Injectable()
 export class IntegrationApiKeyGuard implements CanActivate {
   // Per key, separately for writes (placing orders/bookings) and reads.
+  // Writes use the process-wide budget GraphQL mutations also spend.
   private readonly limiter = new KeyRateLimiter();
-  private readonly writeLimit = envLimit('INTEGRATION_WRITE_LIMIT_PER_MIN', 30);
   private readonly readLimit = envLimit('INTEGRATION_READ_LIMIT_PER_MIN', 300);
 
   constructor(
@@ -45,17 +49,7 @@ export class IntegrationApiKeyGuard implements CanActivate {
       );
     }
 
-    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
-    const key = await this.prisma.integrationApiKey.findUnique({
-      where: { tokenHash },
-    });
-    if (
-      !key ||
-      key.revokedAt ||
-      (key.expiresAt && key.expiresAt.getTime() <= Date.now())
-    ) {
-      throw new UnauthorizedException('Invalid, expired or revoked API key');
-    }
+    const key = await findActiveIntegrationKey(this.prisma, rawToken);
 
     const required = this.reflector.getAllAndOverride<string[]>(
       INTEGRATION_SCOPES_KEY,
@@ -71,10 +65,9 @@ export class IntegrationApiKeyGuard implements CanActivate {
     }
 
     const isWrite = request.method !== 'GET';
-    const retryAfter = this.limiter.hit(
-      `${key.id}:${isWrite ? 'w' : 'r'}`,
-      isWrite ? this.writeLimit : this.readLimit,
-    );
+    const retryAfter = isWrite
+      ? hitIntegrationWrite(key.id)
+      : this.limiter.hit(`${key.id}:r`, this.readLimit);
     if (retryAfter > 0) {
       context
         .switchToHttp()
@@ -92,12 +85,38 @@ export class IntegrationApiKeyGuard implements CanActivate {
       branchId: key.branchId,
       scopes: key.scopes,
     };
-
-    // Best-effort — must never block an already-authenticated request.
-    this.prisma.integrationApiKey
-      .update({ where: { id: key.id }, data: { lastUsedAt: new Date() } })
-      .catch(() => undefined);
+    touchIntegrationKey(this.prisma, key.id);
 
     return true;
   }
+}
+
+/**
+ * Looks up a raw integration key and throws 401 unless it exists and is
+ * neither revoked nor expired. Shared by the REST and GraphQL guards so both
+ * accept exactly the same credentials.
+ */
+export async function findActiveIntegrationKey(
+  prisma: PrismaService,
+  rawToken: string,
+) {
+  const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+  const key = await prisma.integrationApiKey.findUnique({
+    where: { tokenHash },
+  });
+  if (
+    !key ||
+    key.revokedAt ||
+    (key.expiresAt && key.expiresAt.getTime() <= Date.now())
+  ) {
+    throw new UnauthorizedException('Invalid, expired or revoked API key');
+  }
+  return key;
+}
+
+/** Best-effort lastUsedAt — must never block an authenticated request. */
+export function touchIntegrationKey(prisma: PrismaService, id: string) {
+  prisma.integrationApiKey
+    .update({ where: { id }, data: { lastUsedAt: new Date() } })
+    .catch(() => undefined);
 }

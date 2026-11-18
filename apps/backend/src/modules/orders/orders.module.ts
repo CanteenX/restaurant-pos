@@ -10,6 +10,7 @@ import { VerifactuModule } from '../verifactu/verifactu.module';
 import { KotPrintService } from './kot-print.service';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
+import { ReceiptEmailService } from './receipt-email.service';
 import { ScheduledOrdersService } from './scheduled-orders.service';
 
 @Module({
@@ -26,9 +27,10 @@ import { ScheduledOrdersService } from './scheduled-orders.service';
   providers: [
     OrdersService,
     KotPrintService,
+    ReceiptEmailService,
     ScheduledOrdersService,
     BranchAccessService,
   ],
-  exports: [OrdersService, KotPrintService],
+  exports: [OrdersService, KotPrintService, ReceiptEmailService],
 })
 export class OrdersModule {}

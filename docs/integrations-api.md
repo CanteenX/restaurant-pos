@@ -1,12 +1,12 @@
-# OrderRestro integrations: MCP server and public API
+# Nventra POS integrations: MCP server and public API
 
-OrderRestro exposes two separate ways to integrate with it programmatically,
+Nventra POS exposes two separate ways to integrate with it programmatically,
 each with its own credential type. Both are managed from **Settings > API
 Keys** in the app.
 
 | | **Personal API keys (MCP)** | **Integration API keys** |
 |---|---|---|
-| Who it's for | You (a staff member), connecting an AI client or script | An external website/system using OrderRestro as a backend |
+| Who it's for | You (a staff member), connecting an AI client or script | An external website/system using Nventra POS as a backend |
 | Identity | Acts as you, with your exact role permissions | No staff identity — carries its own explicit permission list |
 | Created by | Any logged-in staff member, for themselves | Anyone with the `settings.manage` permission (owners/admins) |
 | Scope | Everything you can already do in the app | Only what you tick when creating the key, optionally locked to one location |
@@ -104,14 +104,14 @@ curl -X POST https://your-domain/api/v1/mcp \
 
 ## 2. Integration API (for an external website's backend)
 
-A REST API an external system calls as OrderRestro's backend — browse a
+A REST API an external system calls as Nventra POS's backend — browse a
 location's menu, place an order, book a table, check status. Create a key
 from **Settings > API Keys > Integration API keys > New key**: pick a name,
 optionally scope it to one location ("selected location"), and tick the
 exact permissions ("scopes") it needs.
 
 **This is meant for server-to-server calls** — your website's own backend
-calling OrderRestro. Keep the key in the backend's environment (for Next.js:
+calling Nventra POS. Keep the key in the backend's environment (for Next.js:
 a server-only variable *without* the `NEXT_PUBLIC_` prefix, used only in Route
 Handlers / Server Actions). Never put it in browser JavaScript, a static
 bundle or source control. The key is a reusable credential, not a per-resource
@@ -119,6 +119,10 @@ token, so treat it like any other API secret. Give it only the scopes it
 needs: for a typical website `locations:read`, `menu:read`, `orders:write`,
 `orders:read` and, only if the site must show or forward the customer's mobile
 and address, `orders:read_customer`.
+`customers:read` is only used by the [GraphQL API](graphql-api.md) and
+exposes customer profiles (personal data); a website does not need it.
+`menu:availability` (GraphQL only) lets a back-office system mark dishes sold
+out or back on; a website does not need it either.
 
 To expose the API on the internet, and a complete Next.js example, see
 [website-integration.md](website-integration.md).
@@ -229,7 +233,7 @@ The response is the order in the shape below (without customer details):
   "createdAt": "...", "scheduledFor": null, "notes": null,
   "items": [{ "name": "Margherita", "quantity": 2, "unitPrice": 200, "lineTotal": 400,
               "kitchenNote": null, "modifiers": [] }],
-  "totals": { "subtotal": 400, "tax": 19.05, "discount": 0, "deliveryFee": 40, "total": 440, "paid": 0 },
+  "totals": { "subtotal": 400, "tax": 19.05, "discount": 0, "tip": 0, "deliveryFee": 40, "total": 440, "paid": 0 },
   "fulfillment": { "deliveryStatus": "UNASSIGNED", "etaAt": "...", "deliveredAt": null }
 }
 ```
@@ -351,6 +355,15 @@ website can show the price before the guest orders:
   `totals.deliveryFee`. A location with no zones has no fee or zone check.
 - `scheduledFor` — ISO time at least 10 minutes ahead. The kitchen ticket is
   released about 25 minutes before it (click & collect / pre-orders).
+
+## GraphQL
+
+The same integration API keys (and staff sessions) also work against a
+GraphQL endpoint at `/api/v1/graphql` — see [graphql-api.md](graphql-api.md)
+for the reference and [GRAPHQL.md](GRAPHQL.md) for worked examples, including
+the `createOrder` and `setMenuItemAvailability` mutations.
+
+---
 
 ## 3. Webhooks (events pushed to your system)
 

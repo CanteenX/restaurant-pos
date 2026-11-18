@@ -26,3 +26,21 @@ export const setBackupConfigSchema = z.object({
   retainCount: z.coerce.number().int().min(1).max(10).optional(),
 });
 export type SetBackupConfigDto = z.infer<typeof setBackupConfigSchema>;
+
+// Local (folder / USB / NAS) backups. `directory` is relative to, or an
+// absolute path inside, LOCAL_BACKUP_ROOT; the server rejects anything that
+// resolves outside it (traversal, other mounts, symlink escapes).
+export const setLocalBackupConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  directory: z
+    .string()
+    .trim()
+    .max(500)
+    .refine((v) => !v.includes("\0"), "Invalid directory")
+    .optional(),
+  intervalHours: z.coerce.number().int().min(1).max(168).optional(),
+  retainCount: z.coerce.number().int().min(1).max(90).optional(),
+});
+export type SetLocalBackupConfigDto = z.infer<
+  typeof setLocalBackupConfigSchema
+>;

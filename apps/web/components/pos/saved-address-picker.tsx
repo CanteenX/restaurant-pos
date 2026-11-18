@@ -1,8 +1,9 @@
 "use client";
 
-import { formatCustomerAddress } from "@nodedr-restaurant/types";
+import { formatCustomerAddress } from "@nventra/types";
 import { useEffect, useState } from "react";
 import { useCustomerAddresses, useCustomers } from "@/hooks/use-customers";
+import { useI18n } from "@/lib/i18n/context";
 
 // Phone-first lookup: once the typed phone number matches exactly one saved
 // customer, their saved addresses are offered as one-tap fills. Nothing is
@@ -16,11 +17,12 @@ export function SavedAddressPicker({
   phone: string;
   onPick: (address: string, pincode: string) => void;
 }) {
+  const { t } = useI18n();
   const digits = phone.replace(/\D/g, "");
   const [debounced, setDebounced] = useState("");
   useEffect(() => {
-    const t = setTimeout(() => setDebounced(digits.length >= 8 ? digits : ""), 400);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setDebounced(digits.length >= 8 ? digits : ""), 400);
+    return () => clearTimeout(timer);
   }, [digits]);
 
   const customers = useCustomers(branchId, debounced || undefined);
@@ -32,9 +34,9 @@ export function SavedAddressPicker({
 
   if (!customer || !addresses.data || addresses.data.length === 0) return null;
   return (
-    <div className="flex flex-col gap-1.5 rounded-lg bg-secondary/60 p-2" role="group" aria-label={`Saved addresses for ${customer.name ?? "customer"}`}>
+    <div className="flex flex-col gap-1.5 rounded-lg bg-secondary/60 p-2" role="group" aria-label={t("pos.savedAddresses.aria", { name: customer.name ?? t("pos.savedAddresses.customerFallback") })}>
       <p className="text-xs text-muted-foreground">
-        Saved addresses for <span className="font-medium text-foreground">{customer.name ?? "this customer"}</span>
+        {t("pos.savedAddresses.heading")} <span className="font-medium text-foreground">{customer.name ?? t("pos.savedAddresses.thisCustomer")}</span>
       </p>
       <div className="flex flex-col gap-1">
         {addresses.data.map((a) => (
@@ -45,8 +47,8 @@ export function SavedAddressPicker({
             onClick={() => onPick(formatCustomerAddress(a), a.pincode ?? "")}
             className="min-h-9 rounded-md border border-border bg-card px-2.5 py-1.5 text-left text-xs transition-colors hover:border-primary/50 hover:bg-secondary"
           >
-            <span className="font-medium text-foreground">{a.label || "Address"}</span>
-            {a.isDefault ? " · default" : ""}
+            <span className="font-medium text-foreground">{a.label || t("pos.savedAddresses.address")}</span>
+            {a.isDefault ? ` · ${t("pos.savedAddresses.default")}` : ""}
             <span className="line-clamp-2 [overflow-wrap:anywhere] text-muted-foreground">
               {formatCustomerAddress(a)}
               {a.pincode ? ` – ${a.pincode}` : ""}
