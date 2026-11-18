@@ -29,6 +29,8 @@ model AuditEvent {
 }
 
 model Staff {
+  billingInvoices BillingInvoice[]
+  billingPayments BillingPayment[]
   id                 String    @id @db.Uuid
   email              String    @unique
   grants             String[]  @default([])
@@ -80,6 +82,7 @@ model StaffEnrollmentProof {
 }
 
 model Business {
+  billingInvoices BillingInvoice[]
   id          String   @id @db.Uuid
   legalName   String   @map("legal_name") @db.VarChar(160)
   displayName String   @map("display_name") @db.VarChar(160)
@@ -244,5 +247,45 @@ model OutboxDailyQuota {
   day DateTime @id @db.Date
   attempts Int
   @@map("outbox_daily_quota")
+  @@schema("control")
+}
+
+model BillingInvoice {
+  id String @id @db.Uuid
+  businessId String @map("business_id") @db.Uuid
+  business Business @relation(fields:[businessId],references:[id],onUpdate:NoAction,onDelete:NoAction)
+  requestKey String @map("request_key") @db.Uuid
+  createdBy String @map("created_by") @db.Uuid
+  actor Staff @relation(fields:[createdBy],references:[id],onUpdate:NoAction,onDelete:NoAction)
+  reference String @db.VarChar(120)
+  description String @db.VarChar(1000)
+  amountPaise BigInt @map("amount_paise")
+  dueOn DateTime @map("due_on") @db.Date
+  createdAt DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  payments BillingPayment[]
+  @@unique([businessId,id])
+  @@unique([businessId,requestKey])
+  @@index([dueOn,id],map:"billing_invoice_due_idx")
+  @@map("billing_invoice")
+  @@schema("control")
+}
+
+model BillingPayment {
+  id String @id @db.Uuid
+  businessId String @map("business_id") @db.Uuid
+  invoiceId String @map("invoice_id") @db.Uuid
+  invoice BillingInvoice @relation(fields:[businessId,invoiceId],references:[businessId,id],onUpdate:NoAction,onDelete:NoAction)
+  requestKey String @map("request_key") @db.Uuid
+  createdBy String @map("created_by") @db.Uuid
+  actor Staff @relation(fields:[createdBy],references:[id],onUpdate:NoAction,onDelete:NoAction)
+  reference String @db.VarChar(120)
+  method String @db.VarChar(13)
+  amountPaise BigInt @map("amount_paise")
+  ordinal Int @default(dbgenerated("0"))
+  createdAt DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  @@unique([invoiceId,requestKey])
+  @@unique([invoiceId,method,reference])
+  @@unique([invoiceId,ordinal])
+  @@map("billing_payment")
   @@schema("control")
 }
