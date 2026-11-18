@@ -1,3 +1,4 @@
+import { operatorCases } from '../operator/operator.integration.js';
 import { staffAuthCases } from '../staff/staff-auth.integration.js';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -234,4 +235,5 @@ void test('PostgreSQL 16 Control audit storage', { skip: !ci && !testUrl }, asyn
     await assert.rejects(insert(expiry), state('23505'));
   });
   await t.test('Control staff authentication', async (staff) => staffAuthCases(staff, db, url.toString()));
+  await t.test('Control staff operator provisioning', (stage) => operatorCases(stage, db, url.toString()));
 });

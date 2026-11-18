@@ -45,7 +45,7 @@ and backups. Changing it invalidates outstanding credentials and requires factor
 re-enrollment. With all three settings absent the bootstrap serves health only.
 Partial configuration prevents startup.
 
-An operator with provisioning privileges adds each eligible staff row, including
+The [owner-run provisioning command](operator/README.md) adds each eligible staff row, including
 the owner, to the Control database with a UUID, normalized email and a bcrypt
 password hash (cost 12, maximum 72 UTF-8 bytes). The API's runtime role cannot
 create or enable staff accounts. There is no public signup or owner bypass.
