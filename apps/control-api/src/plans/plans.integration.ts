@@ -24,6 +24,41 @@ export async function planCases(t: TestContext, db: PrismaClient, url: string, o
       'content-type': 'application/json' }, body: JSON.stringify(body) });
   const assign = (body: object = term, cookie = writer.cookie) => request(history + '/assign', cookie, body);
 
+  await t.test('queues only the latest upcoming renewals for active outlets and pages in order', async () => {
+    const add = (name: string, archived = false) => db.outlet.create({
+      data: { id: randomUUID(), businessId: parent.id, displayName: name, timeZone: 'Asia/Kolkata', archived },
+    });
+    const next = await add('First due'), later = await add('Second due'), ignored = await add('Archived outlet', true);
+    const record = (id: string, days: number, revision = 1) => db.outletServiceTerm.create({
+      data: { id: randomUUID(), businessId: parent.id, outletId: id, revision, requestKey: randomUUID(),
+        operation: revision === 1 ? 'assign' : 'renew', planCode: 'starter', planVersion: 1,
+        startsAt: at(revision === 1 ? -1 : 1), endsAt: at(days) },
+    });
+    await record(next.id, 2);
+    await record(later.id, 1);
+    await record(later.id, 3, 2);
+    await record(ignored.id, 1);
+    assert.equal((await request('plans/renewals', '')).status, 401);
+    assert.equal((await request('plans/renewals', writer.cookie)).status, 403);
+    assert.equal((await request('plans/renewals?cursor=invalid', reader.cookie)).status, 400);
+    assert.equal((await request('plans/renewals?businessId=invalid', reader.cookie)).status, 400);
+    const scoped = await request('plans/renewals?businessId=' + parent.id, reader.cookie);
+    assert.equal(scoped.status, 200);
+    assert.deepEqual((await scoped.json() as { items: { outletId: string }[] }).items.map((row) => row.outletId), [next.id, later.id]);
+    const unrelated = await request('plans/renewals?businessId=' + randomUUID(), reader.cookie);
+    assert.equal(unrelated.status, 200);
+    assert.deepEqual(await unrelated.json(), { items: [], nextCursor: null });
+    const first = await request('plans/renewals?limit=1', reader.cookie);
+    assert.equal(first.status, 200);
+    const { items, nextCursor } = await first.json() as { items: { outletId: string }[]; nextCursor: string };
+    assert.deepEqual(items.map((row) => row.outletId), [next.id]);
+    const second = await request('plans/renewals?limit=1&cursor=' + encodeURIComponent(nextCursor), reader.cookie);
+    assert.equal(second.status, 200);
+    const secondPage = await second.json() as { items: { outletId: string }[]; nextCursor: string | null };
+    assert.deepEqual(secondPage.items.map((row) => row.outletId), [later.id]);
+    assert.equal(secondPage.nextCursor, null);
+  });
+
   await t.test('authorizes catalog, history and mutations with explicit permissions and recent 2FA', async () => {
     assert.equal((await request('plans', '')).status, 401);
     assert.equal((await request('plans', writer.cookie)).status, 403);
