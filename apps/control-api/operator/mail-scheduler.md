@@ -5,7 +5,7 @@ Use the owner’s existing host and a dedicated Control PostgreSQL database. Eac
 ## Before enabling live mail
 
 1. Keep `CONTROL_MAIL_ENABLED` absent or set to `false` while testing. Disabled runs open no worker database session or mail connection. Obtain owner approval for the mailbox and retention before enabling it.
-2. Apply the Control migrations, then have a database administrator create a separate restricted login for the scheduler with membership in the `control_mail_worker NOLOGIN` group. Apply [mail-worker-grants.sql](mail-worker-grants.sql) as the migration owner. The scheduler account should have no staff, operator, migration or database owner privileges. Use a local authenticated connection or verified database TLS.
+2. Apply the Control migrations, then have a database administrator create a separate restricted login for the scheduler with membership in the `control_mail_worker NOLOGIN` group. Apply [mail-worker-grants.sql](mail-worker-grants.sql) as the migration owner. The job verifies the authenticated database login, inherited worker grants and Control schema access. The scheduler account needs only worker privileges. Use a local authenticated connection or verified database TLS.
 3. Use the host’s secret manager to inject the scheduler-only variables into its process environment. Scope access to the scheduler service account and the owner. Keep values out of task arguments, task XML, logs, shell history and checked-in configuration.
 
 | Variable | Meaning |
