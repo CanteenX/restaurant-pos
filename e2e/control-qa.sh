@@ -30,6 +30,9 @@ pnpm --filter @nventra/control... --filter @nventra/control-api... install --fro
 pnpm --filter @nventra/types build
 pnpm --filter @nventra/control-api build
 npm --prefix e2e ci --ignore-scripts --no-audit --no-fund
+if [ "${CONTROL_QA_INSTALL_CHROMIUM:-}" = 1 ]; then
+  node e2e/node_modules/@playwright/test/cli.js install --with-deps --only-shell chromium
+fi
 pg="$(docker run -d -e POSTGRES_USER=fixture -e POSTGRES_PASSWORD=fixture -e POSTGRES_DB=fixture -p 127.0.0.1::5432 postgres:16-alpine)"
 pg_ready() {
   docker exec "$pg" pg_isready -h 127.0.0.1 -U fixture >/dev/null 2>&1
