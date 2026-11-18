@@ -29,6 +29,11 @@ export async function staffAuthCases(t: TestContext, db: PrismaClient, datasourc
     method: 'POST', headers: { 'Content-Type': 'application/json', origin: requestOrigin, cookie },
     body: JSON.stringify(body),
   });
+  const proof = Buffer.alloc(32, 0x5a);
+  const issue = (expiry: Date) => db.$executeRaw`INSERT INTO control.staff_enrollment_proof
+    (staff_id, digest, expires_at) VALUES (${id}::uuid, sha256(${proof}), ${expiry})
+    ON CONFLICT (staff_id) DO UPDATE SET expires_at = EXCLUDED.expires_at`;
+  const begin = (enrollmentProof?: string) => post('session/challenge', { email, password, enrollmentProof });
   const challenge = async () => {
     const res = await post('session/challenge', { email, password });
     assert.equal(res.status, 200);
@@ -38,18 +43,41 @@ export async function staffAuthCases(t: TestContext, db: PrismaClient, datasourc
   const getSession = (cookie: string) => fetch(root + 'session', { headers: { cookie } });
   const verify = (token: string, code: string) => post('session/verify', { challenge: token, code });
 
-  await t.test('only preprovisioned accounts can enroll and first-factor credentials cannot authorize sessions', async () => {
+  await t.test('rejects malformed credentials without returning parser input', async () => {
+    const malformed = 'sensitive-marker';
+    for (const [requestOrigin, status] of [[origin, 400], ['https://other.example.test', 403]] as const) {
+      const res = await fetch(root + 'session/challenge', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', origin: requestOrigin }, body: malformed });
+      assert.equal(res.status, status);
+      assert.equal(res.headers.get('cache-control'), 'no-store');
+      assert.equal((await res.text()).includes(malformed), false);
+    }
+  });
+
+  await t.test('requires an independent unexpired proof before issuing a first seed', async () => {
     assert.equal((await post('session/challenge', { email: 'unknown@example.test', password })).status, 401);
-    assert.equal((await post('session/challenge', { email, password }, 'https://other.example.test')).status, 403);
-    const first = await challenge();
+    assert.equal((await begin()).status, 401);
+    await issue(new Date(0));
+    assert.equal((await begin(proof.toString('base64url'))).status, 401);
+    await issue(new Date(Date.now() + 60_000));
+    assert.equal((await begin(Buffer.alloc(32).toString('base64url'))).status, 401);
+    assert.equal((await begin('A'.repeat(42) + 'B')).status, 400);
+    const pending = await db.staff.findUniqueOrThrow({ where: { id } });
+    assert.equal(pending.pendingSeed, null);
+  });
+
+  await t.test('consumes enrollment, TOTP and recovery atomically and revokes logout', async () => {
+    await db.authLimit.deleteMany();
+    const response = () => begin(proof.toString('base64url'));
+    const initial = await Promise.all([response(), response()]);
+    assert.deepEqual(initial.map((r) => r.status).sort(), [200, 401]);
+    const granted = initial.find((r) => r.status === 200)!;
+    assert.equal(granted.headers.get('set-cookie'), null);
+    assert.equal(granted.headers.get('cache-control'), 'no-store');
+    const first = await granted.json() as { challenge: string; enrollmentSecret: string };
     assert.ok(first.enrollmentSecret);
     assert.equal((await getSession('__Host-control_staff=' + first.challenge)).status, 401);
     assert.equal((await verify(first.challenge, '000000')).status, 401);
-  });
-
-  await t.test('requires enrollment proof, consumes TOTP and recovery codes atomically, and revokes logout', async () => {
-    const first = await challenge();
-    assert.ok(first.enrollmentSecret);
     const pending = await db.staff.findUniqueOrThrow({ where: { id } });
     assert.ok(pending.pendingSeed && !pending.pendingSeed.includes(first.enrollmentSecret));
     assert.notEqual(pending.challengeDigest, first.challenge);
@@ -92,7 +120,7 @@ export async function staffAuthCases(t: TestContext, db: PrismaClient, datasourc
     await db.staff.update({ where: { id }, data: { enabled: false } });
     assert.equal((await getSession(recoveryCookie)).status, 401);
     await db.staff.update({ where: { id }, data: { enabled: true } });
-    await db.staffSession.updateMany({ where: { staffId: id }, data: { expiresAt: new Date(0) } });
+    await db.staffSession.updateMany({ where: { staffId: id }, data: { verifiedAt: new Date(0), expiresAt: new Date(1) } });
     assert.equal((await getSession(recoveryCookie)).status, 401);
   });
 

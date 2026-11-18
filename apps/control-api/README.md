@@ -3,7 +3,7 @@
 Run from the monorepo root after installing workspace dependencies.
 
 ```sh
-pnpm --filter @nventra/control-api build
+pnpm --filter @nventra/control-api... build
 CONTROL_API_PORT=4002 pnpm --filter @nventra/control-api start
 curl --fail http://localhost:4002/api/control/v1/health
 ```
@@ -52,7 +52,11 @@ create or enable staff accounts. There is no public signup or owner bypass.
 
 POST `/staff/session/challenge` with email and password. A new challenge
 supersedes the staff member's previous challenge and expires after five minutes.
-First-time staff receive a base32 authenticator seed. Confirm it with the
+For first-time enrollment the operator separately supplies a single-use 32-byte
+proof over a trusted channel and provisions its SHA-256 digest and expiry in
+Control. Include the proof as unpadded base64url in `enrollmentProof`. The API
+consumes it before returning a base32 seed. If the response is lost, the
+operator must issue a fresh proof. Confirm the seed with the
 challenge and six-digit code at `/staff/enrollment` and save the returned
 recovery codes. Later logins use `/staff/session/verify` with the challenge and
 TOTP or one unused recovery code. Both endpoints issue an eight-hour secure

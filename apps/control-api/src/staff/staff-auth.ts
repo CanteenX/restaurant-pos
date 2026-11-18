@@ -44,22 +44,32 @@ export class StaffAuth {
       (SELECT bucket FROM control.auth_limit WHERE expires_at <= now() LIMIT 64)`;
   }
 
-  async challenge(email: string, password: string, ip: string) {
+  async challenge(email: string, password: string, ip: string, enrollmentProof?: string) {
     await this.limitPeer('challenge', ip);
     await this.limit('challenge:account', email, 8);
     const staff = await this.db.staff.findUnique({ where: { email } });
     const valid = await compare(password, staff?.passwordHash ?? this.dummyHash);
-    if (!valid || !staff?.enabled) throw new UnauthorizedException();
-
-    const challenge = token();
-    const enrollmentSecret = staff.encryptedSeed ? undefined : generateSecret();
-    const changed = await this.db.staff.updateMany({
-      where: { id: staff.id, enabled: true, passwordHash: staff.passwordHash, encryptedSeed: staff.encryptedSeed },
-      data: { challengeDigest: this.digest('challenge', challenge), challengeExpiresAt: minutes(5),
-        pendingSeed: enrollmentSecret ? sealSecret(enrollmentSecret, this.key + staff.id) : null },
+    if (!valid || !staff?.enabled || (staff.encryptedSeed && enrollmentProof)) {
+      throw new UnauthorizedException();
+    }
+    return this.db.$transaction(async (tx) => {
+      let enrollmentSecret: string | undefined;
+      if (!staff.encryptedSeed) {
+        if (!enrollmentProof) throw new UnauthorizedException();
+        const [{ used }] = await tx.$queryRaw<{ used: boolean }[]>`SELECT control.consume_staff_enrollment(
+          ${staff.id}::uuid, ${Buffer.from(enrollmentProof, 'base64url')}::bytea) AS used`;
+        if (!used) throw new UnauthorizedException();
+        enrollmentSecret = generateSecret();
+      }
+      const challenge = token();
+      const changed = await tx.staff.updateMany({
+        where: { id: staff.id, enabled: true, passwordHash: staff.passwordHash, encryptedSeed: staff.encryptedSeed },
+        data: { challengeDigest: this.digest('challenge', challenge), challengeExpiresAt: minutes(5),
+          pendingSeed: enrollmentSecret ? sealSecret(enrollmentSecret, this.key + staff.id) : null },
+      });
+      if (!changed.count) throw new UnauthorizedException();
+      return { challenge, enrollmentSecret };
     });
-    if (!changed.count) throw new UnauthorizedException();
-    return { challenge, enrollmentSecret };
   }
 
   async factor(challenge: string, code: string, ip: string, enrollment: boolean) {

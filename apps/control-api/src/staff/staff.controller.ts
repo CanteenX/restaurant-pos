@@ -31,7 +31,7 @@ export class StaffController {
   challenge(@Body() body: unknown, @Req() req: IncomingMessage) {
     const parsed = controlChallengeSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException();
-    return this.auth.challenge(parsed.data.email, parsed.data.password, req.socket.remoteAddress ?? 'unknown');
+    return this.auth.challenge(parsed.data.email, parsed.data.password, req.socket.remoteAddress ?? 'unknown', parsed.data.enrollmentProof);
   }
 
   private async complete(body: unknown, req: IncomingMessage, res: ServerResponse, enrollment: boolean) {
