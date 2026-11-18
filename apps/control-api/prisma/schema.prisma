@@ -31,6 +31,8 @@ model AuditEvent {
 model Staff {
   id                 String    @id @db.Uuid
   email              String    @unique
+  grants             String[]  @default([])
+  credentialVersion  BigInt    @default(0) @map("credential_version")
   passwordHash       String    @map("password_hash")
   enabled            Boolean   @default(true)
   encryptedSeed      String?   @map("encrypted_seed")

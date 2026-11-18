@@ -29,7 +29,7 @@ export async function createControlApi(env: NodeJS.ProcessEnv) {
   if (auth) {
     app.use('/api/control/v1/staff', (req: IncomingMessage, res: ServerResponse, next: () => void) => {
       res.setHeader('Cache-Control', 'no-store');
-      if (req.method === 'POST' && req.headers.origin !== auth.origin) {
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method ?? '') && req.headers.origin !== auth.origin) {
         res.statusCode = 403;
         res.end();
         return;
