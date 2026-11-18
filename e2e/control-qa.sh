@@ -31,10 +31,14 @@ pnpm --filter @nventra/types build
 pnpm --filter @nventra/control-api build
 npm --prefix e2e ci --ignore-scripts --no-audit --no-fund
 pg="$(docker run -d -e POSTGRES_USER=fixture -e POSTGRES_PASSWORD=fixture -e POSTGRES_DB=fixture -p 127.0.0.1::5432 postgres:16-alpine)"
+pg_ready() {
+  docker exec "$pg" pg_isready -h 127.0.0.1 -U fixture >/dev/null 2>&1
+}
 for _ in {1..30}; do
-  docker exec "$pg" pg_isready -U fixture >/dev/null 2>&1 && break
+  pg_ready && break
   sleep 1
 done
+pg_ready || { echo 'Control fixture database did not become ready.' >&2; exit 1; }
 binding="$(docker port "$pg" 5432/tcp)"
 export CONTROL_DATABASE_URL="postgresql://fixture:fixture@$binding/fixture"
 export CONTROL_AUTH_KEY='a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5'
