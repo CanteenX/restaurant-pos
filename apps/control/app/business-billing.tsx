@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { call, pagePath, useRequestScope, type Page } from './api';
+import { formatInr } from './money';
 
 type Failure = (error: unknown) => void;
 type Invoice = {
@@ -19,10 +20,11 @@ type Payment = {
   amountPaise: number;
   method: 'bank_transfer' | 'upi';
 };
-const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' });
+export type BillingAttempts = RefObject<Map<string, string>>;
 
 export function useOperationList<T>(path: string, refresh: number, onError: Failure) {
-  const [page, setPage] = useState<Page<T>>();
+  const [result, setResult] = useState<{ path: string; page: Page<T> }>();
+  const page = result?.path === path ? result.page : undefined;
   const [loading, setLoading] = useState(false);
   const request = useRef<AbortController | undefined>(undefined);
   const paging = useRef(false);
@@ -31,10 +33,10 @@ export function useOperationList<T>(path: string, refresh: number, onError: Fail
     const controller = new AbortController();
     request.current = controller;
     void call<Page<T>>(path, undefined, controller.signal).then((result) => {
-      if (!controller.signal.aborted) setPage(result);
+      if (!controller.signal.aborted) setResult({ path, page: result });
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
-      setPage(undefined);
+      setResult(undefined);
       onError(error);
     });
     return () => controller.abort();
@@ -47,12 +49,12 @@ export function useOperationList<T>(path: string, refresh: number, onError: Fail
     setLoading(true);
     try {
       const next = await call<Page<T>>(pagePath(path, page.nextCursor), undefined, signal);
-      if (!signal.aborted) setPage((current) => current && ({
-        items: [...current.items, ...next.items], nextCursor: next.nextCursor,
-      }));
+      if (!signal.aborted) setResult((current) => current?.path === path ? { path, page: {
+        items: [...current.page.items, ...next.items], nextCursor: next.nextCursor,
+      } } : current);
     } catch (error) {
       if (!signal.aborted) {
-        setPage(undefined);
+        setResult(undefined);
         onError(error);
       }
     } finally {
@@ -70,10 +72,9 @@ function amountInPaise(value: FormDataEntryValue | null) {
   return Number.isSafeInteger(paise) && paise > 0 ? paise : null;
 }
 
-function RecordAmount({ path, kind, onSaved, onCancel, onError }: {
-  path: string; kind: 'invoice' | 'payment'; onSaved: () => void; onCancel: () => void; onError: Failure;
+function RecordAmount({ path, kind, attempts, onSaved, onCancel, onError }: {
+  path: string; kind: 'invoice' | 'payment'; attempts: BillingAttempts; onSaved: () => void; onCancel: () => void; onError: Failure;
 }) {
-  const attempts = useRef<{ payload: string; key: string } | undefined>(undefined);
   const pending = useRef(false);
   const [busy, setBusy] = useState(false);
   const [validation, setValidation] = useState('');
@@ -95,13 +96,14 @@ function RecordAmount({ path, kind, onSaved, onCancel, onError }: {
     const body = invoice
       ? { ...common, description: String(form.get('description')).trim(), dueOn: form.get('dueOn') }
       : { ...common, method: form.get('method') };
-    const payload = JSON.stringify(body);
-    const requestKey = attempts.current?.payload === payload ? attempts.current.key : crypto.randomUUID();
-    attempts.current = { payload, key: requestKey };
+    const attempt = path + '\n' + JSON.stringify(body);
+    const requestKey = attempts.current.get(attempt) ?? crypto.randomUUID();
+    attempts.current.set(attempt, requestKey);
     pending.current = true;
     setBusy(true);
     try {
       await call(path, { ...body, requestKey });
+      if (attempts.current.get(attempt) === requestKey) attempts.current.delete(attempt);
       if (!signal.aborted) onSaved();
     } catch (error) {
       if (!signal.aborted) onError(error);
@@ -126,33 +128,34 @@ function RecordAmount({ path, kind, onSaved, onCancel, onError }: {
   </fieldset></form>;
 }
 
-function Payments({ invoice, path, manage, refresh, onChanged, onError }: {
-  invoice: Invoice; path: string; manage: boolean; refresh: number; onChanged: () => void; onError: Failure;
+function Payments({ invoice, path, manage, refresh, attempts, onChanged, onError, onReadError }: {
+  invoice: Invoice; path: string; manage: boolean; refresh: number; attempts: BillingAttempts;
+  onChanged: () => void; onError: Failure; onReadError: Failure;
 }) {
   const [recording, setRecording] = useState(false);
-  const { page, more, loading } = useOperationList<Payment>(path, refresh, onError);
+  const { page, more, loading } = useOperationList<Payment>(path, refresh, onReadError);
   return <section aria-label="Payments">
     <h3>Payments for {invoice.reference}</h3>
-    <p>Balance {inr.format(invoice.balancePaise / 100)}</p>
+    <p>Balance {formatInr(invoice.balancePaise)}</p>
     {page?.items.length === 0 && <p>No payments recorded.</p>}
     {!!page?.items.length && <ul>{page.items.map((payment) => <li key={payment.id}>
-      <span>{payment.reference}</span> · {payment.method === 'upi' ? 'UPI' : 'Bank transfer'} · {inr.format(payment.amountPaise / 100)}
+      <span>{payment.reference}</span> · {payment.method === 'upi' ? 'UPI' : 'Bank transfer'} · {formatInr(payment.amountPaise)}
     </li>)}</ul>}
     {page?.nextCursor && <button type="button" disabled={loading} onClick={more}>More payments</button>}
     {manage && invoice.balancePaise > 0 && !recording && <button type="button" onClick={() => setRecording(true)}>Record payment</button>}
-    {recording && <RecordAmount path={path} kind="payment" onError={onError} onCancel={() => setRecording(false)}
+    {recording && <RecordAmount path={path} kind="payment" attempts={attempts} onError={onError} onCancel={() => setRecording(false)}
       onSaved={() => { setRecording(false); onChanged(); }} />}
   </section>;
 }
 
-export function BusinessBilling({ id, manage, onError, onChanged }: {
-  id: string; manage: boolean; onError: Failure; onChanged: () => void;
+export function BusinessBilling({ id, manage, attempts, onError, onReadError, onChanged }: {
+  id: string; manage: boolean; attempts: BillingAttempts; onError: Failure; onReadError: Failure; onChanged: () => void;
 }) {
   const [recording, setRecording] = useState(false);
   const [selectedId, setSelectedId] = useState<string>();
   const [refresh, setRefresh] = useState(0);
   const path = 'businesses/' + id + '/invoices';
-  const { page, more, loading } = useOperationList<Invoice>(path, refresh, onError);
+  const { page, more, loading } = useOperationList<Invoice>(path, refresh, onReadError);
   const selected = page?.items.find(({ id: invoiceId }) => invoiceId === selectedId);
   function changed() {
     setRefresh((revision) => revision + 1);
@@ -165,29 +168,40 @@ export function BusinessBilling({ id, manage, onError, onChanged }: {
       <thead><tr><th scope="col">Invoice</th><th scope="col">Due date</th><th scope="col">Amount</th><th scope="col">Status</th></tr></thead>
       <tbody>{page.items.map((row) => <tr key={row.id}>
         <td><button type="button" aria-pressed={selectedId === row.id} onClick={() => setSelectedId(row.id)}>{row.reference}</button></td>
-        <td>{row.dueOn}</td><td>{inr.format(row.amountPaise / 100)}</td>
+        <td>{row.dueOn}</td><td>{formatInr(row.amountPaise)}</td>
         <td>{row.balancePaise === 0 ? 'Paid' : row.overdue ? 'Overdue' : row.paidPaise ? 'Partially paid' : 'Open'}</td>
       </tr>)}</tbody>
     </table></div>}
     {page?.nextCursor && <button type="button" disabled={loading} onClick={more}>More invoices</button>}
     {manage && !recording && <button type="button" onClick={() => setRecording(true)}>Record invoice</button>}
-    {recording && <RecordAmount path={path} kind="invoice" onError={onError} onCancel={() => setRecording(false)}
+    {recording && <RecordAmount path={path} kind="invoice" attempts={attempts} onError={onError} onCancel={() => setRecording(false)}
       onSaved={() => { setRecording(false); changed(); }} />}
     {selected && <Payments key={selected.id} invoice={selected} path={path + '/' + selected.id + '/payments'} manage={manage}
-      refresh={refresh} onChanged={changed} onError={onError} />}
+      refresh={refresh} attempts={attempts} onChanged={changed} onError={onError} onReadError={onReadError} />}
   </section>;
 }
 
-export function OverdueInvoices({ onError, refresh, openBusiness }: {
-  onError: Failure; refresh: number; openBusiness: (id: string) => void;
-}) {
-  const { page, more, loading } = useOperationList<Invoice>('billing/overdue', refresh, onError);
+type QueueProps = {
+  businessId?: string; onError: Failure; refresh: number; openBusiness: (id: string) => void;
+};
+
+function useQueue<T>(endpoint: string, { businessId, refresh, onError }: QueueProps) {
+  const [currentOnly, setCurrentOnly] = useState(false);
+  const query = currentOnly && businessId ? '?businessId=' + encodeURIComponent(businessId) : '';
+  const list = useOperationList<T>(endpoint + query, refresh, onError);
+  return { ...list, filter: businessId && <label><input type="checkbox" checked={currentOnly}
+    onChange={(event) => setCurrentOnly(event.currentTarget.checked)} />Selected business only</label> };
+}
+
+export function OverdueInvoices(props: QueueProps) {
+  const { page, more, loading, filter } = useQueue<Invoice>('billing/overdue', props);
   return <section className="detail" aria-label="Overdue invoices">
     <h2>Overdue invoices</h2>
+    {filter}
     {page?.items.length === 0 && <p>No overdue invoices.</p>}
     {!!page?.items.length && <ul>{page.items.map((invoice) => <li key={invoice.id}>
-      <button type="button" onClick={() => openBusiness(invoice.businessId)}>{invoice.reference}</button>
-      {' · ' + invoice.dueOn + ' · ' + inr.format(invoice.balancePaise / 100)}
+      <button type="button" onClick={() => props.openBusiness(invoice.businessId)}>{invoice.reference}</button>
+      {' · ' + invoice.dueOn + ' · ' + formatInr(invoice.balancePaise)}
     </li>)}</ul>}
     {page?.nextCursor && <button type="button" disabled={loading} onClick={more}>More overdue invoices</button>}
   </section>;
@@ -196,15 +210,14 @@ export function OverdueInvoices({ onError, refresh, openBusiness }: {
 type Upcoming = { businessId: string; businessName: string; outletId: string; outletName: string; label: string; endsAt: string };
 const indiaDate = new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeZone: 'Asia/Kolkata' });
 
-export function UpcomingRenewals({ onError, refresh, openBusiness }: {
-  onError: Failure; refresh: number; openBusiness: (id: string) => void;
-}) {
-  const { page, more, loading } = useOperationList<Upcoming>('plans/renewals', refresh, onError);
+export function UpcomingRenewals(props: QueueProps) {
+  const { page, more, loading, filter } = useQueue<Upcoming>('plans/renewals', props);
   return <section className="detail" aria-label="Upcoming renewals">
     <h2>Upcoming renewals</h2>
+    {filter}
     {page?.items.length === 0 && <p>No service terms end in the next 30 days.</p>}
     {!!page?.items.length && <ul>{page.items.map((row) => <li key={row.outletId}>
-      <button type="button" onClick={() => openBusiness(row.businessId)}>{row.businessName} · {row.outletName}</button>
+      <button type="button" onClick={() => props.openBusiness(row.businessId)}>{row.businessName} · {row.outletName}</button>
       {' · ' + row.label + ' · ' + indiaDate.format(new Date(row.endsAt))}
     </li>)}</ul>}
     {page?.nextCursor && <button type="button" disabled={loading} onClick={more}>More renewals</button>}

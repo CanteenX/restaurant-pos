@@ -41,6 +41,13 @@ export async function planCases(t: TestContext, db: PrismaClient, url: string, o
     assert.equal((await request('plans/renewals', '')).status, 401);
     assert.equal((await request('plans/renewals', writer.cookie)).status, 403);
     assert.equal((await request('plans/renewals?cursor=invalid', reader.cookie)).status, 400);
+    assert.equal((await request('plans/renewals?businessId=invalid', reader.cookie)).status, 400);
+    const scoped = await request('plans/renewals?businessId=' + parent.id, reader.cookie);
+    assert.equal(scoped.status, 200);
+    assert.deepEqual((await scoped.json() as { items: { outletId: string }[] }).items.map((row) => row.outletId), [next.id, later.id]);
+    const unrelated = await request('plans/renewals?businessId=' + randomUUID(), reader.cookie);
+    assert.equal(unrelated.status, 200);
+    assert.deepEqual(await unrelated.json(), { items: [], nextCursor: null });
     const first = await request('plans/renewals?limit=1', reader.cookie);
     assert.equal(first.status, 200);
     const { items, nextCursor } = await first.json() as { items: { outletId: string }[]; nextCursor: string };

@@ -54,8 +54,67 @@ test('staff record a partial payment in the business workspace', async ({ page }
   await expect(billing.getByText('UPI-PILOT-101', { exact: true })).toBeVisible();
   await expect(billing.getByText('₹800.25', { exact: false })).toBeVisible();
 
+  await billing.getByRole('button', { name: 'Record invoice' }).click();
+  await billing.getByLabel('Invoice reference').fill('SAFE-PAISE-BOUNDARY');
+  await billing.getByLabel('Description').fill('Exact paise limit');
+  await billing.getByLabel('Invoice amount (INR)').fill('90071992547409.91');
+  await billing.getByLabel('Due date').fill('2025-03-01');
+  await billing.getByRole('button', { name: 'Save invoice' }).click();
+  await expect.soft(billing.getByRole('row').filter({ hasText: 'SAFE-PAISE-BOUNDARY' }))
+    .toContainText('₹9,00,71,99,25,47,409.91');
+  const invoiceKeys: string[] = [];
+  await page.route('**/businesses/*/invoices', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    invoiceKeys.push(route.request().postDataJSON().requestKey);
+    if (invoiceKeys.length > 1) return route.fallback();
+    expect((await route.fetch({ headers: { ...route.request().headers(), origin } })).status()).toBe(201);
+    await route.abort('connectionreset');
+  });
+  async function recordUnconfirmedInvoice() {
+    await billing.getByRole('button', { name: 'Record invoice' }).click();
+    await billing.getByLabel('Invoice reference').fill('ONE-INVOICE');
+    await billing.getByLabel('Description').fill('Check invoice replay');
+    await billing.getByLabel('Invoice amount (INR)').fill('21.09');
+    await billing.getByLabel('Due date').fill('2025-03-01');
+    await billing.getByRole('button', { name: 'Save invoice' }).click();
+  }
+  await recordUnconfirmedInvoice();
+  await expect(page.getByRole('main').getByRole('alert')).toContainText('could not be completed');
+  await billing.getByRole('button', { name: 'Cancel' }).click();
+  await recordUnconfirmedInvoice();
+  await expect(billing.getByRole('button', { name: 'ONE-INVOICE', exact: true }).first()).toBeVisible();
+  expect.soft(invoiceKeys).toEqual([invoiceKeys[0], invoiceKeys[0]]);
+  await expect.soft(billing.getByRole('button', { name: 'ONE-INVOICE', exact: true })).toHaveCount(1);
+
+  const headers = { origin };
+  const api = '/api/control/v1';
+  const extra = await page.request.post(api + '/businesses', { headers, data: { displayName: 'Second billing business', legalName: 'Second billing business' } });
+  expect(extra.status()).toBe(201);
+  const other = await extra.json();
+  const later = await page.request.post(api + '/businesses/' + other.id + '/invoices', { headers, data: {
+    reference: 'OTHER-LATE', description: 'Second business bill', amountPaise: 4000, dueOn: '2025-03-01', requestKey: crypto.randomUUID(),
+  } });
+  expect(later.status()).toBe(201);
+
   await page.getByRole('button', { name: 'Overdue invoices' }).click();
-  await expect(page.getByRole('region', { name: 'Overdue invoices' }).getByText('PILOT-101')).toBeVisible();
+  const overdue = page.getByRole('region', { name: 'Overdue invoices' });
+  await expect(overdue.getByText('PILOT-101')).toBeVisible();
+  await expect(overdue.getByText('OTHER-LATE')).toBeVisible();
+  const filter = overdue.getByRole('checkbox', { name: 'Selected business only' });
+  await expect.soft(filter).toBeVisible();
+  if (await filter.count()) {
+    await filter.check();
+    await expect(overdue.getByText('PILOT-101')).toBeVisible();
+    await expect(overdue.getByText('OTHER-LATE')).toHaveCount(0);
+  }
   await page.getByRole('button', { name: 'Upcoming renewals' }).click();
   await expect(page.getByRole('region', { name: 'Upcoming renewals' })).toBeVisible();
+
+  await page.route('**/invoices/*/payments', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    await route.fulfill({ status: 403, json: { statusCode: 403 } });
+  });
+  await billing.getByRole('button', { name: 'SAFE-PAISE-BOUNDARY', exact: true }).click();
+  await expect(page.getByRole('main').getByRole('alert')).toContainText('requires permission');
+  await expect(billing).toHaveCount(0);
 });

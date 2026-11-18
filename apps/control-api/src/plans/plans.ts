@@ -43,7 +43,7 @@ export class ServicePlans {
       tx.servicePlanVersion.findMany({ orderBy: [{ code: 'asc' }, { version: 'desc' }] }));
   }
 
-  renewals(cookie: string, { cursor, limit }: { cursor?: [string, string]; limit: number }) {
+  renewals(cookie: string, { businessId, cursor, limit }: { businessId?: string; cursor?: [string, string]; limit: number }) {
     return this.staff.withPermission(cookie, 'cc.plan.read', async (tx) => {
       const [expiry, id] = cursor ?? [null, null];
       const rows = await tx.$queryRaw<{
@@ -61,6 +61,7 @@ export class ServicePlans {
         ) term ON TRUE
         JOIN control.service_plan_version p ON p.code = term.plan_code AND p.version = term.plan_version
         WHERE NOT o.archived AND NOT b.archived
+          AND (${businessId ?? null}::uuid IS NULL OR b.id = ${businessId ?? null}::uuid)
           AND term.ends_at > CURRENT_TIMESTAMP AND term.ends_at <= CURRENT_TIMESTAMP + INTERVAL '30 days'
           AND (${expiry}::timestamptz IS NULL OR (term.ends_at, o.id) > (${expiry}::timestamptz, ${id}::uuid))
         ORDER BY term.ends_at, o.id

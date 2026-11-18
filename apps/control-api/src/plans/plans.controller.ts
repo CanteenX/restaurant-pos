@@ -13,6 +13,7 @@ function input<T>(schema: z.ZodType<T>, value: unknown): T {
 }
 
 const renewalPage = controlCursorPage.extend({
+  businessId: controlResourceId.optional(),
   cursor: z.string().max(65).transform((value) => value.split('|'))
     .pipe(z.tuple([z.iso.datetime({ precision: 3 }), controlResourceId])).optional(),
 });
