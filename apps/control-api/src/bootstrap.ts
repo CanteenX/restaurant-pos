@@ -7,6 +7,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { readControlPort, readStaffConfig } from './config.js';
 import { StaffAuth } from './staff/staff-auth.js';
 import { AuditReadController } from './audit/audit-read.controller.js';
+import { BillingController } from './billing/billing.controller.js';
 import { BusinessController } from './business/business.controller.js';
 import { PlansController } from './plans/plans.controller.js';
 import { TicketsController } from './helpdesk/tickets/tickets.controller.js';
@@ -27,11 +28,11 @@ export async function createControlApi(env: NodeJS.ProcessEnv) {
   const auth = config && await StaffAuth.create(config.url, config.key, config.origin);
   const app = await NestFactory.create<NestExpressApplication>({
     module: ControlApiModule,
-    controllers: auth ? [StaffController, BusinessController, PlansController, TicketsController, AuditReadController] : [],
+    controllers: auth ? [StaffController, BusinessController, PlansController, TicketsController, AuditReadController, BillingController] : [],
     providers: auth ? [{ provide: StaffAuth, useValue: auth }] : [],
   }, { abortOnError: false, bodyParser: false });
   if (auth) {
-    app.use(['/api/control/v1/staff', '/api/control/v1/businesses', '/api/control/v1/plans', '/api/control/v1/outlets', '/api/control/v1/tickets', '/api/control/v1/audit-events'], (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+    app.use(['/api/control/v1/staff', '/api/control/v1/businesses', '/api/control/v1/plans', '/api/control/v1/outlets', '/api/control/v1/tickets', '/api/control/v1/audit-events', '/api/control/v1/billing'], (req: IncomingMessage, res: ServerResponse, next: () => void) => {
       res.setHeader('Cache-Control', 'no-store');
       if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method ?? '') && req.headers.origin !== auth.origin) {
         res.statusCode = 403;
