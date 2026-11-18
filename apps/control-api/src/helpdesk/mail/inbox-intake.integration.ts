@@ -45,6 +45,36 @@ export async function intakeCases(t: TestContext, db: PrismaClient, worker: Pris
     assert.deepEqual([triage.businessId,triage.outletId,triage.ownerId], [null,null,null]);
     assert.equal(await db.auditEvent.count({ where: { action: 'ticket.inbound', subjectId: a.message!.ticketId } }), 2);
   });
+  await t.test('leaves the audit lock available while waiting on a later ticket in the batch', async () => {
+    const address = 'lock-order@example.test';
+    const batch = (throughUid: number, messages: unknown[]) => pollInbox(worker, { mailbox: address,
+      poll: () => Promise.resolve({ status: 'batch', uidValidity: '55', throughUid, messages }),
+    }, signal, () => sender);
+    const first = '<first@example.test>', second = '<second@example.test>';
+    await batch(2, [message(1,'first',first),message(2,'second',second)]);
+    const target = await db.inboundReceipt.findUniqueOrThrow({
+      where: { mailbox_providerId: { mailbox: address, providerId: 'second' } }, include: { message: true },
+    });
+    let pending!: Promise<string>;
+    const observed = await db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM control.ticket WHERE id = ${target.message!.ticketId}::uuid FOR UPDATE`;
+      pending = batch(4,[message(3,'reply-a','<reply-a@example.test>',first),message(4,'reply-b','<reply-b@example.test>',second)]);
+      const deadline = Date.now() + 3000;
+      let blocked = false;
+      do {
+        const [activity] = await tx.$queryRaw<{ blocked: boolean }[]>`SELECT EXISTS (
+          SELECT FROM pg_stat_activity WHERE pg_backend_pid() = ANY(pg_blocking_pids(pid))) AS blocked`;
+        blocked = activity.blocked;
+        if (!blocked) await new Promise((resolve) => setTimeout(resolve, 20));
+      } while (!blocked && Date.now() < deadline);
+      const [probe] = await tx.$queryRaw<{ available: boolean }[]>`SELECT pg_try_advisory_xact_lock(1314276174, 1) AS available`;
+      return { blocked, available: probe.available };
+    });
+    await pending;
+    assert.deepEqual(observed, { blocked: true, available: true });
+    assert.equal((await cursor(address)).throughUid, 4n);
+    assert.equal(await db.auditEvent.count({ where: { action: 'ticket.inbound', subjectId: target.message!.ticketId } }), 2);
+  });
   await t.test('stores skip/quarantine, deduplicates across UID epochs and preserves a bounded cursor', async () => {
     await run('11',8,[
       { uid: 6, providerId: 'skip', result: { disposition: 'skip', reason: 'provider-spam' } },

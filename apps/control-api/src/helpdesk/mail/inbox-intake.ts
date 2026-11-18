@@ -75,10 +75,11 @@ async function appendInbound(tx: Prisma.TransactionClient, mailbox: string, mail
     SELECT ${id}::uuid,${ticketId}::uuid,COALESCE(MAX(sequence),0)+1,'inbound','public',${mail.text}
     FROM control.ticket_message WHERE ticket_id = ${ticketId}::uuid`;
   await tx.$executeRaw`UPDATE control.ticket SET updated_at = greatest(updated_at,clock_timestamp()) WHERE id = ${ticketId}::uuid`;
-  await appendAuditEvent(tx, { actorType: 'service', actorId: '00000000-0000-4000-8000-000000000274', action: 'ticket.inbound',
-    businessId: ticket.business_id, subjectType: 'ticket', subjectId: ticketId, requestId: randomUUID(), outcome: 'succeeded' });
-  return { messageRowId: id, rfcMessageId: mail.messageId, claimedSender: mail.claimedSender, verifiedSender: mail.sender, omittedAttachments: mail.omittedAttachments,
-    reason: matched ? 'threaded' : 'triage' };
+  return {
+    audit: { subjectId: ticketId, businessId: ticket.business_id },
+    receipt: { messageRowId: id, rfcMessageId: mail.messageId, claimedSender: mail.claimedSender,
+      verifiedSender: mail.sender, omittedAttachments: mail.omittedAttachments, reason: matched ? 'threaded' : 'triage' },
+  };
 }
 
 async function persist(tx: Prisma.TransactionClient, mailbox: string, uidValidity: bigint,
@@ -90,11 +91,14 @@ async function persist(tx: Prisma.TransactionClient, mailbox: string, uidValidit
     return;
   }
   const previous = await tx.inboundReceipt.findUnique({ where: { mailbox_providerId: { mailbox, providerId } }, select: { providerId: true } });
+  let audit: { subjectId: string; businessId: string | null } | undefined;
   if (!previous) {
-    const data = mail.disposition === 'accept' ? await appendInbound(tx, mailbox, mail) : { reason: mail.reason };
-    await tx.inboundReceipt.create({ data: { mailbox, providerId, outcome: mail.disposition, ...data }, select: { providerId: true } });
+    const accepted = mail.disposition === 'accept' ? await appendInbound(tx, mailbox, mail) : undefined;
+    audit = accepted?.audit;
+    await tx.inboundReceipt.create({ data: { mailbox, providerId, outcome: mail.disposition, reason: mail.reason, ...accepted?.receipt }, select: { providerId: true } });
   }
   await tx.mailboxDelivery.create({ data: { ...key, providerId } });
+  return audit;
 }
 
 /** One bounded poll. A Gmail IMAP transport supplies no verified sender evidence. */
@@ -121,9 +125,16 @@ export async function pollInbox(db: PrismaClient, source: Source, cancel: AbortS
       return { uid: msg.uid, providerId: msg.providerId, mail: prepare(mailbox, msg, verify) };
     });
     await commitMailbox(db, lease, { status: batch.status, uidValidity: batch.uidValidity, throughUid }, async (tx) => {
+      const audits = [];
       for (const row of prepared) {
         signal.throwIfAborted();
-        await persist(tx, mailbox, BigInt(batch.uidValidity), row.uid, row.providerId, row.mail);
+        const audit = await persist(tx, mailbox, BigInt(batch.uidValidity), row.uid, row.providerId, row.mail);
+        if (audit) audits.push(audit);
+      }
+      // Acquire the global audit lock only after all ticket rows in this batch are locked.
+      for (const audit of audits) {
+        await appendAuditEvent(tx, { ...audit, actorType: 'service', actorId: '00000000-0000-4000-8000-000000000274',
+          action: 'ticket.inbound', subjectType: 'ticket', requestId: randomUUID(), outcome: 'succeeded' });
       }
       signal.throwIfAborted();
     });

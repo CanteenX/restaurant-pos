@@ -227,3 +227,12 @@ void test('suppresses Gmail sent copies, auto replies and list mail before downl
     assert.ok(!calls.some((call) => call.startsWith('body')));
   }
 });
+
+void test('quarantines duplicate References even when the first header is empty', async () => {
+  const headers = Buffer.from('References:\r\nrEfErEnCeS: <parent@example.test>\r\n');
+  const { adapter, calls } = harness({ fetchOne: () => Promise.resolve({ ...row, bodyStructure: structure, headers }) });
+  const result = await adapter.poll(cursor, new AbortController().signal);
+  assert.equal(result.status, 'batch');
+  assert.deepEqual(result.messages[0].result, { disposition: 'quarantine', reason: 'invalid-headers' });
+  assert.ok(!calls.some((call) => call.startsWith('body')));
+});

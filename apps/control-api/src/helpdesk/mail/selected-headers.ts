@@ -2,6 +2,7 @@
 export function selectedInboxHeaders(headers?: Buffer) {
   if (headers && headers.length > 8192) return null;
   const fields = { references: '', autoSubmitted: false, mailingList: false };
+  let seenReferences = false;
   const unfolded = (headers?.toString('latin1') ?? '').replace(/\r\n[ \t]+/g, ' ');
   for (const line of unfolded.split('\r\n')) {
     if (!line) break;
@@ -11,7 +12,8 @@ export function selectedInboxHeaders(headers?: Buffer) {
     const name = line.slice(0, colon).toLowerCase();
     const value = line.slice(colon + 1).trim();
     if (name === 'references') {
-      if (fields.references) return null;
+      if (seenReferences) return null;
+      seenReferences = true;
       fields.references = value;
     }
     if (name === 'auto-submitted' && value.toLowerCase() !== 'no') fields.autoSubmitted = true;
