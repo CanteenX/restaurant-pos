@@ -38,6 +38,17 @@ test("an explicit realtime origin is allowed in connect-src (http -> ws too)", (
   assert.ok(d.get("connect-src")?.includes("wss://rt.example.com"));
 });
 
+test("a wss:// realtime url is allowed too (ws -> http)", () => {
+  const d = directives(buildContentSecurityPolicy({ dev: false, wsUrl: "wss://rt.example.com" }));
+  assert.ok(d.get("connect-src")?.includes("wss://rt.example.com"));
+  assert.ok(d.get("connect-src")?.includes("https://rt.example.com"));
+});
+
+test("a non-web scheme realtime url is ignored", () => {
+  const d = directives(buildContentSecurityPolicy({ dev: false, wsUrl: "ftp://rt.example.com" }));
+  assert.deepEqual(d.get("connect-src"), ["'self'"]);
+});
+
 test("a malformed realtime url is ignored", () => {
   const d = directives(buildContentSecurityPolicy({ dev: false, wsUrl: "not a url" }));
   assert.deepEqual(d.get("connect-src"), ["'self'"]);

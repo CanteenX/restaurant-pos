@@ -19,8 +19,10 @@ function realtimeOrigins(wsUrl: string | undefined): string[] {
   if (!wsUrl) return [];
   try {
     const u = new URL(wsUrl);
-    if (u.protocol !== "http:" && u.protocol !== "https:") return [];
-    return [u.origin, `${u.protocol === "https:" ? "wss:" : "ws:"}//${u.host}`];
+    // socket.io accepts http(s) and ws(s) URLs; allow both scheme families for the host.
+    const secure = u.protocol === "https:" || u.protocol === "wss:";
+    if (!secure && u.protocol !== "http:" && u.protocol !== "ws:") return [];
+    return [`${secure ? "https:" : "http:"}//${u.host}`, `${secure ? "wss:" : "ws:"}//${u.host}`];
   } catch {
     return [];
   }
