@@ -165,6 +165,7 @@ export async function staffAuthCases(t: TestContext, db: PrismaClient, datasourc
   await businessCases(t, db, new URL('../businesses', root).href, origin);
   await planCases(t, db, new URL('../', root).href, origin);
   await ticketCases(t, db, new URL('../tickets', root).href, origin);
-  await replyCases(t, db, new URL('../tickets', root).href, origin);
   await inboxStorageCases(t, db, datasourceUrl, new URL('../tickets', root).href);
+  // Leave queued API replies outside the dispatcher fixture's shared queue.
+  await replyCases(t, db, new URL('../tickets', root).href, origin);
 }

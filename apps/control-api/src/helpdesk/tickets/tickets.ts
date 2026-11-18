@@ -100,7 +100,8 @@ export class TicketService {
     }, { staffTarget: change.ownerId ?? undefined });
   }
 
-  reply(cookie: string, id: string, { text, requestKey, acknowledgeUnverified = false }: z.infer<typeof ticketReply>) {
+  reply(cookie: string, id: string, { text, requestKey, acknowledgeUnverified }: z.infer<typeof ticketReply>) {
+    const acknowledged = acknowledgeUnverified === true;
     return this.staff.withPermission(cookie, 'cc.ticket.reply', async (tx, actor) => {
       const ticket = await findTicket(tx, id, true);
       const previous = await tx.ticketMessage.findUnique({
@@ -108,8 +109,8 @@ export class TicketService {
         select: { ...noteFields, replyOutbox: { select: { state: true, acknowledgedUnverified: true } } },
       });
       if (previous) {
-        if (previous.direction !== 'outbound' || previous.visibility !== 'public' ||
-            previous.replyOutbox?.acknowledgedUnverified !== acknowledgeUnverified || previous.text !== text) {
+        if (previous.authorId !== actor.id || previous.direction !== 'outbound' || previous.visibility !== 'public' ||
+            previous.replyOutbox?.acknowledgedUnverified !== acknowledged || previous.text !== text) {
           throw new ConflictException();
         }
         return messageWithState(previous);
@@ -118,7 +119,7 @@ export class TicketService {
       const origin = await firstAcceptedOrigin(tx, id);
       const target = replyTarget(origin);
       if (!origin || !target) throw new ConflictException();
-      if (!target.verified && !acknowledgeUnverified) throw new ForbiddenException();
+      if (!target.verified && !acknowledged) throw new ForbiddenException();
 
       const row = randomUUID();
       const subject = ticket.subject.replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, ' ').trim() || 'Support ticket';
@@ -127,14 +128,14 @@ export class TicketService {
       });
       await tx.$executeRaw`SELECT control.enqueue_ticket_reply(
         ${row}::uuid, ${id}::uuid, ${origin.parentId}::uuid, ${actor.id}::uuid, ${requestKey}::uuid, ${text},
-        ${'<' + row + '@nventra.invalid>'}, ${rendered.subject}, ${rendered.text}, ${rendered.html}, ${acknowledgeUnverified})`;
+        ${'<' + row + '@nventra.invalid>'}, ${rendered.subject}, ${rendered.text}, ${rendered.html}, ${acknowledged})`;
       const queued = await tx.ticketMessage.findUniqueOrThrow({ where: { id: row }, select: messageFields });
       await tx.ticket.update({ where: { id }, data: {
         updatedAt: new Date(Math.max(ticket.updatedAt.getTime(), queued.createdAt.getTime())),
       }, select: { id: true } });
       await appendAuditEvent(tx, { actorType: 'staff', actorId: actor.id, businessId: ticket.businessId,
         action: 'ticket.reply.queue', subjectType: 'ticket', subjectId: id, requestId: requestKey,
-        outcome: 'succeeded', changedFields: acknowledgeUnverified ? ['reply', 'acknowledgeUnverified'] : ['reply'] });
+        outcome: 'succeeded', changedFields: acknowledged ? ['reply', 'acknowledgeUnverified'] : ['reply'] });
       return messageWithState(queued);
     });
   }

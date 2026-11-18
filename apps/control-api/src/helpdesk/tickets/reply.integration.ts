@@ -16,7 +16,7 @@ export async function replyCases(t: TestContext, db: PrismaClient, url: string, 
     return { id, cookie: '__Host-control_staff=' + token };
   };
   const grants = ['cc.ticket.read', 'cc.ticket.reply'];
-  const [reader, replier, other] = await Promise.all([actor(['cc.ticket.read']), actor(grants), actor(grants)]);
+  const [reader, replier, other] = await Promise.all([actor(['cc.ticket.read']), actor(grants), actor(['cc.ticket.reply'])]);
   const mailbox = 'synthetic-reply@example.test', claimed = 'Original.Manager@example.test', rfc = '<origin@example.test>';
   await db.mailboxCursor.create({ data: { mailbox } });
 
@@ -67,10 +67,11 @@ export async function replyCases(t: TestContext, db: PrismaClient, url: string, 
     await db.ticketMessage.create({ data: { id: randomUUID(), ticketId: id, sequence: 3,
       requestKey: noteKey, authorId: reader.id, text: 'Private technician notes' } });
     assert.equal((await reply(id, { ...body, requestKey: noteKey })).status, 409);
-    const responses = await Promise.all([reply(id, body), reply(id, body, other.cookie)]);
+    const responses = await Promise.all([reply(id, body), reply(id, body)]);
     assert.deepEqual(responses.map((res) => res.status), [201, 201]);
     const queued = (await responses[0].json()) as Reply;
     assert.deepEqual(await responses[1].json(), queued);
+    assert.equal((await reply(id, body, other.cookie)).status, 409);
     assert.deepEqual([queued.direction, queued.visibility, queued.deliveryState, queued.text],
       ['outbound', 'public', 'queued', body.text]);
     assert.deepEqual(Object.keys(queued).sort(), ['authorId', 'createdAt', 'deliveryState', 'direction', 'id', 'sequence', 'text', 'visibility']);
@@ -104,6 +105,7 @@ export async function replyCases(t: TestContext, db: PrismaClient, url: string, 
     try {
       assert.equal((await reply(id, body)).status, 500);
       assert.equal(await db.ticketMessage.count({ where: { ticketId: id, direction: 'outbound' } }), 0);
+      assert.equal(await db.ticketReplyOutbox.count({ where: { message: { ticketId: id } } }), 0);
       assert.equal(await db.auditEvent.count({ where: { requestId: body.requestKey } }), 0);
     } finally {
       await db.$executeRaw`ALTER TABLE control.audit_event DROP CONSTRAINT fixture_reply_audit_failure`;
