@@ -29,6 +29,7 @@ model AuditEvent {
 }
 
 model Staff {
+  hostedAccessEvents HostedAccessEvent[]
   billingInvoices BillingInvoice[]
   billingPayments BillingPayment[]
   id                 String    @id @db.Uuid
@@ -82,6 +83,8 @@ model StaffEnrollmentProof {
 }
 
 model Business {
+  portalAccounts PortalAccount[]
+  hostedAccessEvents HostedAccessEvent[]
   billingInvoices BillingInvoice[]
   id          String   @id @db.Uuid
   legalName   String   @map("legal_name") @db.VarChar(160)
@@ -90,6 +93,57 @@ model Business {
   outlets     Outlet[]
   tickets     Ticket[]
   @@map("business")
+  @@schema("control")
+}
+
+model HostedAccessEvent {
+  businessId String   @map("business_id") @db.Uuid
+  requestKey String   @map("request_key") @db.Uuid
+  actorId    String   @map("actor_id") @db.Uuid
+  status     String   @db.VarChar(9)
+  reason     String   @db.VarChar(240)
+  revision   Int
+  changedAt  DateTime @default(dbgenerated("clock_timestamp()")) @map("changed_at") @db.Timestamptz(3)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  actor      Staff    @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  @@id([businessId, requestKey])
+  @@unique([businessId, revision])
+  @@map("hosted_access_event")
+  @@schema("control")
+}
+
+model PortalAccount {
+  id                  String    @id @db.Uuid
+  businessId          String    @map("business_id") @db.Uuid
+  email               String    @unique @db.VarChar(254)
+  status              String    @db.VarChar(7)
+  passwordHash        String?   @map("password_hash")
+  activationDigest    String?   @unique @map("activation_digest")
+  activationExpiresAt DateTime? @map("activation_expires_at") @db.Timestamptz(3)
+  business            Business  @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  sessions            PortalSession[]
+  @@index([businessId,id], map: "portal_account_business")
+  @@map("portal_account")
+  @@schema("control")
+}
+
+model PortalSession {
+  digest    String   @id
+  accountId String   @map("account_id") @db.Uuid
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  account   PortalAccount @relation(fields: [accountId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  @@index([accountId], map: "portal_session_account")
+  @@index([expiresAt], map: "portal_session_expiry")
+  @@map("portal_session")
+  @@schema("control")
+}
+
+model PortalAuthLimit {
+  bucket    String   @id
+  attempts  Int
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  @@index([expiresAt], map: "portal_limit_expiry")
+  @@map("portal_auth_limit")
   @@schema("control")
 }
 

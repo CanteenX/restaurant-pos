@@ -16,18 +16,23 @@ const apiModules = '../../apps/control-api/node_modules/';
 const { PrismaClient } = require(apiModules + '.prisma/control-client');
 const { hash } = require(apiModules + 'bcrypt');
 const { sealSecret } = require('../../packages/types/dist/node/totp');
+const { CONTROL_PERMISSIONS } = require('../../packages/types/dist/permissions');
 const db = new PrismaClient({ datasourceUrl: fixtureUrl });
 
 async function seed() {
   const passwordHash = await hash('browser fixture passphrase', 12);
   await require('./helpdesk-fixture.cjs')(db, passwordHash);
   await require('./audit-fixture.cjs')(db, passwordHash);
-  const ownerId = randomUUID(), readerId = randomUUID();
+  const ownerId = randomUUID(), readerId = randomUUID(), operationsId = randomUUID();
   const read = ['cc.business.read', 'cc.plan.read'];
   const encryptedSeed = sealSecret('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP', process.env.CONTROL_AUTH_KEY + readerId);
   await db.staff.createMany({ data: [
     { id: ownerId, email: 'owner@example.test', passwordHash, grants: [...read, 'cc.business.manage', 'cc.plan.manage'] },
     { id: readerId, email: 'reader@example.test', passwordHash, grants: read, encryptedSeed },
+    { id: operationsId, email: 'operations@example.test', passwordHash,
+      grants: ['cc.business.read', 'cc.business.manage', 'cc.plan.read', 'cc.ticket.read', 'cc.billing.read', 'cc.billing.manage', 'cc.hosted.read', 'cc.hosted.manage', 'cc.portal.read', 'cc.portal.manage']
+        .filter((permission) => CONTROL_PERMISSIONS.includes(permission)),
+      encryptedSeed: sealSecret('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP', process.env.CONTROL_AUTH_KEY + operationsId) },
   ] });
   await db.staffEnrollmentProof.create({ data: { staffId: ownerId, expiresAt: new Date(Date.now() + 900_000),
     digest: createHash('sha256').update(Buffer.alloc(32, 42)).digest() } });

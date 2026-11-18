@@ -48,7 +48,11 @@ test('confirms an unverified target and reuses a queued reply key after a lost r
   await expect(page.getByText(address, { exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: /recipient|^to$/i })).toHaveCount(0);
   const queue = page.getByRole('button', { name: 'Queue reply' });
-  await page.getByLabel('Email reply', { exact: true }).fill('A technician will follow up.');
+  const draft = page.getByLabel('Email reply', { exact: true });
+  await page.getByRole('button', { name: 'Use acknowledgment template' }).click();
+  await expect(draft).toHaveValue('Thanks for contacting Nventra Support. We are looking into your request.');
+  expect(submissions).toHaveLength(0);
+  await draft.fill('A technician will follow up.');
   await expect(queue).toBeDisabled();
   await page.getByRole('checkbox', { name: /unverified recipient/i }).check();
   await queue.click();

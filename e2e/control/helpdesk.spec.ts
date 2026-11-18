@@ -52,6 +52,15 @@ test('support staff read plain text, update ticket status and add a private note
   expect(await response.json()).toMatchObject({ direction: 'internal', visibility: 'staff' });
   await expect(page.getByText('Ask technician to check toner.', { exact: true })).toBeVisible();
   await expect(page.getByText('Internal note', { exact: true }).first()).toBeVisible();
+  await page.getByLabel('Ticket business', { exact: true }).selectOption({ label: 'Fixture Bistro' });
+  await page.getByLabel('Ticket outlet', { exact: true }).selectOption({ label: 'Market Outlet' });
+  await page.getByLabel('Ticket owner', { exact: true }).selectOption({ label: 'support@example.test' });
+  await page.getByRole('button', { name: 'Save assignment' }).click();
+  await expect(page.getByText('Ticket assignment saved.')).toBeVisible();
+  await page.getByLabel('Filter by business', { exact: true }).selectOption({ label: 'Fixture Bistro' });
+  await page.getByLabel('Filter by outlet', { exact: true }).selectOption({ label: 'Market Outlet' });
+  await page.getByLabel('Ticket order').selectOption('oldest-unanswered');
+  await expect(page.getByRole('button', { name: /Printer support.*Pending/ })).toBeVisible();
   await page.getByRole('combobox', { name: 'Filter by status' }).selectOption('closed');
   await expect(page.getByText('No tickets found.')).toBeVisible();
 });
@@ -63,6 +72,7 @@ test('read-only staff see ticket details while management actions stay unavailab
   await expect(page.getByRole('combobox', { name: 'Status', exact: true })).toHaveCount(0);
   await expect(page.getByRole('combobox', { name: 'Priority', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Add internal note' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Save assignment' })).toHaveCount(0);
   const { items: [ticket] } = await (await page.request.get(prefix + '/tickets')).json();
   const endpoint = prefix + '/tickets/' + ticket.id;
   expect((await page.request.patch(endpoint, { headers: { origin }, data: { status: 'closed', priority: 'normal' } })).status()).toBe(403);

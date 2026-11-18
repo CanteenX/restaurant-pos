@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { controlPermissionSatisfied, type ticketListPage, type ticketMessagePage, type ticketNote, type ticketPatch } from '@nventra/types';
+import { CONTROL_PERMISSIONS, controlPermissionSatisfied, type controlCursorPage, type ticketListPage, type ticketMessagePage, type ticketNote, type ticketPatch } from '@nventra/types';
 import type { z } from 'zod';
 import type { ticketReply } from '@nventra/types/dist/control-reply';
 import { renderTicketReply } from '@nventra/types/dist/node/email-renderer';
 import { replyTarget } from './reply-target.js';
-import type { Prisma } from '../../../node_modules/.prisma/control-client/index.js';
+import { Prisma } from '../../../node_modules/.prisma/control-client/index.js';
 import { appendAuditEvent } from '../../audit/audit.js';
 import type { StaffAccess } from '../../staff/staff-access.js';
 
@@ -20,6 +20,34 @@ const noteFields = {
 const messageFields = { ...noteFields, replyOutbox: { select: { state: true } } } as const;
 type Message = Prisma.TicketMessageGetPayload<{ select: typeof messageFields }>;
 type ReplyOrigin = { parentId: string; claimedSender: string | null; verifiedSender: string | null };
+type TicketQueue = z.infer<typeof ticketListPage>;
+type UnansweredTicket = Prisma.TicketGetPayload<{ select: typeof ticketFields }> & { unansweredSince: Date };
+
+async function oldestUnanswered(tx: Prisma.TransactionClient, queue: Extract<TicketQueue, { sort: 'oldest-unanswered' }>) {
+  const { businessId, outletId, status, cursor, limit } = queue;
+  const rows = await tx.$queryRaw<UnansweredTicket[]>`
+    SELECT t.id, t.subject, t.status, t.priority, t.business_id AS "businessId", t.outlet_id AS "outletId",
+      t.owner_id AS "ownerId", t.created_at AS "createdAt", t.updated_at AS "updatedAt", waiting.since AS "unansweredSince"
+    FROM control.ticket t
+    CROSS JOIN LATERAL (
+      SELECT min(m.created_at) AS since FROM control.ticket_message m
+      WHERE m.ticket_id=t.id AND m.direction='inbound' AND m.visibility='public' AND m.sequence > COALESCE((
+        SELECT max(r.sequence) FROM control.ticket_message r
+        LEFT JOIN control.ticket_reply_outbox o ON o.message_row_id=r.id
+        WHERE r.ticket_id=t.id AND r.direction='outbound' AND r.visibility='public'
+          AND (o.message_row_id IS NULL OR o.state='sent')
+      ), 0)
+    ) waiting
+    WHERE waiting.since IS NOT NULL
+      ${businessId ? Prisma.sql`AND t.business_id=${businessId}::uuid` : Prisma.empty}
+      ${outletId ? Prisma.sql`AND t.outlet_id=${outletId}::uuid` : Prisma.empty}
+      ${status ? Prisma.sql`AND t.status=${status}` : Prisma.empty}
+      ${cursor ? Prisma.sql`AND (waiting.since,t.id) > (${cursor[0]}::timestamptz,${cursor[1]}::uuid)` : Prisma.empty}
+    ORDER BY waiting.since, t.id LIMIT ${limit + 1}`;
+  const items = rows.slice(0, limit);
+  const last = items.at(-1);
+  return { items, nextCursor: rows.length > limit && last ? last.unansweredSince.toISOString() + '~' + last.id : null };
+}
 
 function messageWithState({ replyOutbox, ...message }: Message) {
   return replyOutbox ? { ...message, deliveryState: replyOutbox.state } : message;
@@ -44,10 +72,24 @@ async function findTicket(tx: Prisma.TransactionClient, id: string, lock = false
 export class TicketService {
   constructor(private readonly staff: StaffAccess) {}
 
-  list(cookie: string, { cursor, limit, status }: z.infer<typeof ticketListPage>) {
+  list(cookie: string, queue: TicketQueue) {
     return this.staff.withPermission(cookie, 'cc.ticket.read', async (tx) => {
-      const rows = await tx.ticket.findMany({ where: { id: { gt: cursor }, status },
+      if (queue.sort === 'oldest-unanswered') return oldestUnanswered(tx, queue);
+      const { cursor, limit, status, businessId, outletId } = queue;
+      const rows = await tx.ticket.findMany({ where: { id: { gt: cursor }, status, businessId, outletId },
         orderBy: { id: 'asc' }, take: limit + 1, select: ticketFields });
+      const items = rows.slice(0, limit);
+      return { items, nextCursor: rows.length > limit ? items[items.length - 1].id : null };
+    });
+  }
+
+  eligibleOwners(cookie: string, { cursor, limit }: z.infer<typeof controlCursorPage>) {
+    return this.staff.withPermission(cookie, 'cc.ticket.manage', async (tx) => {
+      const rows = await tx.$queryRaw<{id: string; email: string}[]>`
+        SELECT id, email FROM control.staff
+        WHERE enabled AND 'cc.ticket.read'=ANY(grants) AND grants <@ ARRAY[${Prisma.join(CONTROL_PERMISSIONS)}]::text[]
+          ${cursor ? Prisma.sql`AND id>${cursor}::uuid` : Prisma.empty}
+        ORDER BY id LIMIT ${limit + 1}`;
       const items = rows.slice(0, limit);
       return { items, nextCursor: rows.length > limit ? items[items.length - 1].id : null };
     });
@@ -62,8 +104,11 @@ export class TicketService {
       ], sequence: { gt: cursor } }, orderBy: { sequence: 'asc' },
         take: limit + 1, select: messageFields });
       const items = messages.slice(0, limit).map(messageWithState);
-      const target = controlPermissionSatisfied(actor.grants, 'cc.ticket.reply') ? replyTarget(await firstAcceptedOrigin(tx, id)) : null;
-      return { ...ticket, replyTarget: target, messages: { items, nextCursor: messages.length > limit ? items[items.length - 1].sequence : null } };
+      const canReply = controlPermissionSatisfied(actor.grants, 'cc.ticket.reply');
+      const canManage = controlPermissionSatisfied(actor.grants, 'cc.ticket.manage');
+      const origin = canReply || canManage ? await firstAcceptedOrigin(tx, id) : null;
+      return { ...ticket, replyTarget: canReply ? replyTarget(origin) : null, needsBusinessLinkConfirmation: canManage && origin !== null,
+        messages: { items, nextCursor: messages.length > limit ? items[items.length - 1].sequence : null } };
     });
   }
 
@@ -77,6 +122,8 @@ export class TicketService {
       const next = { businessId, outletId, ownerId, status: change.status ?? current.status, priority: change.priority ?? current.priority };
       const fields = (Object.keys(next) as (keyof typeof next)[]).filter((key) => next[key] !== current[key]);
       if (fields.length === 0) return { id };
+      const needsConfirmation = fields.includes('businessId') && businessId && await firstAcceptedOrigin(tx, id);
+      if (needsConfirmation && !change.confirmedBusinessLink) throw new BadRequestException();
 
       if (outletId) {
         const scoped = businessId && await tx.outlet.findUnique({
@@ -95,7 +142,8 @@ export class TicketService {
         updatedAt: new Date(Math.max(current.updatedAt.getTime(), Date.now())) }, select: { id: true } });
       await appendAuditEvent(tx, { actorType: 'staff', actorId: actor.id, businessId,
         action: fields.includes('status') ? 'ticket.status.' + next.status : 'ticket.update',
-        subjectType: 'ticket', subjectId: id, requestId: randomUUID(), outcome: 'succeeded', changedFields: fields });
+        subjectType: 'ticket', subjectId: id, requestId: randomUUID(), outcome: 'succeeded',
+        changedFields: needsConfirmation ? [...fields, 'confirmedBusinessLink'] : fields });
       return { id };
     }, { staffTarget: change.ownerId ?? undefined });
   }

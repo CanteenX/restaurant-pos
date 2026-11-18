@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { controlPermissionSatisfied } from '@nventra/types/dist/permissions';
 import { Dashboard } from './dashboard';
 import { AuditLog } from './audit-log';
@@ -22,7 +22,11 @@ export default function ControlCenter() {
   const available = views.filter(([,grant]) => controlPermissionSatisfied(session?.grants, grant));
   const active = available.find(([name]) => name === workspace)?.[0] ?? available[0]?.[0];
 
-  const expire = useCallback(() => setSession(null), []);
+  const billingAttempts = useRef(new Map<string, string>());
+  const expire = useCallback(() => {
+    billingAttempts.current.clear();
+    setSession(null);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -65,9 +69,9 @@ export default function ControlCenter() {
     setError('');
     try {
       await call('staff/session/logout', {});
-      setSession(null);
+      expire();
     } catch (failure) {
-      if (failure instanceof ApiError && failure.status === 401) setSession(null);
+      if (failure instanceof ApiError && failure.status === 401) expire();
       else setError('Sign-out failed. Try again.');
     }
   }
@@ -88,7 +92,7 @@ export default function ControlCenter() {
             onClick={() => setWorkspace(name)}>{name}</button>)}
         </nav>}
         {active === 'Audit log' ? <AuditLog onExpired={expire} /> : active === 'Helpdesk'
-          ? <Helpdesk session={session} onExpired={expire} /> : <Dashboard session={session} onExpired={expire} />}
+          ? <Helpdesk session={session} onExpired={expire} /> : <Dashboard session={session} onExpired={expire} billingAttempts={billingAttempts} />}
       </> : session === null ?
         <section className="signin"><h1>{challenge ? 'Two-factor verification' : 'Staff sign-in'}</h1>
           <form method="post" key={challenge ? 'factor' : 'credentials'} onSubmit={signIn}>

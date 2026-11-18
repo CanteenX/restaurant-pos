@@ -1,6 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Post, Query, Req, UseFilters } from '@nestjs/common';
-import { controlResourceId, ticketListPage, ticketMessagePage, ticketNote, ticketPatch } from '@nventra/types';
+import { controlCursorPage, controlResourceId, ticketListPage, ticketMessagePage, ticketNote, ticketPatch } from '@nventra/types';
 import type { z } from 'zod';
 import { ticketReply } from '@nventra/types/dist/control-reply';
 import { StaffAuth } from '../../staff/staff-auth.js';
@@ -22,6 +22,11 @@ export class TicketsController {
   @Get()
   list(@Req() req: IncomingMessage, @Query() query: unknown) {
     return this.tickets.list(sessionCookie(req), input(ticketListPage, query));
+  }
+
+  @Get('eligible-owners')
+  eligibleOwners(@Req() req: IncomingMessage, @Query() query: unknown) {
+    return this.tickets.eligibleOwners(sessionCookie(req), input(controlCursorPage, query));
   }
 
   @Get(':id')
