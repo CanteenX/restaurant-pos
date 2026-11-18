@@ -53,7 +53,7 @@ export class TicketService {
       const ownerId = change.ownerId === undefined ? current.ownerId : change.ownerId;
       const next = { businessId, outletId, ownerId, status: change.status ?? current.status, priority: change.priority ?? current.priority };
       const fields = (Object.keys(next) as (keyof typeof next)[]).filter((key) => next[key] !== current[key]);
-      if (fields.length === 0) return current;
+      if (fields.length === 0) return { id };
 
       if (outletId) {
         const scoped = businessId && await tx.outlet.findUnique({
@@ -68,12 +68,13 @@ export class TicketService {
         if (!owner?.enabled || !controlPermissionSatisfied(owner.grants, 'cc.ticket.read')) throw new BadRequestException();
       }
 
-      const ticket = await tx.ticket.update({ where: { id }, data: { ...next, updatedAt: new Date(Math.max(current.updatedAt.getTime(), Date.now())) }, select: ticketFields });
+      await tx.ticket.update({ where: { id }, data: { ...next,
+        updatedAt: new Date(Math.max(current.updatedAt.getTime(), Date.now())) }, select: { id: true } });
       await appendAuditEvent(tx, { actorType: 'staff', actorId: actor.id, businessId,
-        action: fields.includes('status') ? 'ticket.status.' + ticket.status : 'ticket.update',
+        action: fields.includes('status') ? 'ticket.status.' + next.status : 'ticket.update',
         subjectType: 'ticket', subjectId: id, requestId: randomUUID(), outcome: 'succeeded', changedFields: fields });
-      return ticket;
-    });
+      return { id };
+    }, { staffTarget: change.ownerId ?? undefined });
   }
 
   addNote(cookie: string, id: string, { text, requestKey }: z.infer<typeof ticketNote>) {

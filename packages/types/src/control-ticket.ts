@@ -14,7 +14,7 @@ export const ticketPatch = z.strictObject({
   ownerId: controlStaffId.nullish(),
   status: ticketStatus.optional(),
   priority: ticketPriority.optional(),
-});
+}).refine((fields) => Object.values(fields).some((value) => value !== undefined));
 export const ticketNote = z.strictObject({
   requestKey: controlStaffId,
   text: z.string().min(1).max(4000).transform((text) => text.replace(/\r\n/g, '\n'))

@@ -67,12 +67,49 @@ export async function ticketCases(t: TestContext, db: PrismaClient, url: string,
     assert.equal((await patch(path, { ownerId: replyOnly.id })).status, 400);
     const reassigned = await patch(path, { businessId: b.id, ownerId: reader.id });
     assert.equal(reassigned.status, 200);
-    assert.equal((await reassigned.json() as { outletId: unknown }).outletId, null);
+    assert.deepEqual(await reassigned.json(), { id });
+    const detail = await (await req(path)).json() as { outletId: unknown; ownerId: unknown };
+    assert.equal(detail.outletId, null);
+    assert.equal(detail.ownerId, reader.id);
+    assert.equal((await patch(path, { ownerId: null })).status, 200);
     const scope = (e: unknown) => (e as { meta?: { code?: string } }).meta?.code === '23503';
     await assert.rejects(db.$transaction(async (tx) => {
       await tx.$executeRaw`SET LOCAL ROLE control_runtime`;
       await tx.$executeRaw`UPDATE control.ticket SET outlet_id = ${outlet.id}::uuid WHERE id = ${id}::uuid`;
     }), scope);
+  });
+
+  await t.test('rejects empty patches and returns only the ticket identifier to manage-only staff', async () => {
+    const path = await seed(), id = path.slice(1);
+    const empty = await patch(path, {});
+    const noChange = await patch(path, { status: 'open' });
+    const result: unknown = await noChange.json();
+    assert.deepEqual({ emptyStatus: empty.status, status: noChange.status, result },
+      { emptyStatus: 400, status: 200, result: { id } });
+    assert.equal(await db.auditEvent.count({ where: { subjectId: id } }), 0);
+  });
+
+  await t.test('rechecks an owner after a concurrent grant revocation releases the staff row', async () => {
+    const path = await seed(), owner = await actor(['cc.ticket.read']);
+    let pending: Promise<Response> | undefined;
+    await db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM control.staff WHERE id = ${owner.id}::uuid FOR UPDATE`;
+      await tx.staff.update({ where: { id: owner.id }, data: { grants: [] } });
+      pending = patch(path, { ownerId: owner.id });
+      let blocked = false;
+      const deadline = Date.now() + 5_000;
+      while (!blocked && Date.now() < deadline) {
+        const [row] = await tx.$queryRaw<{ blocked: boolean }[]>`SELECT EXISTS (
+          SELECT FROM pg_stat_activity WHERE pg_backend_pid() = ANY(pg_blocking_pids(pid))) AS blocked`;
+        blocked = row.blocked;
+        if (!blocked) await new Promise((r) => setTimeout(r, 20));
+      }
+      assert.equal(blocked, true);
+    }, { timeout: 10_000 });
+    assert.equal((await pending)?.status, 400);
+    const detail = await (await req(path)).json() as { ownerId: unknown };
+    assert.equal(detail.ownerId, null);
+    assert.equal(await db.auditEvent.count({ where: { subjectId: path.slice(1) } }), 0);
   });
 
   await t.test('stores literal staff notes exactly once, omits them from previews and rejects forged metadata', async () => {
