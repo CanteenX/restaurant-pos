@@ -170,4 +170,65 @@ void test('PostgreSQL 16 Control audit storage', { skip: !ci && !testUrl }, asyn
     await db.$executeRaw`DELETE FROM control.audit_event WHERE sequence = 2`;
     assert.equal(await verifyAuditCheckpoint(db, snapshot), false);
   });
+
+  await t.test('staff runtime cannot issue enrollment proofs or provision identities', async () => {
+    const denied = (error: unknown) => error instanceof Prisma.PrismaClientKnownRequestError && error.meta?.code === '42501';
+    await db.$executeRaw`INSERT INTO control.staff (id, email, password_hash)
+      VALUES (${event.actorId}::uuid, 'storage@example.test', 'inert-fixture-verifier')`;
+    for (const statement of [
+      Prisma.sql`INSERT INTO control.staff (id) VALUES (${event.requestId}::uuid)`,
+      Prisma.sql`UPDATE control.staff SET password_hash = 'changed'`,
+      Prisma.sql`UPDATE control.staff SET enabled = false`,
+      Prisma.sql`SELECT digest FROM control.staff_enrollment_proof`,
+      Prisma.sql`INSERT INTO control.staff_enrollment_proof (staff_id) VALUES (${event.actorId}::uuid)`,
+      Prisma.sql`UPDATE control.staff_enrollment_proof SET expires_at = now()`,
+      Prisma.sql`DELETE FROM control.staff_enrollment_proof`,
+    ]) await assert.rejects(runtime((tx) => tx.$queryRaw(statement)), denied);
+    await runtime((tx) => tx.$executeRaw`UPDATE control.staff SET last_step = 1 WHERE id = ${event.actorId}::uuid`);
+    const [{ allowed }] = await db.$queryRaw<{ allowed: boolean }[]>`SELECT has_function_privilege(
+      'control_audit_ungranted', 'control.consume_staff_enrollment(uuid,bytea)', 'EXECUTE') AS allowed`;
+    assert.equal(allowed, false);
+    const [{ fixed }] = await db.$queryRaw<{ fixed: boolean }[]>`SELECT prosecdef AND
+      proconfig = ARRAY['search_path=pg_catalog, pg_temp'] AS fixed FROM pg_catalog.pg_proc
+      WHERE oid = 'control.consume_staff_enrollment(uuid,bytea)'::regprocedure`;
+    assert.equal(fixed, true);
+  });
+
+  await t.test('an eligible staff member can consume an unexpired enrollment proof exactly once', async () => {
+    const proof = Buffer.alloc(32, 0x5a);
+    const provision = (expiry: Date) => db.$executeRaw`INSERT INTO control.staff_enrollment_proof
+      (staff_id, digest, expires_at) VALUES (${event.actorId}::uuid, sha256(${proof}), ${expiry})
+      ON CONFLICT (staff_id) DO UPDATE SET expires_at = EXCLUDED.expires_at`;
+    const consume = async (tx: Prisma.TransactionClient, id: string = event.actorId, bytes = proof) => {
+      const [{ used }] = await tx.$queryRaw<{ used: boolean }[]>`SELECT control.consume_staff_enrollment(
+        ${id}::uuid, ${bytes}::bytea) AS used`;
+      return used;
+    };
+    await provision(new Date(0));
+    assert.equal(await runtime((tx) => consume(tx)), false);
+    await provision(new Date(Date.now() + 60_000));
+    assert.equal(await runtime((tx) => consume(tx, event.requestId)), false);
+    assert.equal(await runtime((tx) => consume(tx, event.actorId, Buffer.alloc(32))), false);
+    await db.$executeRaw`UPDATE control.staff SET enabled = false WHERE id = ${event.actorId}::uuid`;
+    assert.equal(await runtime((tx) => consume(tx)), false);
+    await db.$executeRaw`UPDATE control.staff SET enabled = true, encrypted_seed = 'inert' WHERE id = ${event.actorId}::uuid`;
+    assert.equal(await runtime((tx) => consume(tx)), false);
+    await db.$executeRaw`UPDATE control.staff SET encrypted_seed = NULL WHERE id = ${event.actorId}::uuid`;
+    await assert.rejects(runtime(async (tx) => {
+      assert.equal(await consume(tx), true);
+      throw new Error('caller rollback');
+    }), /caller rollback/);
+    assert.deepEqual((await Promise.all([runtime((tx) => consume(tx)), runtime((tx) => consume(tx))])).sort(),
+      [false, true]);
+  });
+
+  await t.test('runtime sessions require ordered expiry and a unique digest', async () => {
+    const insert = (end: Date) => runtime((tx) => tx.$executeRaw`INSERT INTO control.staff_session
+      (digest, staff_id, verified_at, expires_at) VALUES (repeat('a',64), ${event.actorId}::uuid, now(), ${end})`);
+    const state = (code: string) => (e: unknown) => e instanceof Prisma.PrismaClientKnownRequestError && e.meta?.code === code;
+    await assert.rejects(insert(new Date(0)), state('23514'));
+    const expiry = new Date(Date.now() + 60_000);
+    await insert(expiry);
+    await assert.rejects(insert(expiry), state('23505'));
+  });
 });
