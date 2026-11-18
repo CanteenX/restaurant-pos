@@ -29,6 +29,7 @@ model AuditEvent {
 }
 
 model Staff {
+  hostedAccessEvents HostedAccessEvent[]
   billingInvoices BillingInvoice[]
   billingPayments BillingPayment[]
   id                 String    @id @db.Uuid
@@ -82,6 +83,7 @@ model StaffEnrollmentProof {
 }
 
 model Business {
+  hostedAccessEvents HostedAccessEvent[]
   billingInvoices BillingInvoice[]
   id          String   @id @db.Uuid
   legalName   String   @map("legal_name") @db.VarChar(160)
@@ -90,6 +92,22 @@ model Business {
   outlets     Outlet[]
   tickets     Ticket[]
   @@map("business")
+  @@schema("control")
+}
+
+model HostedAccessEvent {
+  businessId String   @map("business_id") @db.Uuid
+  requestKey String   @map("request_key") @db.Uuid
+  actorId    String   @map("actor_id") @db.Uuid
+  status     String   @db.VarChar(9)
+  reason     String   @db.VarChar(240)
+  revision   Int
+  changedAt  DateTime @default(dbgenerated("clock_timestamp()")) @map("changed_at") @db.Timestamptz(3)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  actor      Staff    @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  @@id([businessId, requestKey])
+  @@unique([businessId, revision])
+  @@map("hosted_access_event")
   @@schema("control")
 }
 

@@ -9,6 +9,7 @@ import { StaffAuth } from './staff/staff-auth.js';
 import { AuditReadController } from './audit/audit-read.controller.js';
 import { BillingController } from './billing/billing.controller.js';
 import { BusinessController } from './business/business.controller.js';
+import { HostedAccessController } from './hosted/hosted-access.controller.js';
 import { PlansController } from './plans/plans.controller.js';
 import { TicketsController } from './helpdesk/tickets/tickets.controller.js';
 import { StaffController } from './staff/staff.controller.js';
@@ -28,7 +29,8 @@ export async function createControlApi(env: NodeJS.ProcessEnv) {
   const auth = config && await StaffAuth.create(config.url, config.key, config.origin);
   const app = await NestFactory.create<NestExpressApplication>({
     module: ControlApiModule,
-    controllers: auth ? [StaffController, BusinessController, PlansController, TicketsController, AuditReadController, BillingController] : [],
+    controllers: auth ? [StaffController, BusinessController, PlansController, TicketsController,
+      AuditReadController, BillingController, HostedAccessController] : [],
     providers: auth ? [{ provide: StaffAuth, useValue: auth }] : [],
   }, { abortOnError: false, bodyParser: false });
   if (auth) {
