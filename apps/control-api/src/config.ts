@@ -16,3 +16,14 @@ export function readControlPort(env: NodeJS.ProcessEnv): number {
 
   return result.data.CONTROL_API_PORT;
 }
+
+export function readStaffConfig(env: NodeJS.ProcessEnv) {
+  const { CONTROL_DATABASE_URL: url, CONTROL_AUTH_KEY: key, CONTROL_ORIGIN: origin } = env;
+  if ([url, key, origin].every((s) => s === undefined)) return undefined;
+  if (!url || !URL.canParse(url) || !['postgres:', 'postgresql:'].includes(new URL(url).protocol) ||
+      !key || !/^[a-fA-F0-9]{64}$/.test(key) || !origin || !URL.canParse(origin) ||
+      new URL(origin).origin !== origin || new URL(origin).protocol !== 'https:') {
+    throw new Error('Invalid Control staff authentication configuration');
+  }
+  return { url, key, origin };
+}

@@ -50,3 +50,24 @@ void test('the production entry point exits with a redacted diagnostic', () => {
   assert.ok(!result.stderr.includes(value));
   assert.equal(result.stdout, '');
 });
+
+void test('partial staff configuration fails closed without echoing secret material', async () => {
+  await assert.rejects(
+    createControlApi({ CONTROL_API_PORT: '4002', CONTROL_AUTH_KEY: 'invalid-fixture-input' }),
+    /^Error: Invalid Control staff authentication configuration$/,
+  );
+});
+
+void test('redacts malformed JSON on a mistyped API route before routing', async (t) => {
+  const origin = 'https://control.example.test';
+  const { app } = await createControlApi({ CONTROL_API_PORT: '4002',
+    CONTROL_DATABASE_URL: 'postgresql://localhost:1/unused', CONTROL_AUTH_KEY: 'a5'.repeat(32), CONTROL_ORIGIN: origin });
+  t.after(() => app.close());
+  await app.listen(0, '127.0.0.1');
+  const marker = 'synthetic-marker';
+  const res = await fetch(new URL('/api/control/v1/staf/session/challenge', await app.getUrl()), {
+    method: 'POST', headers: { 'content-type': 'application/json', origin }, body: marker,
+  });
+  assert.equal(res.status, 400);
+  assert.equal((await res.text()).includes(marker), false);
+});
