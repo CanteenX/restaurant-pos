@@ -2,6 +2,7 @@ import type { IncomingMessage } from 'node:http';
 import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Post, Query, Req, UseFilters } from '@nestjs/common';
 import { controlResourceId, ticketListPage, ticketMessagePage, ticketNote, ticketPatch } from '@nventra/types';
 import type { z } from 'zod';
+import { ticketReply } from '@nventra/types/dist/control-reply';
 import { StaffAuth } from '../../staff/staff-auth.js';
 import { sessionCookie, StaffExceptionFilter } from '../../staff/staff.controller.js';
 import { TicketService } from './tickets.js';
@@ -31,6 +32,11 @@ export class TicketsController {
   @Patch(':id')
   update(@Req() req: IncomingMessage, @Param('id') id: string, @Body() body: unknown) {
     return this.tickets.update(sessionCookie(req), input(controlResourceId, id), input(ticketPatch, body));
+  }
+
+  @Post(':id/messages')
+  reply(@Req() req: IncomingMessage, @Param('id') id: string, @Body() body: unknown) {
+    return this.tickets.reply(sessionCookie(req), input(controlResourceId, id), input(ticketReply, body));
   }
 
   @Post(':id/notes')

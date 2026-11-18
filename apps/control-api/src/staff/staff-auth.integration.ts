@@ -1,5 +1,6 @@
 import { inboxStorageCases } from '../helpdesk/mail/inbox-storage.integration.js';
 import { ticketCases } from '../helpdesk/tickets/tickets.integration.js';
+import { replyCases } from '../helpdesk/tickets/reply.integration.js';
 import { planCases } from '../plans/plans.integration.js';
 import { businessCases } from '../business/business.integration.js';
 import { staffAccessCases } from './staff-access.integration.js';
@@ -164,5 +165,6 @@ export async function staffAuthCases(t: TestContext, db: PrismaClient, datasourc
   await businessCases(t, db, new URL('../businesses', root).href, origin);
   await planCases(t, db, new URL('../', root).href, origin);
   await ticketCases(t, db, new URL('../tickets', root).href, origin);
+  await replyCases(t, db, new URL('../tickets', root).href, origin);
   await inboxStorageCases(t, db, datasourceUrl, new URL('../tickets', root).href);
 }
