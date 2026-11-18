@@ -114,3 +114,92 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<StaffRole, PermissionKey[]> = {
   ACCOUNTANT: ["sales.view", "dashboard.sales.view", "reports.access", "reports.financial.view", "data.export", "accounting.manage", "petty_cash.manage"],
   INVENTORY_MANAGER: ["inventory.manage", "reports.access"],
 };
+
+// Control Center staff use a separate permission catalog and explicit grants.
+export const CONTROL_PERMISSIONS = Object.freeze([
+  "cc.staff.read",
+  "cc.staff.manage",
+  "cc.business.read",
+  "cc.business.manage",
+  "cc.plan.read",
+  "cc.plan.manage",
+  "cc.audit.read",
+  "cc.ticket.read",
+  "cc.ticket.manage",
+  "cc.ticket.reply",
+] as const);
+
+export type ControlPermissionKey = (typeof CONTROL_PERMISSIONS)[number];
+
+/** Initial grant choices for staff setup. Authorization uses stored grants. */
+export const CONTROL_ROLE_PRESETS = Object.freeze({
+  OWNER: CONTROL_PERMISSIONS,
+  SUPPORT: Object.freeze([
+    "cc.business.read",
+    "cc.plan.read",
+    "cc.ticket.read",
+    "cc.ticket.manage",
+    "cc.ticket.reply",
+  ] as const),
+  SALES: Object.freeze([
+    "cc.business.read",
+    "cc.business.manage",
+    "cc.plan.read",
+  ] as const),
+} satisfies Record<string, readonly ControlPermissionKey[]>);
+
+const controlPermissionKeys: ReadonlySet<string> = new Set(CONTROL_PERMISSIONS);
+
+function isControlPermissionKey(value: unknown): value is ControlPermissionKey {
+  return typeof value === "string" && controlPermissionKeys.has(value);
+}
+
+function readControlGrants(value: unknown): ReadonlySet<ControlPermissionKey> | null {
+  if (!Array.isArray(value)) return null;
+  const keys: readonly unknown[] = value;
+  const grants = new Set<ControlPermissionKey>();
+  for (const key of keys) {
+    if (!isControlPermissionKey(key)) return null;
+    grants.add(key);
+  }
+  return grants;
+}
+
+export function controlPermissionSatisfied(held: unknown, required: ControlPermissionKey): boolean {
+  return readControlGrants(held)?.has(required) ?? false;
+}
+
+export interface ControlStaffGrantScope {
+  readonly staffId: string;
+  readonly grants: unknown;
+}
+
+function isCanonicalStaffId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value === value.trim();
+}
+
+/** Compare canonical staff IDs and grant snapshots loaded by the caller. */
+export function canManageControlStaff(
+  actor: ControlStaffGrantScope,
+  subject: ControlStaffGrantScope,
+  requested: unknown,
+): boolean {
+  if (
+    !isCanonicalStaffId(actor.staffId) ||
+    !isCanonicalStaffId(subject.staffId) ||
+    actor.staffId === subject.staffId
+  ) return false;
+
+  const actorGrants = readControlGrants(actor.grants);
+  if (!actorGrants?.has("cc.staff.manage")) return false;
+
+  const subjectGrants = readControlGrants(subject.grants);
+  const requestedGrants = readControlGrants(requested);
+  if (!subjectGrants || !requestedGrants) return false;
+
+  return (
+    actorGrants.size > subjectGrants.size &&
+    [...subjectGrants].every((key) => actorGrants.has(key)) &&
+    [...requestedGrants].every((key) => actorGrants.has(key))
+  );
+}
