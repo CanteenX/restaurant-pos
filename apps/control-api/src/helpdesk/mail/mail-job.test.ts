@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readMailJobConfig } from './mail-job-config.ts';
@@ -117,4 +119,33 @@ void test('cooperatively cancels a run and closes resources without exposing the
     return Promise.resolve({ inbox: () => { assert.fail('Aborted startup ran mail work'); }, outbox: inbox, close });
   }, opening.signal), 'interrupted');
   assert.equal(closed, true);
+});
+
+void test('refuses diagnostic startup flags before importing a database or transport', () => {
+  const trap = `
+    const Module = require('node:module');
+    const load = Module._load;
+    Module._load = function (id, ...args) {
+      if (/scheduled-mail-worker|control-client/.test(id)) throw new Error('Worker module loaded');
+      return load.call(this, id, ...args);
+    };
+    require('./' + process.argv[1]);
+  `;
+  for (const [flag, value] of [['DEBUG','prisma:*'],['RUST_LOG','trace'],['NODE_DEBUG','net,tls']]) {
+    const result = spawnSync(process.execPath, ['-e', trap, '--', 'dist/helpdesk/mail/mail-main.js', 'inbox'], {
+      encoding: 'utf8', timeout: 5_000, env: { ...process.env, DEBUG: '', RUST_LOG: '', NODE_DEBUG: '',
+        CONTROL_MAIL_ENABLED: 'false', CONTROL_MAIL_DATABASE_URL: '', [flag]: value },
+    });
+    assert.deepEqual([result.status, result.stdout, result.stderr],
+      [1, '', 'Control mail job did not complete (invalid-configuration).\n']);
+  }
+});
+
+void test('operator scheduler has a hard termination bound for a worker that ignores cancellation', () => {
+  const runbook = readFileSync('operator/mail-scheduler.md', 'utf8');
+  const limit = /timeout --kill-after=(\d+)s (\d+)s/.exec(runbook);
+  assert.ok(limit);
+  assert.equal(Number(limit[1]) + Number(limit[2]), 120);
+  assert.match(runbook, /ExecutionTimeLimit.*PT2M/);
+  assert.match(runbook, /AllowHardTerminate/);
 });
