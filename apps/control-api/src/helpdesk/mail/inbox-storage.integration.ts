@@ -1,3 +1,4 @@
+import { outboxCases } from './outbox-dispatch.integration.js';
 import { intakeCases } from './inbox-intake.integration.js';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -117,4 +118,5 @@ export async function inboxStorageCases(t: TestContext, db: PrismaClient, url: s
     await releaseMailbox(worker, reset);
   });
   await intakeCases(t, db, worker);
+  await outboxCases(t, db, worker);
 }
