@@ -4,6 +4,10 @@ import { useRef, useState, type FormEvent } from 'react';
 import { call } from './api';
 
 export type ReplyTarget = { address: string; verified: boolean };
+const templates = [
+  { label: 'Use acknowledgment template', text: 'Thanks for contacting Nventra Support. We are looking into your request.' },
+  { label: 'Use request-details template', text: 'Could you share what you expected to happen, what happened instead, and which outlet was affected?' },
+];
 
 export function TicketReply({ path, target, busy, change, refresh, queued }: {
   path: string;
@@ -14,6 +18,7 @@ export function TicketReply({ path, target, busy, change, refresh, queued }: {
   queued: () => void;
 }) {
   const [confirmed, setConfirmed] = useState(false);
+  const [draft, setDraft] = useState('');
   const attempt = useRef<{ text: string; requestKey: string }>(undefined);
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -29,7 +34,7 @@ export function TicketReply({ path, target, busy, change, refresh, queued }: {
       await refresh(signal);
       if (signal.aborted) return;
       attempt.current = undefined;
-      form.reset();
+      setDraft('');
       setConfirmed(false);
       queued();
     });
@@ -43,7 +48,11 @@ export function TicketReply({ path, target, busy, change, refresh, queued }: {
         <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.currentTarget.checked)} required />
         I checked this unverified recipient.
       </label>}
-      <label>Email reply<textarea name="reply" maxLength={4000} required rows={4} /></label>
+      <div className="reply-templates">{templates.map(({ label, text }) =>
+        <button key={label} type="button" onClick={() => setDraft(text)}>{label}</button>)}</div>
+      <label><span id="ticket-reply-label">Email reply</span><textarea aria-labelledby="ticket-reply-label"
+        name="reply" maxLength={4000} required rows={4}
+        value={draft} onChange={(event) => setDraft(event.currentTarget.value)} /></label>
       <button className="primary" type="submit" disabled={!target.verified && !confirmed}>Queue reply</button>
     </fieldset>
   </form>;

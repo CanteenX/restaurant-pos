@@ -159,4 +159,77 @@ export async function ticketCases(t: TestContext, db: PrismaClient, url: string,
       (id, ticket_id, sequence, request_key, author_id, text, visibility)
       VALUES (${randomUUID()}::uuid, ${id}::uuid, 9, ${randomUUID()}::uuid, ${writer.id}::uuid, 'fixture', 'staff')`), denied);
   });
+
+  await t.test('scopes the staff queue and pages the oldest unanswered public customer messages', async () => {
+    const business = () => db.business.create({ data: { id: randomUUID(), legalName: 'Queue', displayName: 'Queue' } });
+    const [a, b] = await Promise.all([business(), business()]);
+    const outlet = await db.outlet.create({ data: { id: randomUUID(), businessId: a.id, displayName: 'Queue outlet', timeZone: 'UTC' } });
+    const ticket = (businessId: string, outletId?: string) => db.ticket.create({ data: {
+      id: randomUUID(), subject: 'Scoped fixture', businessId, outletId, status: 'pending',
+    } });
+    const [first, second, answered, sent, differentOutlet, differentBusiness] = await Promise.all([
+      ...Array.from({ length: 4 }, () => ticket(a.id, outlet.id)), ticket(a.id), ticket(b.id),
+    ]);
+    const message = (ticketId: string, sequence: number, day: number, direction = 'inbound') => ({
+      id: randomUUID(), ticketId, sequence, direction, visibility: direction === 'internal' ? 'staff' : 'public',
+      createdAt: new Date(Date.UTC(2026, 0, day)), text: 'Synthetic queue message',
+      ...(direction !== 'inbound' && { authorId: writer.id, requestKey: randomUUID() }),
+    });
+    const heldReply = message(second.id, 2, 6, 'outbound'), sentReply = message(sent.id, 2, 2, 'outbound');
+    await db.ticketMessage.createMany({ data: [
+      message(first.id, 1, 1), message(first.id, 2, 2, 'outbound'), message(first.id, 3, 3), message(first.id, 4, 4, 'internal'),
+      message(second.id, 1, 5), heldReply, message(answered.id, 1, 1), message(answered.id, 2, 2, 'outbound'),
+      message(sent.id, 1, 1), sentReply,
+      message(differentOutlet.id, 1, 1), message(differentBusiness.id, 1, 1),
+    ] });
+    await db.ticketReplyOutbox.createMany({ data: [{ reply: heldReply, state: 'held' }, { reply: sentReply, state: 'sent' }].map(({ reply, state }) => ({
+      messageRowId: reply.id, state, acknowledgedUnverified: false,
+      messageId: '<' + reply.id + '@nventra.invalid>', recipient: 'fixture@example.test',
+      subject: 'Synthetic', renderedText: 'Reply', renderedHtml: '<p>Reply</p>',
+    })) });
+    const scope = '?businessId=' + a.id + '&outletId=' + outlet.id + '&status=pending';
+    const queue = scope + '&sort=oldest-unanswered&limit=1';
+    type QueuePage = { items: { id: string; unansweredSince: string }[]; nextCursor: string | null };
+    const getPage = async (query: string) => {
+      const response = await req(query);
+      assert.equal(response.status, 200);
+      return await response.json() as QueuePage;
+    };
+    assert.deepEqual((await getPage(scope)).items.map(({ id }) => id).sort(), [first.id, second.id, answered.id, sent.id].sort());
+    const oldest = await getPage(queue);
+    assert.deepEqual(oldest.items.map(({ id, unansweredSince }) => [id, unansweredSince]), [[first.id, '2026-01-03T00:00:00.000Z']]);
+    const next = await getPage(queue + '&cursor=' + encodeURIComponent(oldest.nextCursor ?? ''));
+    assert.deepEqual(next.items.map(({ id }) => id), [second.id]);
+    assert.equal(next.nextCursor, null);
+    assert.equal((await req('?outletId=' + outlet.id)).status, 400);
+    assert.equal((await req(queue + '&cursor=' + randomUUID())).status, 400);
+    assert.deepEqual((await getPage('?businessId=' + b.id + '&outletId=' + outlet.id)).items, []);
+  });
+
+  await t.test('lists only eligible staff assignment identifiers and names to ticket managers', async () => {
+    const disabled = await actor(['cc.ticket.read']);
+    await db.staff.update({ where: { id: disabled.id }, data: { enabled: false } });
+    assert.equal((await req('/eligible-owners')).status, 403);
+    const response = await req('/eligible-owners', writer.cookie);
+    assert.equal(response.status, 200);
+    const directory = await response.json() as { items: { id: string; email: string }[] };
+    assert.ok(directory.items.some((candidate) => candidate.id === reader.id && candidate.email.endsWith('@example.test')));
+    assert.ok(directory.items.every((candidate) => Object.keys(candidate).sort().join(',') === 'email,id'));
+    assert.ok(directory.items.every((candidate) => ![disabled.id, replyOnly.id, writer.id].some((id) => id === candidate.id)));
+  });
+
+  await t.test('requires explicit human confirmation before linking an email to a business', async () => {
+    const path = await seed(), ticketId = path.slice(1), id = randomUUID(), mailbox = 'fixture@example.test';
+    const business = await db.business.create({ data: { id: randomUUID(), legalName: 'Link fixture', displayName: 'Link fixture' } });
+    await db.ticketMessage.create({ data: { id, ticketId, sequence: 1, direction: 'inbound',
+      visibility: 'public', text: 'Synthetic email' } });
+    await db.mailboxCursor.upsert({ where: { mailbox }, create: { mailbox }, update: {} });
+    await db.inboundReceipt.create({ data: { mailbox, providerId: randomUUID(), messageRowId: id,
+      outcome: 'accept', reason: 'ticket-created', claimedSender: 'unknown@example.test' } });
+    assert.equal((await patch(path, { businessId: business.id })).status, 400);
+    assert.equal((await patch(path, { businessId: business.id, confirmedBusinessLink: true }, reader.cookie)).status, 403);
+    assert.equal((await patch(path, { businessId: business.id, confirmedBusinessLink: true })).status, 200);
+    const event = await db.auditEvent.findFirstOrThrow({ where: { subjectId: ticketId } });
+    assert.ok(event.changedFields.includes('confirmedBusinessLink'));
+  });
 }

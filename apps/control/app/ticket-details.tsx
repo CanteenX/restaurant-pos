@@ -4,21 +4,27 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, call, pagePath, useRequestScope, type Page } from './api';
 import { ticketPatch } from '@nventra/types/dist/control-ticket';
 import { TicketReply, type ReplyTarget } from './ticket-reply';
+import { TicketAssignment } from './ticket-routing';
 
 export const statuses = ticketPatch.shape.status.unwrap().options;
 const priorities = ticketPatch.shape.priority.unwrap().options;
-export type Ticket = { id: string; subject: string; status: (typeof statuses)[number]; priority: (typeof priorities)[number] };
-export type TicketTriage = Pick<Ticket, 'status' | 'priority'>;
+export type Ticket = {
+  id: string; subject: string; status: (typeof statuses)[number]; priority: (typeof priorities)[number];
+  businessId: string | null; outletId: string | null; ownerId: string | null; unansweredSince?: string;
+};
+export type TicketTriage = Pick<Ticket, 'status' | 'priority' | 'businessId' | 'outletId' | 'ownerId'>;
+const triageOf = ({ status, priority, businessId, outletId, ownerId }: Ticket): TicketTriage =>
+  ({ status, priority, businessId, outletId, ownerId });
 export const label = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
 const deliveryLabels = new Map([
   ['queued', 'Queued'], ['sending', 'Sending'], ['held', 'Held for review'], ['sent', 'Sent'], ['failed', 'Delivery failed'],
 ]);
 type Message = { id: string; direction: string; visibility: string; text: string; deliveryState?: string };
-type Detail = Ticket & { messages: Page<Message>; replyTarget?: ReplyTarget | null };
+type Detail = Ticket & { messages: Page<Message>; replyTarget?: ReplyTarget | null; needsBusinessLinkConfirmation?: boolean };
 
-export function TicketDetails({ id, manage, reply, report, clearError, onTriageChange }: {
-  id: string; manage: boolean; reply: boolean; report: (failure: unknown) => void; clearError: () => void;
+export function TicketDetails({ id, manage, directory, reply, report, clearError, onTriageChange }: {
+  id: string; manage: boolean; directory: boolean; reply: boolean; report: (failure: unknown) => void; clearError: () => void;
   onTriageChange: (id: string, triage: TicketTriage) => void;
 }) {
   const path = 'tickets/' + id;
@@ -68,13 +74,18 @@ export function TicketDetails({ id, manage, reply, report, clearError, onTriageC
     const { status, priority } = parsed.data;
     const changed = { ...(status !== ticket.status && { status }), ...(priority !== ticket.priority && { priority }) };
     if (Object.keys(changed).length === 0) return;
+    savePatch(changed);
+  }
+
+  function savePatch(patch: ReturnType<typeof ticketPatch.parse>, success = '') {
     void change(async (scope) => {
-      await call(path, changed, undefined, 'PATCH');
+      await call(path, patch, undefined, 'PATCH');
       if (scope.aborted) return;
       const refreshed = await call<Detail>(path, undefined, scope);
       if (scope.aborted) return;
       setTicket((current) => current && { ...refreshed, messages: current.messages });
-      onTriageChange(id, { status: refreshed.status, priority: refreshed.priority });
+      onTriageChange(id, triageOf(refreshed));
+      setNotice(success);
     });
   }
 
@@ -91,7 +102,7 @@ export function TicketDetails({ id, manage, reply, report, clearError, onTriageC
       const refreshed = await call<Detail>(path, undefined, scope);
       if (scope.aborted) return;
       setTicket(refreshed);
-      onTriageChange(id, { status: refreshed.status, priority: refreshed.priority });
+      onTriageChange(id, triageOf(refreshed));
       noteAttempt.current = undefined;
       form.reset();
       setNotice('Internal note added.');
@@ -102,7 +113,7 @@ export function TicketDetails({ id, manage, reply, report, clearError, onTriageC
     const refreshed = await call<Detail>(path, undefined, scope);
     if (!scope.aborted) {
       setTicket(refreshed);
-      onTriageChange(id, { status: refreshed.status, priority: refreshed.priority });
+      onTriageChange(id, triageOf(refreshed));
     }
   }
 
@@ -115,7 +126,7 @@ export function TicketDetails({ id, manage, reply, report, clearError, onTriageC
       setTicket((current) => current && {
         ...next, messages: { items: [...current.messages.items, ...next.messages.items], nextCursor: next.messages.nextCursor },
       });
-      onTriageChange(id, { status: next.status, priority: next.priority });
+      onTriageChange(id, triageOf(next));
     });
   }
 
@@ -138,13 +149,16 @@ export function TicketDetails({ id, manage, reply, report, clearError, onTriageC
         <button className="primary" type="submit">Save status and priority</button>
       </fieldset>
     </form>}
+    {manage && <TicketAssignment key={[ticket.businessId, ticket.outletId, ticket.ownerId].join(':')}
+      ticket={ticket} directory={directory} busy={busy} save={(patch) => savePatch(patch, 'Ticket assignment saved.')} />}
     <h3>Conversation</h3>
     <button type="button" disabled={busy} onClick={() => void change(refreshConversation)}>Refresh conversation</button>
     {!ticket.messages.items.length && <p>No messages yet.</p>}
     <ol className="ticket-thread">{ticket.messages.items.map((message) => {
       const outbound = message.visibility === 'public' && message.direction === 'outbound';
       const status = outbound && deliveryLabels.get(message.deliveryState ?? '');
-      const title = message.visibility === 'staff' ? 'Internal note' : outbound ? 'Email reply' : 'Customer message';
+      const title = message.visibility === 'staff' ? 'Internal note' : outbound
+        ? (message.deliveryState ? 'Email reply' : 'Staff reply') : 'Customer message';
       return <li key={message.id}>
         <article className={message.visibility === 'staff' ? 'ticket-note' : 'ticket-message'}>
           <strong>{title}</strong>
