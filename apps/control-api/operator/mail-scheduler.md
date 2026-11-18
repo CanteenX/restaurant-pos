@@ -20,7 +20,7 @@ Real mail activation also requires a tested retention procedure, including backu
 
 ## Windows Task Scheduler and cron
 
-Run the built Control mail entry point from the installed `apps/control-api` directory. Set up one invocation for inbox processing and one for outbox processing, staggered on a 2–5 minute cadence. Use the absolute Node path, a dedicated non-interactive OS account and process-scoped secrets injected by the host.
+Build from the monorepo with `pnpm --filter @nventra/control-api... build`. From the installed `apps/control-api` directory, invoke `node dist/helpdesk/mail/mail-main.js inbox` or `node dist/helpdesk/mail/mail-main.js outbox`. Set up one invocation for inbox processing and one for outbox processing, staggered on a 2–5 minute cadence. Use the absolute Node path, a dedicated non-interactive OS account and process-scoped secrets injected by the host.
 
 - **Windows Task Scheduler.** Choose the option to run whether or not the account is logged on. Set the working directory to the installed Control API directory. Under Settings, choose “Do not start a new instance” and cap each invocation at two minutes.
 - **Linux cron.** Use the dedicated account’s crontab. Run each invocation under a nonblocking `flock` for that job and a two-minute `timeout`. Store lock files in an account-owned directory and use absolute executable paths.
