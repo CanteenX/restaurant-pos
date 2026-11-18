@@ -1,7 +1,20 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 const origin = 'https://localhost:4172';
 const address = 'recipient@example.test';
+
+async function openFixtureTicket(page: Page, email: string) {
+  await page.goto('/');
+  await page.getByLabel('Email').fill(email);
+  await page.getByLabel('Password', { exact: true }).fill('browser fixture passphrase');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  const { base32Decode, hotp, stepAt } = require('../../packages/types/dist/node/totp');
+  const fixtureSeed = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+  await page.getByLabel('Verification code').fill(hotp(base32Decode(fixtureSeed), stepAt(Date.now())));
+  await page.getByRole('button', { name: 'Verify' }).click();
+  await page.getByRole('button', { name: /Printer support/ }).click();
+  await expect(page.getByRole('heading', { name: 'Printer support' })).toBeVisible();
+}
 
 test('confirms an unverified target and reuses a queued reply key after a lost response', async ({ page }) => {
   const submissions: { text: string; requestKey: string; acknowledgeUnverified?: true }[] = [];
@@ -30,16 +43,7 @@ test('confirms an unverified target and reuses a queued reply key after a lost r
     await route.continue({ headers });
   });
 
-  await page.goto('/');
-  await page.getByLabel('Email').fill('reply-staff@example.test');
-  await page.getByLabel('Password', { exact: true }).fill('browser fixture passphrase');
-  await page.getByRole('button', { name: 'Continue' }).click();
-  const { base32Decode, hotp, stepAt } = require('../../packages/types/dist/node/totp');
-  const fixtureSeed = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
-  await page.getByLabel('Verification code').fill(hotp(base32Decode(fixtureSeed), stepAt(Date.now())));
-  await page.getByRole('button', { name: 'Verify' }).click();
-  await page.getByRole('button', { name: /Printer support/ }).click();
-  await expect(page.getByRole('heading', { name: 'Printer support' })).toBeVisible();
+  await openFixtureTicket(page, 'reply-staff@example.test');
 
   await expect(page.getByText(address, { exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: /recipient|^to$/i })).toHaveCount(0);
@@ -63,3 +67,52 @@ test('confirms an unverified target and reuses a queued reply key after a lost r
   await page.getByRole('button', { name: 'Refresh conversation' }).click();
   await expect(reply.getByText('Sent', { exact: true })).toBeVisible();
 });
+
+for (const action of ['pagination', 'refresh', 'reply'] as const) {
+  test(`clears revoked access after ticket ${action}`, async ({ page }) => {
+    let revoked = false;
+    await page.route('**/api/control/v1/**', async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const headers = request.headers();
+      if (headers.origin === origin.replace('https:', 'http:')) headers.origin = origin;
+      if (revoked && action === 'reply' && request.method() === 'POST' && url.pathname.endsWith('/messages')) {
+        return route.fulfill({ status: 403 });
+      }
+      if (request.method() === 'GET' && /\/tickets\/[^/]+$/.test(url.pathname)) {
+        if (revoked && action === 'refresh') return route.fulfill({ status: 403 });
+        const result = await route.fetch({ headers });
+        if (revoked) return route.fulfill({ response: result });
+        const detail = await result.json();
+        return route.fulfill({ response: result, json: { ...detail,
+          replyTarget: { address, verified: true }, messages: { ...detail.messages, nextCursor: 1 } } });
+      }
+      return route.continue({ headers });
+    });
+
+    await openFixtureTicket(page, 'reply-' + action + '@example.test');
+    const threadText = page.getByText('<b>Receipt printer offline</b>', { exact: false });
+    await expect(threadText).toBeVisible();
+    await expect(page.getByText(address, { exact: true })).toBeVisible();
+    await page.getByLabel('Email reply', { exact: true }).fill('A pending fixture draft.');
+    revoked = true;
+
+    if (action === 'pagination') {
+      await page.getByRole('button', { name: 'More messages' }).click();
+      await expect(page.getByRole('button', { name: 'More messages' })).toHaveCount(0);
+      await expect(threadText).toBeVisible();
+    } else {
+      await page.getByRole('button', { name: action === 'refresh' ? 'Refresh conversation' : 'Queue reply' }).click();
+      await expect(page.getByRole('main').getByRole('alert')).toContainText('Your current permissions');
+      await expect(threadText).toHaveCount(0);
+    }
+    await expect(page.getByText(address, { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel('Email reply', { exact: true })).toHaveCount(0);
+    if (action === 'reply') {
+      await page.getByRole('button', { name: 'Retry ticket' }).click();
+      await expect(threadText).toBeVisible();
+      await expect(page.getByText(address, { exact: true })).toHaveCount(0);
+      await expect(page.getByLabel('Email reply', { exact: true })).toHaveCount(0);
+    }
+  });
+}

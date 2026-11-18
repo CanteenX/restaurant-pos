@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { call, pagePath, useRequestScope, type Page } from './api';
+import { ApiError, call, pagePath, useRequestScope, type Page } from './api';
 import { ticketPatch } from '@nventra/types/dist/control-ticket';
 import { TicketReply, type ReplyTarget } from './ticket-reply';
 
@@ -24,6 +24,7 @@ export function TicketDetails({ id, manage, reply, report, clearError, onTriageC
   const path = 'tickets/' + id;
   const [ticket, setTicket] = useState<Detail | null>();
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
   const [notice, setNotice] = useState('');
   const requests = useRequestScope();
   const noteAttempt = useRef<{ text: string; key: string }>(undefined);
@@ -31,20 +32,32 @@ export function TicketDetails({ id, manage, reply, report, clearError, onTriageC
   useEffect(() => {
     const scope = requests.current;
     if (!scope) return;
-    void call<Detail>(path, undefined, scope).then(setTicket).catch((failure: unknown) => {
+    void call<Detail>(path, undefined, scope).then((detail) => {
+      if (!scope.aborted) setTicket(detail);
+    }).catch((failure: unknown) => {
       if (!scope.aborted) { setTicket(null); report(failure); }
     });
   }, [path, report, requests]);
 
   async function change(action: (scope: AbortSignal) => Promise<void>) {
     const scope = requests.current;
-    if (!scope || scope.aborted) return;
+    if (!scope || scope.aborted || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setNotice('');
     clearError();
     try { await action(scope); }
-    catch (failure) { if (!scope.aborted) report(failure); }
-    finally { if (!scope.aborted) setBusy(false); }
+    catch (failure) {
+      if (scope.aborted) return;
+      if (failure instanceof ApiError && failure.status === 403) {
+        setTicket(null);
+        noteAttempt.current = undefined;
+      }
+      report(failure);
+    } finally {
+      inFlight.current = false;
+      if (!scope.aborted) setBusy(false);
+    }
   }
 
   function saveTriage(event: FormEvent<HTMLFormElement>) {
@@ -58,11 +71,10 @@ export function TicketDetails({ id, manage, reply, report, clearError, onTriageC
     void change(async (scope) => {
       await call(path, changed, undefined, 'PATCH');
       if (scope.aborted) return;
-      const { status: savedStatus, priority: savedPriority } = await call<Detail>(path, undefined, scope);
+      const refreshed = await call<Detail>(path, undefined, scope);
       if (scope.aborted) return;
-      const triage = { status: savedStatus, priority: savedPriority };
-      setTicket((current) => current && { ...current, ...triage });
-      onTriageChange(id, triage);
+      setTicket((current) => current && { ...refreshed, messages: current.messages });
+      onTriageChange(id, { status: refreshed.status, priority: refreshed.priority });
     });
   }
 
@@ -99,13 +111,18 @@ export function TicketDetails({ id, manage, reply, report, clearError, onTriageC
     if (!cursor) return;
     void change(async (scope) => {
       const next = await call<Detail>(pagePath(path, cursor), undefined, scope);
-      if (!scope.aborted) setTicket((current) => current && {
-        ...current, messages: { items: [...current.messages.items, ...next.messages.items], nextCursor: next.messages.nextCursor },
+      if (scope.aborted) return;
+      setTicket((current) => current && {
+        ...next, messages: { items: [...current.messages.items, ...next.messages.items], nextCursor: next.messages.nextCursor },
       });
+      onTriageChange(id, { status: next.status, priority: next.priority });
     });
   }
 
-  if (!ticket) return <section className="detail"><p role="status">{ticket === null ? 'Ticket unavailable.' : 'Loading ticket…'}</p></section>;
+  if (!ticket) return <section className="detail">
+    <p role="status">{ticket === null ? 'Ticket unavailable.' : 'Loading ticket…'}</p>
+    {ticket === null && <button type="button" disabled={busy} onClick={() => void change(refreshConversation)}>Retry ticket</button>}
+  </section>;
 
   return <section className="detail ticket-detail">
     <h2>{ticket.subject}</h2>
