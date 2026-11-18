@@ -213,6 +213,7 @@ void test('PostgreSQL 16 Control audit storage', { skip: !ci && !testUrl }, asyn
     await db.$executeRaw`UPDATE control.staff SET enabled = false WHERE id = ${event.actorId}::uuid`;
     assert.equal(await runtime((tx) => consume(tx)), false);
     await db.$executeRaw`UPDATE control.staff SET enabled = true, encrypted_seed = 'inert' WHERE id = ${event.actorId}::uuid`;
+    await provision(new Date(Date.now() + 60_000)); // Re-enabling invalidates the old proof.
     assert.equal(await runtime((tx) => consume(tx)), false);
     await db.$executeRaw`UPDATE control.staff SET encrypted_seed = NULL WHERE id = ${event.actorId}::uuid`;
     await assert.rejects(runtime(async (tx) => {

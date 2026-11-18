@@ -67,3 +67,17 @@ revokes that session. Browser POSTs require the configured Origin.
 Rate limits use shared PostgreSQL counters per staff account and socket peer.
 A reverse proxy shares its peer quota across users. Forwarded address headers
 are ignored. Deploy behind a reviewed TLS endpoint and restrict direct access.
+
+Staff grants default to an empty set. The provisioning operator explicitly assigns
+the first administrator's grants. `GET /staff/users` requires `cc.staff.read`
+and accepts a UUID cursor and a limit of 1–50. Grant replacement, session
+revocation and factor reset require `cc.staff.manage` and verification within
+ten minutes. Sign in again to refresh verification. Management uses the
+actor's and target's stored grants and rejects self or peer administration.
+
+Use `PATCH /staff/users/:id/grants` with a grants array. POST an empty object
+to `/staff/users/:id/revoke-sessions` or `/staff/users/:id/reset-factor`.
+Both clear outstanding sessions, challenges and enrollment proofs. A reset also
+clears the authenticator and recovery codes. The operator must provision a fresh
+out-of-band proof for re-enrollment. Disablement, re-enablement and password
+changes invalidate outstanding sessions at the database boundary.

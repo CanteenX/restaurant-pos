@@ -1,3 +1,4 @@
+import { staffAccessCases } from './staff-access.integration.js';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { TestContext } from 'node:test';
@@ -155,4 +156,5 @@ export async function staffAuthCases(t: TestContext, db: PrismaClient, datasourc
     const ip = await burst(Array.from({ length: 25 }, (_, i) => `missing${i}@example.test`));
     assert.equal(ip.filter((s) => s === 429).length, 1);
   });
+  await staffAccessCases(t, db, root, origin, password, verifier);
 }

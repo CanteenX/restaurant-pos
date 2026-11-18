@@ -4,14 +4,18 @@ import { compare, hash } from 'bcrypt';
 import { generateSecret, generateRecoveryCode, openSecret, sealSecret, verifyTotp } from '@nventra/types/dist/node/totp';
 
 import { PrismaClient } from '../../node_modules/.prisma/control-client/index.js';
+import { StaffAccess } from './staff-access.js';
 import { appendAuditEvent } from '../audit/audit.js';
 
 const token = () => randomBytes(32).toString('base64url');
 const minutes = (n: number) => new Date(Date.now() + n * 60_000);
 
 export class StaffAuth {
+  readonly access: StaffAccess;
   private constructor(private readonly db: PrismaClient, private readonly key: string,
-    readonly origin: string, private readonly dummyHash: string) {}
+    readonly origin: string, private readonly dummyHash: string) {
+    this.access = new StaffAccess(db, (cookie) => this.digest('session', cookie));
+  }
 
   static async create(url: string, key: string, origin: string) {
     const dummy = await hash(token(), 12);
@@ -63,7 +67,7 @@ export class StaffAuth {
       }
       const challenge = token();
       const changed = await tx.staff.updateMany({
-        where: { id: staff.id, enabled: true, passwordHash: staff.passwordHash, encryptedSeed: staff.encryptedSeed },
+        where: { id: staff.id, enabled: true, passwordHash: staff.passwordHash, encryptedSeed: staff.encryptedSeed, credentialVersion: staff.credentialVersion },
         data: { challengeDigest: this.digest('challenge', challenge), challengeExpiresAt: minutes(5),
           pendingSeed: enrollmentSecret ? sealSecret(enrollmentSecret, this.key + staff.id) : null },
       });
@@ -118,6 +122,11 @@ export class StaffAuth {
   }
 
   async logout(value: string) {
-    await this.db.staffSession.deleteMany({ where: { digest: this.digest('session', value) } });
+    const digest = this.digest('session', value);
+    await this.db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT s.id FROM control.staff s JOIN control.staff_session ss ON s.id = ss.staff_id
+        WHERE ss.digest = ${digest} FOR UPDATE OF s`;
+      await tx.staffSession.deleteMany({ where: { digest } });
+    });
   }
 }
