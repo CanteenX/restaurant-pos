@@ -1,3 +1,4 @@
+import { intakeCases } from './inbox-intake.integration.js';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
@@ -115,4 +116,5 @@ export async function inboxStorageCases(t: TestContext, db: PrismaClient, url: s
     assert.equal(reset.afterUid, 0); assert.equal(reset.uidValidity, '20');
     await releaseMailbox(worker, reset);
   });
+  await intakeCases(t, db, worker);
 }

@@ -68,6 +68,7 @@ function harness(overrides: Partial<ReturnType<GmailImapFactory>> = {}) {
 void test('preflights size and selects only inline plain text on verified Gmail IMAP', async () => {
   const { adapter, calls, options } = harness();
   const result = await adapter.poll(cursor, new AbortController().signal);
+  assert.equal(adapter.mailbox, env.CONTROL_GMAIL_USER);
   const tls = options();
   assert.equal(tls?.host, 'imap.gmail.com');
   assert.equal(tls?.port, 993);
@@ -210,4 +211,19 @@ void test('destroys a pending body stream as well as the client on abort', async
   await assert.rejects(adapter.poll(cursor, cancel.signal), { message: 'Gmail inbox retrieval failed' });
   assert.equal(stalled.destroyed, true);
   assert.equal(calls.at(-1), 'close');
+});
+
+void test('suppresses Gmail sent copies, auto replies and list mail before downloading text', async () => {
+  for (const [metadata, reason] of [
+    [{ labels: new Set(['\\Sent']) }, 'self-mail'],
+    [{ headers: Buffer.from('Auto-Submitted: auto-replied\r\n') }, 'auto-submitted'],
+    [{ headers: Buffer.from('List-Id: synthetic <list.test>\r\n') }, 'mailing-list'],
+    [{ headers: Buffer.alloc(8193) }, 'invalid-headers'],
+  ] as const) {
+    const { adapter, calls } = harness({ fetchOne: () => Promise.resolve({ ...row, bodyStructure: structure, ...metadata }) });
+    const result = await adapter.poll(cursor, new AbortController().signal);
+    assert.equal(result.status, 'batch');
+    assert.equal(result.messages[0].result.reason, reason);
+    assert.ok(!calls.some((call) => call.startsWith('body')));
+  }
 });

@@ -54,6 +54,13 @@ export type InboundMailDisposition =
       omittedAttachments: number;
     };
 
+export function suppressedInboundMail(envelope: InboundMailEnvelope): Extract<InboundMailDisposition, { disposition: 'skip' }> | null {
+  for (const [flag, reason] of suppressions) {
+    if (envelope[flag] === true) return { disposition: 'skip', reason };
+  }
+  return null;
+}
+
 function isCounter(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
 }
@@ -109,9 +116,8 @@ export function classifyInboundMail(
     };
   }
 
-  for (const [flag, reason] of suppressions) {
-    if (envelope[flag] === true) return { disposition: 'skip', reason };
-  }
+  const skipped = suppressedInboundMail(envelope);
+  if (skipped) return skipped;
 
   return {
     disposition: 'accept',

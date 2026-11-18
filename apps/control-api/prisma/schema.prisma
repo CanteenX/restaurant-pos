@@ -195,6 +195,7 @@ model InboundReceipt {
   messageDirection String @default("inbound") @map("message_direction") @db.VarChar(8)
   message    TicketMessage? @relation(fields: [messageRowId, messageDirection], references: [id, direction], onDelete: NoAction, onUpdate: NoAction)
   rfcMessageId String? @map("rfc_message_id") @db.VarChar(254)
+  claimedSender String? @map("claimed_sender") @db.VarChar(254)
   verifiedSender String? @map("verified_sender") @db.VarChar(254)
   deliveries MailboxDelivery[]
   @@id([mailbox,providerId])
