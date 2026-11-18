@@ -1,3 +1,4 @@
+import { selectedInboxHeaders } from './selected-headers.js';
 import { ImapFlow, type DownloadMeta, type FetchMessageObject, type FetchQueryObject, type ImapFlowOptions, type MailboxObject } from 'imapflow';
 import type { Readable } from 'node:stream';
 import { readGmailConfig } from './gmail-config.js';
@@ -7,7 +8,7 @@ type Cursor = { uidValidity?: string; afterUid: number };
 type Structure = NonNullable<FetchMessageObject['bodyStructure']>;
 type MessageResult = InboundMailDisposition | {
   disposition: 'quarantine';
-  reason: 'missing-metadata' | 'missing-plaintext' | 'ambiguous-plaintext' | 'invalid-text';
+  reason: 'missing-metadata' | 'missing-plaintext' | 'ambiguous-plaintext' | 'invalid-text' | 'invalid-headers';
 };
 type Envelope = Pick<NonNullable<FetchMessageObject['envelope']>, 'from' | 'subject' | 'messageId' | 'inReplyTo'>;
 type Message = { uid: number; providerId: string; result: MessageResult; text?: string; envelope?: Envelope; headers?: Buffer };
@@ -67,7 +68,7 @@ function inspect(root: Structure) {
   return { parts, mimeParts, mimeDepth, attachmentCount };
 }
 
-async function abortable<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
+export async function abortableInbox<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
   signal.throwIfAborted();
   let stop: () => void = () => undefined;
   const aborted = new Promise<never>((_, reject) => {
@@ -101,7 +102,11 @@ async function readMessage(
   const structure = inspect(message.bodyStructure);
   if (structure.rejection) return { ...identity, result: structure.rejection };
   const { parts, mimeParts, mimeDepth, attachmentCount } = structure;
+  const selected = selectedInboxHeaders(message.headers);
+  if (!selected) return { ...identity, result: { disposition: 'quarantine', reason: 'invalid-headers' } };
   const flags = {
+    ...selected,
+    knownSelfMail: message.labels?.has('\\Sent'),
     providerSpam: message.labels?.has('\\Spam'),
     deliveryReport: message.bodyStructure.type.toLowerCase() === 'multipart/report',
   };
@@ -180,7 +185,7 @@ async function readBatch(client: Client, cursor: Cursor, signal: AbortSignal): P
     if (!inUidRange(uid, previous + 1) || uid > throughUid || !validProviderId(emailId)) throw new Error('Invalid message identity');
     previous = uid;
     const messageSignal = AbortSignal.any([signal, AbortSignal.timeout(INBOUND_MAIL_BUDGETS.processingMs)]);
-    const message = await abortable(messageSignal, () => readMessage(client, uid, emailId, size ?? 0, messageSignal));
+    const message = await abortableInbox(messageSignal, () => readMessage(client, uid, emailId, size ?? 0, messageSignal));
     signal.throwIfAborted();
     batch.messages.push(message);
   }
@@ -194,6 +199,7 @@ export function createGmailImap(
 ) {
   const auth = readGmailConfig(env);
   return {
+    mailbox: auth.user.toLowerCase(),
     async poll(cursor: Cursor, cancel: AbortSignal): Promise<Batch> {
       if (!inUidRange(cursor.afterUid, 0) ||
           (cursor.uidValidity === undefined ? cursor.afterUid !== 0 : !validEpoch(cursor.uidValidity))) {
@@ -215,7 +221,7 @@ export function createGmailImap(
         });
         client = configured;
         client.on('error', () => { /* Suppress raw client diagnostics. */ });
-        return await abortable(signal, () => readBatch(configured, cursor, signal));
+        return await abortableInbox(signal, () => readBatch(configured, cursor, signal));
       } catch {
         throw new Error('Gmail inbox retrieval failed');
       } finally {
