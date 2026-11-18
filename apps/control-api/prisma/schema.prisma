@@ -158,15 +158,56 @@ model TicketMessage {
   ticketId   String   @map("ticket_id") @db.Uuid
   ticket     Ticket   @relation(fields: [ticketId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   sequence   Int
-  requestKey String   @map("request_key") @db.Uuid
-  authorId   String   @map("author_id") @db.Uuid
-  author     Staff    @relation(fields: [authorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  text       String   @db.VarChar(4000)
+  requestKey String?   @map("request_key") @db.Uuid
+  authorId   String?   @map("author_id") @db.Uuid
+  author     Staff?    @relation(fields: [authorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  text       String   @db.Text
   direction  String   @default(dbgenerated("'internal'::character varying")) @db.VarChar(8)
-  visibility String   @default(dbgenerated("'staff'::character varying")) @db.VarChar(5)
+  visibility String   @default(dbgenerated("'staff'::character varying")) @db.VarChar(6)
   createdAt  DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  receipt    InboundReceipt?
   @@unique([ticketId, sequence])
   @@unique([ticketId, requestKey])
   @@map("ticket_message")
+  @@schema("control")
+}
+
+model MailboxCursor {
+  mailbox     String   @id @db.VarChar(254)
+  uidValidity BigInt?  @map("uid_validity")
+  throughUid  BigInt   @default(0) @map("through_uid")
+  leaseToken  String?  @map("lease_token") @db.Uuid
+  leaseUntil  DateTime? @map("lease_until") @db.Timestamptz(6)
+  receipts    InboundReceipt[]
+  @@map("mailbox_cursor")
+  @@schema("control")
+}
+
+model InboundReceipt {
+  mailbox    String @db.VarChar(254)
+  cursor     MailboxCursor @relation(fields: [mailbox], references: [mailbox], onDelete: NoAction, onUpdate: NoAction)
+  providerId String @map("provider_id") @db.VarChar(255)
+  outcome    String @db.VarChar(10)
+  reason     String @db.VarChar(64)
+  omittedAttachments Int @default(0) @map("omitted_attachments") @db.SmallInt
+  messageRowId String? @unique @map("message_row_id") @db.Uuid
+  message    TicketMessage? @relation(fields: [messageRowId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  rfcMessageId String? @map("rfc_message_id") @db.VarChar(254)
+  verifiedSender String? @map("verified_sender") @db.VarChar(254)
+  deliveries MailboxDelivery[]
+  @@id([mailbox,providerId])
+  @@index([mailbox,verifiedSender,rfcMessageId], map: "receipt_thread_idx")
+  @@map("inbound_receipt")
+  @@schema("control")
+}
+
+model MailboxDelivery {
+  mailbox String @db.VarChar(254)
+  uidValidity BigInt @map("uid_validity")
+  uid BigInt
+  providerId String @map("provider_id") @db.VarChar(255)
+  receipt InboundReceipt @relation(fields: [mailbox,providerId], references: [mailbox,providerId], onDelete: NoAction, onUpdate: NoAction)
+  @@id([mailbox,uidValidity,uid])
+  @@map("mailbox_delivery")
   @@schema("control")
 }

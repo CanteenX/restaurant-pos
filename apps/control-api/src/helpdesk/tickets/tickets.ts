@@ -36,8 +36,9 @@ export class TicketService {
   detail(cookie: string, id: string, { cursor, limit }: z.infer<typeof ticketMessagePage>) {
     return this.staff.withPermission(cookie, 'cc.ticket.read', async (tx) => {
       const ticket = await findTicket(tx, id);
-      const notes = await tx.ticketMessage.findMany({ where: { ticketId: id, direction: 'internal',
-        visibility: 'staff', sequence: { gt: cursor } }, orderBy: { sequence: 'asc' },
+      const notes = await tx.ticketMessage.findMany({ where: { ticketId: id, OR: [
+        { direction: 'internal', visibility: 'staff' }, { direction: 'inbound', visibility: 'public' },
+      ], sequence: { gt: cursor } }, orderBy: { sequence: 'asc' },
         take: limit + 1, select: noteFields });
       const items = notes.slice(0, limit);
       return { ...ticket, messages: { items, nextCursor: notes.length > limit ? items[items.length - 1].sequence : null } };

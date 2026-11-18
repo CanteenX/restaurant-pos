@@ -81,3 +81,9 @@ Both clear outstanding sessions, challenges and enrollment proofs. A reset also
 clears the authenticator and recovery codes. The operator must provision a fresh
 out-of-band proof for re-enrollment. Disablement, re-enablement and password
 changes invalidate outstanding sessions at the database boundary.
+
+## Inbox worker storage
+
+Apply the Control migrations first. For a mail worker, a database administrator creates a dedicated `control_mail_worker NOLOGIN` group and gives a separate restricted worker login membership. As the migration owner, apply [mail-worker-grants.sql](operator/mail-worker-grants.sql) in the Control database. The worker can append inbound text and receipts, read message IDs and sequence numbers, and update mailbox leases. Inbound messages are public correspondence in the staff-only timeline. Internal notes retain staff visibility. The staff API login keeps its existing permissions.
+
+Each poll leases one canonical mailbox address for 45 seconds. Poll outside the database transaction, then persist receipts and cursor advancement together with the lease token. A changed UIDVALIDITY starts a new epoch at zero and each batch advances by at most eight UIDs. The reverse migration requires archived inbox state to be removed before it drops the inbox tables.
