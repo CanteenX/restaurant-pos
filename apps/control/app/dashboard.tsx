@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { controlPermissionSatisfied } from '@nventra/types/dist/permissions';
-import { ApiError, call, pagePath, type Page, type Session } from './api';
+import { ApiError, call, pagePath, useRequestScope, type Page, type Session } from './api';
 import { OutletPlans } from './outlet-plans';
 
 type Business = { id: string; displayName: string; legalName: string; archived: boolean };
@@ -22,24 +22,42 @@ function Directory<T extends Business | Outlet>({ path, name, onSelect, onError,
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [path, onError]);
+  const requests = useRequestScope();
   const [creating, setCreating] = useState(false);
+  const [creationUnconfirmed, setCreationUnconfirmed] = useState(false);
   async function add(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const scope = requests.current;
+    if (!scope || scope.aborted || creationUnconfirmed) return;
     const form = event.currentTarget;
     setLoading(true);
     try {
       const record = await call<T>(path, Object.fromEntries(new FormData(form)));
+      if (scope.aborted) return;
       setPage((current) => ({ ...current, items: [...current.items, record] }));
       setCreating(false);
       onSelect(record);
-    } catch (failure) { onError(failure); } finally { setLoading(false); }
+    } catch (failure) {
+      if (scope.aborted) return;
+      const unconfirmed = !(failure instanceof ApiError) || failure.status === 408 || failure.status >= 500;
+      if (unconfirmed) {
+        setCreationUnconfirmed(true);
+        setCreating(false);
+      } else {
+        onError(failure);
+      }
+    } finally { if (!scope.aborted) setLoading(false); }
   }
   async function more() {
+    const scope = requests.current;
+    if (!scope || scope.aborted) return;
     setLoading(true);
     try {
-      const next = await call<Page<T>>(pagePath(path, page.nextCursor));
-      setPage({ items: [...new Map([...page.items, ...next.items].map((item) => [item.id, item])).values()], nextCursor: next.nextCursor });
-    } catch (failure) { onError(failure); } finally { setLoading(false); }
+      const next = await call<Page<T>>(pagePath(path, page.nextCursor), undefined, scope);
+      if (!scope.aborted) {
+        setPage({ items: [...new Map([...page.items, ...next.items].map((item) => [item.id, item])).values()], nextCursor: next.nextCursor });
+      }
+    } catch (failure) { if (!scope.aborted) onError(failure); } finally { if (!scope.aborted) setLoading(false); }
   }
   const label = name === 'business' ? 'Businesses' : 'Outlets';
   return <section className="directory" aria-label={label}>
@@ -49,7 +67,8 @@ function Directory<T extends Business | Outlet>({ path, name, onSelect, onError,
     </button></li>)}</ul>
     {loading ? <p role="status">Loading…</p> : page.items.length === 0 && <p>No {label.toLowerCase()} yet.</p>}
     {page.nextCursor !== null && <button disabled={loading} onClick={more}>More {label.toLowerCase()}</button>}
-    {allowCreate && !creating && <button disabled={loading} onClick={() => setCreating(true)}>Add {name}</button>}
+    {allowCreate && !creating && <button disabled={loading || creationUnconfirmed} onClick={() => setCreating(true)}>Add {name}</button>}
+    {creationUnconfirmed && <p role="alert">Reload the directory and check whether it was created before submitting again.</p>}
     {creating && <form onSubmit={add}><fieldset disabled={loading}>
       <label>Display name<input name="displayName" maxLength={160} required /></label>
       {name === 'business' ? <label>Legal name<input name="legalName" maxLength={160} required /></label> :

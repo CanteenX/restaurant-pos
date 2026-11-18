@@ -1,3 +1,5 @@
+import { useLayoutEffect, useRef } from 'react';
+
 export type Session = { grants: string[]; verifiedAt: string };
 export type Page<T> = { items: T[]; nextCursor: string | number | null };
 
@@ -17,4 +19,15 @@ export async function call<T>(path: string, body?: object, signal?: AbortSignal)
 
 export function pagePath(path: string, cursor: Page<unknown>['nextCursor']) {
   return cursor === null ? path : path + '?cursor=' + encodeURIComponent(cursor);
+}
+
+// A write can commit after navigation. Ignore its result when its view is gone.
+export function useRequestScope() {
+  const scope = useRef<AbortSignal>(undefined);
+  useLayoutEffect(() => {
+    const controller = new AbortController();
+    scope.current = controller.signal;
+    return () => controller.abort();
+  }, []);
+  return scope;
 }

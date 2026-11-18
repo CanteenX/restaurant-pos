@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { call, pagePath, type Page } from './api';
+import { call, pagePath, useRequestScope, type Page } from './api';
 
 type Plan = { code: string; version: number; label: string };
 type Term = { id: string; operation: 'assign' | 'renew' | 'cancel'; startsAt: string | null; endsAt: string | null; planCode: string | null; planVersion: number | null };
@@ -17,6 +17,7 @@ export function OutletPlans({ outletId, verifiedAt, allowManage, onError, onSave
   const [history, setHistory] = useState<Page<Term>>();
   const [busy, setBusy] = useState(false);
   const [clock, setClock] = useState(Date.now);
+  const requests = useRequestScope();
   const attempt = useRef<{ body: string; key: string }>(undefined);
 
   useEffect(() => {
@@ -40,6 +41,8 @@ export function OutletPlans({ outletId, verifiedAt, allowManage, onError, onSave
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const scope = requests.current;
+    if (!scope || scope.aborted) return;
     const values = new FormData(event.currentTarget);
     const [planCode, planVersion] = String(values.get('plan')).split(':');
     const startsAt = new Date(String(values.get('starts'))).toISOString();
@@ -50,19 +53,23 @@ export function OutletPlans({ outletId, verifiedAt, allowManage, onError, onSave
     setBusy(true);
     try {
       await call<Term>(path + '/' + operation, { ...change, requestKey: attempt.current.key });
-      setHistory(await call<Page<Term>>(path));
+      if (scope.aborted) return;
+      const latestHistory = await call<Page<Term>>(path, undefined, scope);
+      if (scope.aborted) return;
+      setHistory(latestHistory);
       attempt.current = undefined;
       onSaved();
-    } catch (failure) { onError(failure); } finally { setBusy(false); }
+    } catch (failure) { if (!scope.aborted) onError(failure); } finally { if (!scope.aborted) setBusy(false); }
   }
 
   async function more() {
-    if (!history) return;
+    const scope = requests.current;
+    if (!history || !scope || scope.aborted) return;
     setBusy(true);
     try {
-      const next = await call<Page<Term>>(pagePath(path, history.nextCursor));
-      setHistory({ items: [...history.items, ...next.items], nextCursor: next.nextCursor });
-    } catch (failure) { onError(failure); } finally { setBusy(false); }
+      const next = await call<Page<Term>>(pagePath(path, history.nextCursor), undefined, scope);
+      if (!scope.aborted) setHistory({ items: [...history.items, ...next.items], nextCursor: next.nextCursor });
+    } catch (failure) { if (!scope.aborted) onError(failure); } finally { if (!scope.aborted) setBusy(false); }
   }
 
   if (!catalog || !history) return <p role="status">Loading service plans…</p>;

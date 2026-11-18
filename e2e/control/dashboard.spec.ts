@@ -83,6 +83,39 @@ test('enrolls with proof and 2FA, then assigns and renews an outlet plan', async
   await page.getByRole('button', { name: 'Save outlet' }).click();
   await expect(page.getByRole('heading', { name: 'Pier Outlet' })).toBeVisible();
 
+  const committed = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  await page.route('**/businesses/*/outlets', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    const response = await route.fetch({ headers: { ...route.request().headers(), origin } });
+    expect(response.status()).toBe(201);
+    if (route.request().postDataJSON().displayName === 'Unconfirmed Outlet') return route.abort('connectionreset');
+    committed.resolve();
+    await release.promise;
+    await route.fulfill({ response });
+  });
+  await page.getByRole('button', { name: 'Add outlet' }).click();
+  await page.getByLabel('Display name').fill('Lagged Outlet');
+  await page.getByLabel('Time zone').fill('Asia/Kolkata');
+  await page.getByRole('button', { name: 'Save outlet' }).click();
+  await committed.promise;
+  await page.getByRole('button', { name: 'Fixture Bistro' }).click();
+  await expect(page.getByRole('heading', { name: 'Fixture Bistro' })).toBeVisible();
+  const response = page.waitForResponse((res) => res.request().method() === 'POST' && res.url().endsWith('/outlets'));
+  release.resolve();
+  await (await response).finished();
+  await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+  await expect(page.getByRole('heading', { name: 'Lagged Outlet' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Fixture Bistro' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Assign plan' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Add outlet' }).click();
+  await page.getByLabel('Display name').fill('Unconfirmed Outlet');
+  await page.getByLabel('Time zone').fill('Asia/Kolkata');
+  await page.getByRole('button', { name: 'Save outlet' }).click();
+  await expect(page.getByRole('main').getByRole('alert')).toContainText('Reload the directory and check whether it was created');
+  await expect(page.getByRole('button', { name: 'Add outlet' })).toBeDisabled();
+
   await page.getByRole('button', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: 'Staff sign-in' })).toBeVisible();
 });
