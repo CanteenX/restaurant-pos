@@ -10,6 +10,7 @@ import {
   displayStateSchema,
 } from "@nventra/types";
 import { resolveWsUrl } from "./ws-url.ts";
+import { socketOptions } from "./socket-options.ts";
 
 export interface DisplayLine {
   name: string;
@@ -137,7 +138,7 @@ let lastState: DisplayState = { kind: "idle" };
 /** Till side: also relay every published state to the paired display. */
 export function startDisplayLink(branchId: string, code: string): () => void {
   stopDisplayLink();
-  const socket = io(resolveWsUrl(), { query: { branchId }, withCredentials: true });
+  const socket = io(resolveWsUrl(), socketOptions(branchId));
   const sender = createDisplaySender((state, ack) => {
     if (socket.connected) socket.emit("display.publish", { code, state }, ack);
   });
@@ -196,7 +197,7 @@ export function subscribeDisplayRemote(
   onState: (s: DisplayState) => void,
   onStatus?: (connected: boolean) => void,
 ): () => void {
-  const socket = io(resolveWsUrl(), { query: { branchId }, withCredentials: true });
+  const socket = io(resolveWsUrl(), socketOptions(branchId));
   let stopJoin = () => {};
   socket.on("connect", () => {
     // One retry chain at a time: a reconnect replaces the previous chain.
