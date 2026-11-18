@@ -1,5 +1,6 @@
 import { billingCases } from '../billing/billing.integration.js';
 import { hostedAccessCases } from '../hosted/hosted-access.integration.js';
+import { portalIdentityCases } from '../portal/portal-identity.integration.js';
 import { inboxStorageCases } from '../helpdesk/mail/inbox-storage.integration.js';
 import { ticketCases } from '../helpdesk/tickets/tickets.integration.js';
 import { replyCases } from '../helpdesk/tickets/reply.integration.js';
@@ -172,4 +173,5 @@ export async function staffAuthCases(t: TestContext, db: PrismaClient, datasourc
   await replyCases(t, db, new URL('../tickets', root).href, origin);
   await billingCases(t, db, new URL('../', root).href, origin);
   await hostedAccessCases(t, db, new URL('../', root).href, origin);
+  await portalIdentityCases(t, db, datasourceUrl, new URL('../', root).href, origin);
 }

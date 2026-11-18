@@ -27,22 +27,31 @@ export class PortalAccounts {
 
   change(cookie: string, businessId: string, command: Command) {
     return this.staff.withPermission(cookie, 'cc.portal.manage', async (tx, actor) => {
-      const [business] = await tx.$queryRaw<{ archived: boolean }[]>`SELECT archived FROM control.business
-        WHERE id = ${businessId}::uuid FOR SHARE`;
-      if (!business) throw new NotFoundException();
       const revoked = command.kind === 'revoke';
-      if (business.archived && !revoked) throw new ConflictException();
       const code = revoked ? undefined : portalToken();
       const digest = code ? this.auth.activationDigest(code) : null;
-      const saved = command.kind === 'provision'
-        ? await this.provision(tx, businessId, command.email, digest)
-        : await this.changeExisting(tx, businessId, command.accountId, digest);
+      let saved: ActivatedAccount;
+      if (command.kind === 'provision') {
+        await this.requireActiveBusiness(tx, businessId);
+        saved = await this.provision(tx, businessId, command.email, digest);
+      } else {
+        // Match customer requests: acquire the account lock before the business lock.
+        saved = await this.changeExisting(tx, businessId, command.accountId, digest);
+        if (!revoked) await this.requireActiveBusiness(tx, businessId);
+      }
       const { id, email, status, expiresAt } = saved;
       const account = { id, email, status };
       await appendAuditEvent(tx, { actorType: 'staff', actorId: actor.id, businessId, action: 'portalAccount.' + command.kind,
         subjectType: 'portalAccount', subjectId: id, requestId: randomUUID(), outcome: 'succeeded', changedFields: ['status'] });
       return code && expiresAt ? { account, activationCode: code, expiresAt: expiresAt.toISOString() } : account;
     }, { recent: true });
+  }
+
+  private async requireActiveBusiness(tx: Prisma.TransactionClient, businessId: string) {
+    const [business] = await tx.$queryRaw<{ archived: boolean }[]>`SELECT archived FROM control.business
+      WHERE id = ${businessId}::uuid FOR SHARE`;
+    if (!business) throw new NotFoundException();
+    if (business.archived) throw new ConflictException();
   }
 
   private async provision(tx: Prisma.TransactionClient, businessId: string, email: string, digest: string | null) {
@@ -62,7 +71,6 @@ export class PortalAccounts {
       WHERE id = ${accountId}::uuid AND business_id = ${businessId}::uuid
       RETURNING id,email,status,activation_expires_at AS "expiresAt"`;
     if (!row) throw new NotFoundException();
-    await tx.$executeRaw`DELETE FROM control.portal_session WHERE account_id = ${accountId}::uuid`;
     return row;
   }
 }

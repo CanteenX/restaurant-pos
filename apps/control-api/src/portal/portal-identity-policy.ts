@@ -51,7 +51,9 @@ const portalConfig = z.object({
 export function readPortalConfig(env: NodeJS.ProcessEnv) {
   if (env.CONTROL_PORTAL_DATABASE_URL === undefined && env.CONTROL_PORTAL_AUTH_KEY === undefined) return undefined;
   const parsed = portalConfig.safeParse(env);
-  if (!parsed.success) throw new Error('Invalid Control portal authentication configuration');
+  if (!parsed.success || env.DEBUG || env.RUST_LOG || env.NODE_DEBUG) {
+    throw new Error('Invalid Control portal authentication configuration');
+  }
   const { CONTROL_PORTAL_DATABASE_URL: { url, login }, CONTROL_PORTAL_AUTH_KEY: key, CONTROL_ORIGIN: origin } = parsed.data;
   if (key.toLowerCase() === env.CONTROL_AUTH_KEY?.toLowerCase() ||
       [env.CONTROL_DATABASE_URL, env.CONTROL_OPERATOR_DATABASE_URL, env.CONTROL_MAIL_DATABASE_URL]

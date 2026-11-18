@@ -33,7 +33,7 @@ export class PortalAccountsController {
   }
 
   private change(req: IncomingMessage, id: string, accountId: string, body: unknown, kind: 'reissue' | 'revoke') {
-    input(controlEmptyBody, body ?? {});
+    input(controlEmptyBody, body === undefined ? {} : body);
     return this.accounts.change(sessionCookie(req), input(controlResourceId, id), { kind, accountId: input(controlResourceId, accountId) });
   }
 

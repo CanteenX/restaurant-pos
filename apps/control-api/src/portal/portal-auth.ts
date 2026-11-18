@@ -87,7 +87,8 @@ export class PortalAuth {
         WHERE s.digest = ${digest} AND a.id = ${session.id}::uuid AND a.status = 'active'
           AND s.expires_at > clock_timestamp()`;
       if (!principal) throw new UnauthorizedException();
-      await tx.$queryRaw`SELECT pg_catalog.set_config('control.portal_business_id', ${principal.businessId}, true)`;
+      await tx.$queryRaw`SELECT pg_catalog.set_config('control.portal_business_id', ${principal.businessId}, true),
+        pg_catalog.set_config('control.portal_account_id', ${principal.accountId}, true)`;
       return use(tx, principal);
     });
   }

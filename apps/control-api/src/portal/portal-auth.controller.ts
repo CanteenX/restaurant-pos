@@ -46,7 +46,7 @@ export class PortalAuthController {
 
   @Post('logout') @HttpCode(200)
   async logout(@Body() body: unknown, @Req() req: IncomingMessage, @Res({ passthrough: true }) res: ServerResponse) {
-    input(controlEmptyBody, body ?? {});
+    input(controlEmptyBody, body === undefined ? {} : body);
     await this.auth.logout(portalTokenFromRequest(req));
     res.setHeader('Set-Cookie', portalSetCookie());
     return { loggedOut: true };

@@ -46,6 +46,7 @@ void test('enables portal authentication only with complete separate configurati
     { CONTROL_PORTAL_DATABASE_URL: undefined }, { CONTROL_PORTAL_DATABASE_URL: 'https://safe.example.test/control' },
     { CONTROL_PORTAL_DATABASE_URL: 'postgresql://db.example.test/control' },
     { CONTROL_ORIGIN: 'http://control.example.test' }, { CONTROL_ORIGIN: 'https://control.example.test/path' },
+    { DEBUG: 'prisma:*' }, { RUST_LOG: 'debug' }, { NODE_DEBUG: 'net' },
     { CONTROL_DATABASE_URL: 'postgres://portal_fixture@DB.example.test:5432/control?pool_timeout=1' }]) {
     assert.throws(() => readPortalConfig({ ...env, ...change }), /^Error: Invalid Control portal authentication configuration$/);
   }

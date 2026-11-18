@@ -1,9 +1,41 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import type { TestContext } from 'node:test';
 import type { PrismaClient } from '../../node_modules/.prisma/control-client/index.js';
+import { createControlApi } from '../bootstrap.js';
+import { openPortalDatabase } from './portal-database.js';
 
-export async function portalIdentityCases(t: TestContext, db: PrismaClient, root: string, origin: string) {
+export async function portalIdentityCases(t: TestContext, db: PrismaClient, fixtureUrl: string,
+  disabledRoot: string, origin: string) {
+  assert.equal((await fetch(new URL('portal/session', disabledRoot))).status, 404);
+  await db.$executeRaw`CREATE ROLE control_portal_runtime NOLOGIN`;
+  await db.$executeRaw`CREATE ROLE cc325_portal_fixture LOGIN PASSWORD 'public_loopback_fixture' IN ROLE control_portal_runtime`;
+  execFileSync(process.execPath, [require.resolve('prisma/build/index.js'), 'db', 'execute',
+    '--file', 'operator/portal-runtime-grants.sql', '--schema', 'prisma/schema.prisma'],
+  { env: { ...process.env, CONTROL_DATABASE_URL: fixtureUrl }, stdio: 'ignore', timeout: 30_000 });
+  const portalUrl = new URL(fixtureUrl), staffUrl = new URL(fixtureUrl);
+  portalUrl.username = 'cc325_portal_fixture';
+  portalUrl.password = 'public_loopback_fixture';
+  staffUrl.searchParams.set('options', '-c role=control_runtime');
+
+  await t.test('requires the actual dedicated portal login and keeps auth storage isolated', async () => {
+    await assert.rejects(openPortalDatabase(fixtureUrl), /^Error: Invalid Control portal database identity$/);
+    await assert.rejects(openPortalDatabase(staffUrl.toString()), /^Error: Invalid Control portal database identity$/);
+    const [grants] = await db.$queryRaw<{ portalBusiness: boolean; portalStaff: boolean; staffVerifier: boolean }[]>`
+      SELECT has_any_column_privilege('cc325_portal_fixture','control.business','SELECT,UPDATE') AS "portalBusiness",
+        has_any_column_privilege('cc325_portal_fixture','control.staff','SELECT,UPDATE') AS "portalStaff",
+        has_column_privilege('control_runtime','control.portal_account','password_hash','SELECT') AS "staffVerifier"`;
+    assert.deepEqual(grants, { portalBusiness: false, portalStaff: false, staffVerifier: false });
+  });
+
+  const { app } = await createControlApi({ CONTROL_API_PORT: '4002', CONTROL_DATABASE_URL: staffUrl.toString(),
+    CONTROL_AUTH_KEY: 'a5'.repeat(32), CONTROL_ORIGIN: origin,
+    CONTROL_PORTAL_DATABASE_URL: portalUrl.toString(), CONTROL_PORTAL_AUTH_KEY: 'a6'.repeat(32) });
+  t.after(() => app.close());
+  await app.listen(0, '127.0.0.1');
+  const root = (await app.getUrl()) + '/api/control/v1/';
+
   async function staff(grants: string[], age = 0) {
     const id = randomUUID(), token = randomBytes(32).toString('base64url');
     await db.staff.create({ data: { id, email: id + '@example.test', grants, passwordHash: 'inert' } });
@@ -17,7 +49,7 @@ export async function portalIdentityCases(t: TestContext, db: PrismaClient, root
   const business = () => db.business.create({ data: { id: randomUUID(), legalName: 'Synthetic', displayName: 'Fixture' } });
   const [a,b] = await Promise.all([business(),business()]);
   const directory = (id: string) => 'businesses/' + id + '/portal-accounts';
-  const request = (path: string, body?: object, cookie = '', from = origin) =>
+  const request = (path: string, body?: object | null, cookie = '', from = origin) =>
     fetch(new URL(path, root), { method: body === undefined ? 'GET' : 'POST',
       headers: { cookie, origin: from, 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const email = 'client@example.test', password = 'synthetic valid portal password';
@@ -72,10 +104,19 @@ export async function portalIdentityCases(t: TestContext, db: PrismaClient, root
     const loggedIn = await request('portal/session', { email: email.toUpperCase(), password });
     const second = cookieOf(loggedIn);
     assert.equal((await request('portal/logout', {}, second, 'https://wrong.example.test')).status, 403);
+    assert.equal((await request('portal/logout', null, second)).status, 400);
     const logout = await request('portal/logout', {}, second);
     assert.equal(logout.status, 200);
     assert.match(logout.headers.get('set-cookie') ?? '', /Max-Age=0$/);
     assert.equal((await request('portal/session', undefined, second)).status, 401);
+
+    await db.$executeRaw`ALTER TABLE control.audit_event ADD CONSTRAINT test_portal_audit
+      CHECK (action <> 'portalAccount.reissue') NOT VALID`;
+    try {
+      assert.equal((await request(path + '/reissue', {}, manager)).status, 500);
+      assert.equal((await request('portal/session', undefined, activeCookie)).status, 200);
+    } finally { await db.$executeRaw`ALTER TABLE control.audit_event DROP CONSTRAINT test_portal_audit`; }
+
     const reissued = await request(path + '/reissue', {}, manager);
     assert.equal(reissued.status, 200);
     const invitation = await reissued.json() as Invitation;
