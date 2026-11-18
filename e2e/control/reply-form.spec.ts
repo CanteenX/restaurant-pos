@@ -68,7 +68,7 @@ test('confirms an unverified target and reuses a queued reply key after a lost r
   await expect(reply.getByText('Sent', { exact: true })).toBeVisible();
 });
 
-for (const action of ['pagination', 'refresh', 'reply'] as const) {
+for (const action of ['pagination', 'refresh', 'reply', 'queue'] as const) {
   test(`clears revoked access after ticket ${action}`, async ({ page }) => {
     let revoked = false;
     await page.route('**/api/control/v1/**', async (route) => {
@@ -76,6 +76,12 @@ for (const action of ['pagination', 'refresh', 'reply'] as const) {
       const url = new URL(request.url());
       const headers = request.headers();
       if (headers.origin === origin.replace('https:', 'http:')) headers.origin = origin;
+      if (action === 'queue' && request.method() === 'GET' && url.pathname.endsWith('/tickets')) {
+        if (revoked) return route.fulfill({ status: 403 });
+        const result = await route.fetch({ headers });
+        const list = await result.json();
+        return route.fulfill({ response: result, json: { ...list, nextCursor: list.items[0].id } });
+      }
       if (revoked && action === 'reply' && request.method() === 'POST' && url.pathname.endsWith('/messages')) {
         return route.fulfill({ status: 403 });
       }
@@ -101,6 +107,12 @@ for (const action of ['pagination', 'refresh', 'reply'] as const) {
       await page.getByRole('button', { name: 'More messages' }).click();
       await expect(page.getByRole('button', { name: 'More messages' })).toHaveCount(0);
       await expect(threadText).toBeVisible();
+    } else if (action === 'queue') {
+      await page.getByRole('button', { name: 'More tickets' }).click();
+      await expect(page.getByRole('main').getByRole('alert')).toContainText('Your current permissions');
+      await expect(page.getByRole('button', { name: /Printer support/ })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'More tickets' })).toHaveCount(0);
+      await expect(threadText).toHaveCount(0);
     } else {
       await page.getByRole('button', { name: action === 'refresh' ? 'Refresh conversation' : 'Queue reply' }).click();
       await expect(page.getByRole('main').getByRole('alert')).toContainText('Your current permissions');
@@ -108,7 +120,15 @@ for (const action of ['pagination', 'refresh', 'reply'] as const) {
     }
     await expect(page.getByText(address, { exact: true })).toHaveCount(0);
     await expect(page.getByLabel('Email reply', { exact: true })).toHaveCount(0);
+    if (action === 'queue') {
+      revoked = false;
+      await page.getByRole('button', { name: 'Retry ticket queue' }).click();
+      await expect(page.getByRole('button', { name: /Printer support/ })).toBeVisible();
+      await expect(threadText).toHaveCount(0);
+      await expect(page.getByText(address, { exact: true })).toHaveCount(0);
+    }
     if (action === 'reply') {
+      await expect(page.getByRole('button', { name: /Printer support/ })).toBeVisible();
       await page.getByRole('button', { name: 'Retry ticket' }).click();
       await expect(threadText).toBeVisible();
       await expect(page.getByText(address, { exact: true })).toHaveCount(0);
