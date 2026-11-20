@@ -155,6 +155,42 @@ export async function portalTicketCases(t: TestContext, db: PrismaClient, root: 
     }
   });
 
+  await t.test('answers unauthenticated portal and staff-reply requests with 401', async () => {
+    assert.ok(id);
+    for (const [route, body] of [['/portal/tickets', undefined], [portalPath(), undefined], ['/portal/tickets', draft],
+      [staffPath() + '/portal-replies', { text: 'Anonymous', requestKey: randomUUID() }]] as const) {
+      assert.equal((await req(route, '', body as object | undefined)).status, 401, route);
+    }
+  });
+
+  await t.test('bounds customer text and never creates a ticket for a forged business', async () => {
+    const before = await db.ticket.count({ where: { businessId: differentBusiness.businessId } });
+    const route = '/portal/tickets';
+    const fresh = () => ({ ...draft, requestKey: randomUUID() });
+    for (const bad of [{ text: 'a'.repeat(4001) }, { subject: 'a'.repeat(241) }, { text: '   ' }, { text: 'a\u0000b' }]) {
+      assert.equal((await req(route, opener.cookie, { ...fresh(), ...bad })).status, 400);
+    }
+    assert.equal((await req(route, opener.cookie, { ...fresh(), text: 'a'.repeat(4000) })).status, 201);
+    assert.equal((await req(route, opener.cookie, { ...fresh(), businessId: differentBusiness.businessId })).status, 400);
+    assert.equal(await db.ticket.count({ where: { businessId: differentBusiness.businessId } }), before);
+    assert.equal((await req('/portal/tickets/' + randomUUID())).status, 404);
+  });
+
+  await t.test('rate-limits new customer tickets per account without counting idempotent replays', async () => {
+    const busy = await portal(a.id), calm = await portal(a.id);
+    const open = (cookie: string, requestKey: string) => req('/portal/tickets', cookie, { ...draft, requestKey });
+    const keys = Array.from({ length: 10 }, () => randomUUID());
+    for (const key of keys) assert.equal((await open(busy.cookie, key)).status, 201);
+    const audits = () => db.auditEvent.count({ where: { actorId: busy.accountId } });
+    assert.equal(await audits(), 10);
+    assert.equal((await open(busy.cookie, keys[0])).status, 201);
+    const limited = await open(busy.cookie, randomUUID());
+    assert.equal(limited.status, 429);
+    assert.equal(await audits(), 10);
+    assert.equal((await open(calm.cookie, randomUUID())).status, 201);
+    assert.equal((await req('/portal/tickets', busy.cookie)).status, 200);
+  });
+
   await t.test('restricts portal database grants and customer audit authoring', async () => {
     const denied = (error: unknown) => (error as { meta?: { code?: string } }).meta?.code === '42501';
     await db.$transaction(async (tx) => {

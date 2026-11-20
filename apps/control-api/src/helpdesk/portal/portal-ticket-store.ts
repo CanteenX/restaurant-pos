@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, NotFoundException } from '@nestjs/common';
 import type { z } from 'zod';
 import type { portalTicketOpen, portalTicketStaffReply } from '@nventra/types/dist/control-portal-ticket';
 import { Prisma } from '../../../node_modules/.prisma/control-client/index.js';
@@ -42,6 +42,7 @@ function requestError(error: unknown): never {
     if (error.meta?.code === 'NV400') throw new BadRequestException();
     if (error.meta?.code === 'NV409') throw new ConflictException();
     if (error.meta?.code === 'NV403') throw new ForbiddenException();
+    if (error.meta?.code === 'NV429') throw new HttpException('Too many portal tickets', 429);
   }
   throw error;
 }

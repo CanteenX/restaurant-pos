@@ -90,6 +90,11 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'Invalid portal outlet' USING ERRCODE='NV400';
   END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('control.portal.ticket-rate:' || account::text,0));
+  IF (SELECT count(*) FROM control.portal_ticket p JOIN control.ticket t ON t.id=p.ticket_id
+      WHERE p.account_id=account AND t.created_at > clock_timestamp() - interval '1 hour') >= 10 THEN
+    RAISE EXCEPTION 'Portal ticket rate limit' USING ERRCODE='NV429';
+  END IF;
   INSERT INTO control.ticket(id,subject,business_id,outlet_id) VALUES (new_ticket,p_subject,tenant,p_outlet);
   INSERT INTO control.ticket_message(id,ticket_id,sequence,text,direction,visibility)
     VALUES (gen_random_uuid(),new_ticket,1,p_text,'inbound','public');
