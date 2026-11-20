@@ -1,3 +1,4 @@
+import { staffInviteCases } from './staff-invite.integration.js';
 import { billingCases } from '../billing/billing.integration.js';
 import { hostedAccessCases } from '../hosted/hosted-access.integration.js';
 import { portalIdentityCases } from '../portal/portal-identity.integration.js';
@@ -167,6 +168,7 @@ export async function staffAuthCases(t: TestContext, db: PrismaClient, datasourc
     assert.equal(ip.filter((s) => s === 429).length, 1);
   });
   await staffAccessCases(t, db, root, origin, password, verifier);
+  await staffInviteCases(t, db, root, origin);
   await roleAccessCases(t, db, new URL('../', root).href, origin);
   await roleMigrationCases(t, db, datasourceUrl);
   await businessCases(t, db, new URL('../businesses', root).href, origin);

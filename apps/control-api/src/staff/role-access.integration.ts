@@ -12,7 +12,8 @@ export async function roleAccessCases(t: TestContext, db: PrismaClient, root: st
   const roleRow = (key: string) => db.staffRole.findUniqueOrThrow({ where: { key } });
   async function actor(label: string, roleKey: string) {
     const id = randomUUID(), token = randomBytes(32).toString('base64url'), role = await roleRow(roleKey);
-    await db.staff.create({ data: { id, email: label + '-' + id + '@example.test', passwordHash: 'inert', grants: role.grants, roleId: role.id } });
+    await db.staff.create({ data: { id, email: label + '-' + id + '@example.test', passwordHash: 'inert', grants: role.grants, roleId: role.id,
+      encryptedSeed: role.isSystem ? 'fixture-factor-marker' : undefined } });
     const digest = createHmac('sha256', 'a5'.repeat(32)).update('session\0' + token).digest('hex');
     await db.staffSession.create({ data: { staffId: id, digest, verifiedAt: new Date(Date.now() - 60_000), expiresAt: new Date(Date.now() + 600_000) } });
     return { id, cookie: '__Host-control_staff=' + token };

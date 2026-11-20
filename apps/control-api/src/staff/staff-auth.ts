@@ -1,11 +1,13 @@
 import { randomBytes, randomUUID, createHmac } from 'node:crypto';
 import { HttpException, UnauthorizedException } from '@nestjs/common';
 import { compare, hash } from 'bcrypt';
+import { effectiveControlGrants } from '@nventra/types';
 import { generateSecret, generateRecoveryCode, openSecret, sealSecret, verifyTotp } from '@nventra/types/dist/node/totp';
 
 import { PrismaClient } from '../../node_modules/.prisma/control-client/index.js';
 import { RoleAccess } from './role-access.js';
 import { StaffAccess } from './staff-access.js';
+import { StaffLifecycle, type readStaffInviteMail } from './staff-lifecycle.js';
 import { appendAuditEvent } from '../audit/audit.js';
 
 const token = () => randomBytes(32).toString('base64url');
@@ -14,15 +16,17 @@ const minutes = (n: number) => new Date(Date.now() + n * 60_000);
 export class StaffAuth {
   readonly access: StaffAccess;
   readonly roles: RoleAccess;
+  readonly lifecycle: StaffLifecycle;
   private constructor(private readonly db: PrismaClient, private readonly key: string,
-    readonly origin: string, private readonly dummyHash: string) {
+    readonly origin: string, private readonly dummyHash: string, mail: ReturnType<typeof readStaffInviteMail>) {
     this.access = new StaffAccess(db, (cookie) => this.digest('session', cookie));
     this.roles = new RoleAccess(this.access);
+    this.lifecycle = new StaffLifecycle(this.access, origin, mail, (cookie) => this.digest('session', cookie));
   }
 
-  static async create(url: string, key: string, origin: string) {
+  static async create(url: string, key: string, origin: string, mail?: ReturnType<typeof readStaffInviteMail>) {
     const dummy = await hash(token(), 12);
-    return new StaffAuth(new PrismaClient({ datasourceUrl: url }), key, origin, dummy);
+    return new StaffAuth(new PrismaClient({ datasourceUrl: url }), key, origin, dummy, mail);
   }
 
   async onModuleDestroy() { await this.db.$disconnect(); }
@@ -75,6 +79,28 @@ export class StaffAuth {
           pendingSeed: enrollmentSecret ? sealSecret(enrollmentSecret, this.key + staff.id) : null },
       });
       if (!changed.count) throw new UnauthorizedException();
+      return { challenge, enrollmentSecret };
+    });
+  }
+
+  async acceptInvite(proof: string, password: string, ip: string) {
+    await this.limitPeer('invite', ip);
+    const verifier = await hash(password, 12);
+    return this.db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('control.staff_roles'))`;
+      const [{ id }] = await tx.$queryRaw<{ id: string | null }[]>`
+        SELECT control.redeem_staff_invite(${Buffer.from(proof, 'base64url')}::bytea, ${verifier}) AS id`;
+      if (!id) throw new UnauthorizedException();
+      const staff = await tx.staff.findUniqueOrThrow({ where: { id }, select: { extraGrants: true, removedGrants: true,
+        role: { select: { grants: true } } } });
+      const challenge = token(), enrollmentSecret = generateSecret();
+      await tx.staff.update({ where: { id }, data: {
+        grants: effectiveControlGrants(staff.role?.grants ?? [], staff.extraGrants, staff.removedGrants),
+        challengeDigest: this.digest('challenge', challenge), challengeExpiresAt: minutes(5),
+        pendingSeed: sealSecret(enrollmentSecret, this.key + id),
+      } });
+      await appendAuditEvent(tx, { actorType: 'staff', actorId: id, action: 'staff.invite.accept',
+        subjectType: 'staff', subjectId: id, requestId: randomUUID(), outcome: 'succeeded' });
       return { challenge, enrollmentSecret };
     });
   }

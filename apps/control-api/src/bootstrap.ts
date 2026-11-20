@@ -6,6 +6,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 
 import { readControlPort, readStaffConfig } from './config.js';
 import { StaffAuth } from './staff/staff-auth.js';
+import { readStaffInviteMail } from './staff/staff-lifecycle.js';
 import { AuditReadController } from './audit/audit-read.controller.js';
 import { BillingController } from './billing/billing.controller.js';
 import { BusinessController } from './business/business.controller.js';
@@ -43,7 +44,7 @@ export async function createControlApi(env: NodeJS.ProcessEnv) {
   const portalConfig = readPortalConfig(env);
   const resources = portalConfig && readPortalResources(env);
   const portal = portalConfig && await PortalAuth.create(portalConfig);
-  const auth = config && await StaffAuth.create(config.url, config.key, config.origin);
+  const auth = config && await StaffAuth.create(config.url, config.key, config.origin, readStaffInviteMail(env));
   const app = await NestFactory.create<NestExpressApplication>({
     module: ControlApiModule,
     controllers: auth ? [...staffControllers, ...(portal ? portalControllers : [])] : [],
