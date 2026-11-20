@@ -42,6 +42,7 @@ const EXTRACTED_PATHS = [
   "components/dashboard",
   "app/(dashboard)/operations",
   "components/operations",
+  "app/login",
   "app/forgot-password",
   "app/reset-password",
   "app/accept-invite",
