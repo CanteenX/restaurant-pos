@@ -364,6 +364,9 @@ export async function loadVettedData(o: LoadOptions): Promise<void> {
         ['--data-only', '-L', list, '-f', '-', o.file],
         o.url,
       );
+      extractedBytes += Buffer.byteLength(out);
+      if (extractedBytes > limits.outputBytes)
+        throw sizeError('NVENTRA_RESTORE_MAX_OUTPUT_BYTES', limits.outputBytes);
       const value = parseSetval(out, new Set(o.sequences.keys()));
       if (
         value.sequence !== e.name ||

@@ -120,6 +120,38 @@ describe('loadVettedData process boundary', () => {
     }
   });
 
+  it('includes sequence output in the aggregate budget', async () => {
+    options.entries = ['1; 0 0 SEQUENCE SET public Order_id_seq app'];
+    options.sequences = new Map([
+      [
+        'Order_id_seq',
+        {
+          name: 'Order_id_seq',
+          table: 'Order',
+          column: 'id',
+          min: '1',
+          max: '2147483647',
+        },
+      ],
+    ]);
+    jest
+      .mocked(runPg)
+      .mockResolvedValueOnce(
+        "SELECT pg_catalog.setval('public.Order_id_seq', 1, true);",
+      );
+    process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES = '10';
+    try {
+      await expect(loadVettedData(options)).rejects.toThrow(
+        /NVENTRA_RESTORE_MAX_OUTPUT_BYTES/,
+      );
+      expect(
+        jest.mocked(runPg).mock.calls.some(([cmd]) => cmd === 'psql'),
+      ).toBe(false);
+    } finally {
+      delete process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES;
+    }
+  });
+
   it('handles a missing pg_restore executable without an unhandled child error', async () => {
     failSpawn = true;
     await expect(loadVettedData(options)).rejects.toThrow();
