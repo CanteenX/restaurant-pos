@@ -90,7 +90,7 @@ test.describe("login form feedback in Hindi", () => {
     const code = page.getByLabel("सत्यापन कोड", { exact: true });
     await code.fill("111111");
     await submit.click();
-    await expect(page.getByRole("alert")).toHaveText("सत्यापन कोड गलत है।");
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText("सत्यापन कोड गलत है।");
   });
 });
 
