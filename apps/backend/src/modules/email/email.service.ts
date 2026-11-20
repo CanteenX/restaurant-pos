@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createTransport, type Transporter } from 'nodemailer';
+import { parseConnectionUrl } from 'nodemailer/lib/shared';
 
 export interface OutgoingEmail {
   to: string;
@@ -38,7 +39,15 @@ export class EmailService {
   private getTransport(): Transporter {
     if (this.transporter === undefined) {
       const url = this.config.get<string>('SMTP_URL');
-      this.transporter = url && this.from ? createTransport(url) : null;
+      this.transporter =
+        url && this.from
+          ? createTransport({
+              ...parseConnectionUrl(url),
+              connectionTimeout: 60_000,
+              greetingTimeout: 60_000,
+              socketTimeout: 60_000,
+            })
+          : null;
     }
     if (!this.transporter)
       throw new Error('Email is not set up: set SMTP_URL and SMTP_FROM');

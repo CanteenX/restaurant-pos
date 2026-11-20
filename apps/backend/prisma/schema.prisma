@@ -3073,6 +3073,7 @@ model ReceiptEmail {
   consentAt    DateTime  @db.Timestamptz(3)
   // PENDING (waiting for full payment), SENDING, SENT, FAILED, SKIPPED (turned off)
   status       String    @default("PENDING")
+  claimToken   String? // fresh ownership token for each send attempt
   sendCount    Int       @default(0)
   sentAt       DateTime? @db.Timestamptz(3)
   lastError    String? // error kind only, never an address
