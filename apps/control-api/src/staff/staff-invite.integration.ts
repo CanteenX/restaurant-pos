@@ -41,7 +41,7 @@ export async function staffInviteCases(t: TestContext, db: PrismaClient, root: s
     assert.equal(url.search, '');
     const token = new URLSearchParams(url.hash.slice(1)).get('token');
     assert.ok(token?.length === 43);
-    return { token: token!, expiresAt: Date.parse(issued.expiresAt) };
+    return { token, expiresAt: Date.parse(issued.expiresAt) };
   };
   const password = randomBytes(16).toString('hex');
   const accept = (token: string, value = password) => post('users/invite/accept', { token, password: value });
