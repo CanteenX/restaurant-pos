@@ -35,6 +35,10 @@ model Staff {
   id                 String    @id @db.Uuid
   email              String    @unique
   grants             String[]  @default([])
+  roleId             String?   @db.Uuid @map("role_id")
+  role               StaffRole? @relation("StaffRoleMembers", fields: [roleId], references: [id], onDelete: Restrict)
+  extraGrants        String[]  @default([]) @map("extra_grants")
+  removedGrants      String[]  @default([]) @map("removed_grants")
   credentialVersion  BigInt    @default(0) @map("credential_version")
   passwordHash       String    @map("password_hash")
   enabled            Boolean   @default(true)
@@ -342,5 +346,21 @@ model BillingPayment {
   @@unique([invoiceId,method,reference])
   @@unique([invoiceId,ordinal])
   @@map("billing_payment")
+  @@schema("control")
+}
+
+/// Staff roles are data: the seeded rows are created by the migration and edited through the role API.
+model StaffRole {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key         String   @unique
+  name        String
+  description String   @default("")
+  grants      String[] @default([])
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @db.Timestamptz @map("created_at")
+  updatedAt   DateTime @default(now()) @db.Timestamptz @map("updated_at")
+  updatedBy   String?  @db.Uuid @map("updated_by")
+  members     Staff[]  @relation("StaffRoleMembers")
+  @@map("staff_role")
   @@schema("control")
 }

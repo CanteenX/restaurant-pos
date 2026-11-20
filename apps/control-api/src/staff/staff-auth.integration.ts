@@ -7,6 +7,8 @@ import { replyCases } from '../helpdesk/tickets/reply.integration.js';
 import { planCases } from '../plans/plans.integration.js';
 import { businessCases } from '../business/business.integration.js';
 import { staffAccessCases } from './staff-access.integration.js';
+import { roleAccessCases } from './role-access.integration.js';
+import { roleMigrationCases } from './role-migration.integration.js';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { TestContext } from 'node:test';
@@ -165,6 +167,8 @@ export async function staffAuthCases(t: TestContext, db: PrismaClient, datasourc
     assert.equal(ip.filter((s) => s === 429).length, 1);
   });
   await staffAccessCases(t, db, root, origin, password, verifier);
+  await roleAccessCases(t, db, new URL('../', root).href, origin);
+  await roleMigrationCases(t, db, datasourceUrl);
   await businessCases(t, db, new URL('../businesses', root).href, origin);
   await planCases(t, db, new URL('../', root).href, origin);
   await ticketCases(t, db, new URL('../tickets', root).href, origin);

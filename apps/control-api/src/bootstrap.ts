@@ -27,6 +27,13 @@ class HealthController {
   health() { return { status: 'ok' }; }
 }
 
+/** Staff-authenticated controllers; the route inventory test derives its route list from these. */
+export const staffControllers = [StaffController, BusinessController, PlansController, TicketsController,
+  AuditReadController, BillingController, HostedAccessController, PortalTicketReplyController] as const;
+/** Controllers that exist only when the customer portal is configured. */
+export const portalControllers = [PortalAccountsController, PortalAuthController, PortalReadController,
+  PortalTicketsController] as const;
+
 @Module({ controllers: [HealthController] })
 class ControlApiModule {}
 
@@ -39,9 +46,7 @@ export async function createControlApi(env: NodeJS.ProcessEnv) {
   const auth = config && await StaffAuth.create(config.url, config.key, config.origin);
   const app = await NestFactory.create<NestExpressApplication>({
     module: ControlApiModule,
-    controllers: auth ? [StaffController, BusinessController, PlansController, TicketsController,
-      AuditReadController, BillingController, HostedAccessController, PortalTicketReplyController,
-      ...(portal ? [PortalAccountsController, PortalAuthController, PortalReadController, PortalTicketsController] : [])] : [],
+    controllers: auth ? [...staffControllers, ...(portal ? portalControllers : [])] : [],
     providers: [
       ...(auth ? [{ provide: StaffAuth, useValue: auth }] : []),
       ...(resources ? [{ provide: portalResourceConfig, useValue: resources }] : []),

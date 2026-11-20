@@ -29,6 +29,7 @@ export * from "./graphql";
 export * from "./sync";
 export * from "./email-templates";
 export * from "./control-auth";
+export * from "./control-role";
 export { controlStaffId as controlResourceId, controlStaffPage as controlCursorPage } from "./control-auth";
 export * from "./control-business";
 export { servicePlanDates, servicePlanKey, servicePlanOperation, servicePlanPage } from './control-service-plan';

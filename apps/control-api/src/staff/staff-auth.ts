@@ -4,6 +4,7 @@ import { compare, hash } from 'bcrypt';
 import { generateSecret, generateRecoveryCode, openSecret, sealSecret, verifyTotp } from '@nventra/types/dist/node/totp';
 
 import { PrismaClient } from '../../node_modules/.prisma/control-client/index.js';
+import { RoleAccess } from './role-access.js';
 import { StaffAccess } from './staff-access.js';
 import { appendAuditEvent } from '../audit/audit.js';
 
@@ -12,9 +13,11 @@ const minutes = (n: number) => new Date(Date.now() + n * 60_000);
 
 export class StaffAuth {
   readonly access: StaffAccess;
+  readonly roles: RoleAccess;
   private constructor(private readonly db: PrismaClient, private readonly key: string,
     readonly origin: string, private readonly dummyHash: string) {
     this.access = new StaffAccess(db, (cookie) => this.digest('session', cookie));
+    this.roles = new RoleAccess(this.access);
   }
 
   static async create(url: string, key: string, origin: string) {

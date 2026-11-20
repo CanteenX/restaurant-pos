@@ -42,7 +42,7 @@ test('owner can read and page the audit history; a denied request clears prior d
 });
 
 test('sales staff cannot open the audit workspace or its API', async ({ page }) => {
-  await signIn(page,'audit-sales');
+  await signIn(page,'audit-marketing');
   await expect(page.getByRole('button',{ name:'Audit log' })).toHaveCount(0);
   expect((await page.request.get(path)).status()).toBe(403);
 });

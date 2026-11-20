@@ -26,7 +26,7 @@ export class PortalAccounts {
   }
 
   change(cookie: string, businessId: string, command: Command) {
-    return this.staff.withPermission(cookie, 'cc.portal.manage', async (tx, actor) => {
+    return this.staff.withPermission(cookie, command.kind === 'provision' ? 'cc.portal.create' : 'cc.portal.manage', async (tx, actor) => {
       const revoked = command.kind === 'revoke';
       const code = revoked ? undefined : portalToken();
       const digest = code ? this.auth.activationDigest(code) : null;

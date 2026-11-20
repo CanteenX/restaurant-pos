@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { portalReadCases } from './portal-read.integration.js';
 import { portalTicketCases } from '../helpdesk/portal/portal-tickets.integration.js';
+import { roleRouteMatrixCases } from '../staff/role-route-matrix.integration.js';
 import { execFileSync } from 'node:child_process';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import type { TestContext } from 'node:test';
@@ -103,8 +104,8 @@ export async function portalIdentityCases(t: TestContext, db: PrismaClient, fixt
       expiresAt: new Date(Date.now() + 900_000) } });
     return '__Host-control_staff=' + token;
   }
-  const manager = await staff(['cc.portal.manage']), reader = await staff(['cc.portal.read']);
-  const stale = await staff(['cc.portal.manage'], 660_000);
+  const manager = await staff(['cc.portal.create', 'cc.portal.manage']), reader = await staff(['cc.portal.read']);
+  const stale = await staff(['cc.portal.create', 'cc.portal.manage'], 660_000);
   const business = () => db.business.create({ data: { id: randomUUID(), legalName: 'Synthetic', displayName: 'Fixture' } });
   const [a,b] = await Promise.all([business(),business()]);
   const directory = (id: string) => 'businesses/' + id + '/portal-accounts';
@@ -202,4 +203,5 @@ export async function portalIdentityCases(t: TestContext, db: PrismaClient, fixt
   });
   await portalReadCases(t, db, root, 'a6'.repeat(32));
   await portalTicketCases(t, db, root, origin, 'a6'.repeat(32));
+  await roleRouteMatrixCases(t, db, root, origin);
 }

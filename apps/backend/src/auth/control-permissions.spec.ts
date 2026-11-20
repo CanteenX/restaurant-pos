@@ -1,7 +1,7 @@
+import * as types from '@nventra/types';
 import {
   canManageControlStaff,
   CONTROL_PERMISSIONS,
-  CONTROL_ROLE_PRESETS,
   controlPermissionSatisfied,
   DEFAULT_ROLE_PERMISSIONS,
   PERMISSIONS,
@@ -22,6 +22,7 @@ describe('Control permission registry', () => {
     expect(CONTROL_PERMISSIONS).toEqual([
       'cc.staff.read',
       'cc.staff.manage',
+      'cc.role.manage',
       'cc.business.read',
       'cc.business.manage',
       'cc.plan.read',
@@ -32,6 +33,7 @@ describe('Control permission registry', () => {
       'cc.hosted.read',
       'cc.hosted.manage',
       'cc.portal.read',
+      'cc.portal.create',
       'cc.portal.manage',
       'cc.ticket.read',
       'cc.ticket.manage',
@@ -50,26 +52,9 @@ describe('Control permission registry', () => {
     expect(permissionSatisfied(['menu.manage'], 'menu.view')).toBe(true);
   });
 
-  it('provides explicit owner, support and sales presets for initial grants', () => {
-    expect(CONTROL_ROLE_PRESETS.OWNER).toEqual(CONTROL_PERMISSIONS);
-    expect(CONTROL_ROLE_PRESETS.SUPPORT).toEqual([
-      'cc.business.read',
-      'cc.plan.read',
-      'cc.ticket.read',
-      'cc.ticket.manage',
-      'cc.ticket.reply',
-    ]);
-    expect(CONTROL_ROLE_PRESETS.SALES).toEqual([
-      'cc.business.read',
-      'cc.business.manage',
-      'cc.plan.read',
-    ]);
-    expect(Object.isFrozen(CONTROL_ROLE_PRESETS)).toBe(true);
-    expect(Object.values(CONTROL_ROLE_PRESETS).every(Object.isFrozen)).toBe(
-      true,
-    );
+  it('keeps roles out of code: no preset catalog is exported', () => {
+    expect('CONTROL_ROLE_PRESETS' in types).toBe(false);
   });
-
   it('checks only explicit grants and rejects malformed or mixed-product scope', () => {
     expect(controlPermissionSatisfied(actor.grants, 'cc.staff.manage')).toBe(
       true,
@@ -195,6 +180,7 @@ describe('Control staff grant ceiling', () => {
     for (const invalid of [
       null,
       'cc.staff.manage',
+      'cc.role.manage',
       ['cc.future.read'],
       ['staff.manage'],
       [null],
