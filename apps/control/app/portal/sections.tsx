@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { call, pagePath, useRequestScope, type Page } from '../api';
+import { formatInr } from '../money';
 
 type Failure = (error: unknown) => void;
 type Invoice = { id: string; reference: string; description: string; dueOn: string; amountPaise: number; balancePaise: number };
@@ -9,7 +10,6 @@ type Outlet = { id: string; displayName: string; timeZone: string;
 type Download = { id: string; label: string };
 type Ticket = { id: string; subject: string; status: string };
 type Message = { id: string; direction: 'inbound' | 'outbound'; text: string };
-const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' });
 
 function useCollection<T>(path: string, onError: Failure, refresh = 0) {
   const [data, setData] = useState<Page<T>>();
@@ -58,7 +58,7 @@ function Payments({ id, onError }: { id: string; onError: Failure }) {
   return <section aria-label="Invoice payments">
     {data?.items.length === 0 && <p>No payments recorded.</p>}
     {!!data?.items.length && <ul>{data.items.map((payment) => <li key={payment.id}>
-      {payment.reference} · {payment.method === 'upi' ? 'UPI' : 'Bank transfer'} · {inr.format(payment.amountPaise / 100)}
+      {payment.reference} · {payment.method === 'upi' ? 'UPI' : 'Bank transfer'} · {formatInr(payment.amountPaise)}
     </li>)}</ul>}
     {data?.nextCursor && <button type="button" disabled={loading} onClick={more}>More payments</button>}
   </section>;
@@ -74,7 +74,7 @@ export function Invoices({ onError }: { onError: Failure }) {
         <th scope="col">Balance</th><th scope="col">Payments</th></tr></thead>
       <tbody>{data.items.map((row) => <tr key={row.id}>
         <td><strong>{row.reference}</strong><br />{row.description}</td><td>{row.dueOn}</td>
-        <td>{inr.format(row.amountPaise / 100)}</td><td>{inr.format(row.balancePaise / 100)}</td>
+        <td>{formatInr(row.amountPaise)}</td><td>{formatInr(row.balancePaise)}</td>
         <td><button type="button" aria-expanded={selected === row.id} onClick={() => setSelected(selected === row.id ? undefined : row.id)}>View payments</button></td>
       </tr>)}</tbody>
     </table></div>}
