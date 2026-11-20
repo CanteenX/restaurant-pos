@@ -134,10 +134,18 @@ test('read-only staff complete their second factor and cannot mutate plans', asy
 
   await expect(page.getByRole('heading', { name: 'Plan history' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Assign plan|Renew plan|Add business|Add outlet/ })).toHaveCount(0);
-  const outlets = await page.request.get(prefix + '/businesses');
-  const { items: [business] } = await outlets.json();
+  const businesses = await page.request.get(prefix + '/businesses');
+  expect(businesses.status()).toBe(200);
+  const directory = await businesses.json() as { items: { id: string; displayName: string }[] };
+  const business = directory.items.find(({ displayName }) => displayName === 'Fixture Bistro');
+  expect(business, 'Fixture Bistro must match the business selected in the UI').toBeDefined();
+  if (!business) throw new Error('Fixture Bistro is missing from the directory');
   const response = await page.request.get(prefix + '/businesses/' + business.id + '/outlets');
-  const { items: [outlet] } = await response.json();
+  expect(response.status()).toBe(200);
+  const details = await response.json() as { items: { id: string; displayName: string }[] };
+  const outlet = details.items.find(({ displayName }) => displayName === 'Market Outlet');
+  expect(outlet, 'Market Outlet must match the outlet selected in the UI').toBeDefined();
+  if (!outlet) throw new Error('Market Outlet is missing from Fixture Bistro');
   const endpoint = prefix + '/outlets/' + outlet.id + '/service-plans/assign';
   const data = { planCode: 'starter', planVersion: 1, requestKey: crypto.randomUUID(),
     startsAt: new Date(date(31)).toISOString(), endsAt: new Date(date(61)).toISOString() };
