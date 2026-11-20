@@ -8,6 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { CheckoutDto } from '@nventra/types';
+import { randomUUID } from 'node:crypto';
 import { AuditService } from '../../audit/audit.service';
 import { KeyRateLimiter } from '../../common/guards/key-rate-limiter';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -28,7 +29,7 @@ const UNCLAIMED = ['PENDING', 'FAILED', 'SKIPPED'];
 const isStale = (updatedAt: Date | undefined) =>
   !updatedAt || Date.now() - updatedAt.getTime() > SENDING_TIMEOUT_MS;
 
-const errorKind =(err: unknown) =>
+const errorKind = (err: unknown) =>
   err instanceof Error ? err.name : 'unknown error';
 
 export interface CaptureInput {
@@ -47,8 +48,10 @@ export function maskEmail(email: string): string {
 /**
  * Digital receipt emails (#222). One ReceiptEmail row per order is the
  * idempotency key: the row is claimed atomically (PENDING/FAILED -> SENDING)
- * before anything is sent, so a repeated payment event or a double click can
- * never mail the same receipt twice. Addresses are never logged.
+ * before anything is sent. Each attempt owns a fresh token so a late attempt
+ * cannot overwrite its replacement. SMTP delivery is not transactional with
+ * the database; stale recovery can retry a provider-accepted send whose result
+ * was lost. Addresses are never logged.
  *
  * The receipt data is the paid order exactly as stored (the same figures the
  * printed receipt uses); the restaurant's template only changes the wording
@@ -194,23 +197,29 @@ export class ReceiptEmailService {
     if (!order || order.status !== 'PAID') return;
     if (!order.branch.restaurant.digitalReceiptsEnabled) return;
     const compose = await this.templates.forBranch(order.branchId, 'RECEIPT');
+    const claimToken = await this.claim(orderId, ['PENDING', 'FAILED']);
+    if (!claimToken) return;
     if (!compose) {
       // The restaurant turned this email off: no automatic send. A resend
       // explains how to turn it back on.
-      await this.prisma.receiptEmail.update({
-        where: { orderId },
-        data: { status: 'SKIPPED', lastError: 'template turned off' },
+      await this.prisma.receiptEmail.updateMany({
+        where: { orderId, status: 'SENDING', claimToken },
+        data: {
+          status: 'SKIPPED',
+          lastError: 'template turned off',
+          claimToken: null,
+        },
       });
       return;
     }
-    if (!(await this.claim(orderId, ['PENDING', 'FAILED']))) return;
-    await this.deliver(order, row.toEmail, compose);
+    await this.deliver(order, row.toEmail, compose, claimToken);
   }
 
-  /** Atomically takes the send; false when someone else already did. */
-  private async claim(orderId: string, from: string[]): Promise<boolean> {
+  /** Atomically takes the send with a fresh token, including stale legacy rows. */
+  private async claim(orderId: string, from: string[]): Promise<string | null> {
     // A row stuck in SENDING (process died mid-send) becomes claimable again
     // after SENDING_TIMEOUT_MS.
+    const claimToken = randomUUID();
     const { count } = await this.prisma.receiptEmail.updateMany({
       where: {
         orderId,
@@ -222,9 +231,9 @@ export class ReceiptEmailService {
           },
         ],
       },
-      data: { status: 'SENDING' },
+      data: { status: 'SENDING', claimToken },
     });
-    return count > 0;
+    return count > 0 ? claimToken : null;
   }
 
   private async deliver(
@@ -233,6 +242,7 @@ export class ReceiptEmailService {
     compose: NonNullable<
       Awaited<ReturnType<EmailTemplatesService['forBranch']>>
     >,
+    claimToken: string,
   ): Promise<boolean> {
     try {
       const mail = compose(
@@ -255,22 +265,23 @@ export class ReceiptEmailService {
       this.logger.warn(
         `Receipt email for order ${order.id} failed: ${errorKind(err)}`,
       );
-      await this.prisma.receiptEmail.update({
-        where: { orderId: order.id },
-        data: { status: 'FAILED', lastError: errorKind(err) },
+      await this.prisma.receiptEmail.updateMany({
+        where: { orderId: order.id, status: 'SENDING', claimToken },
+        data: { status: 'FAILED', lastError: errorKind(err), claimToken: null },
       });
       return false;
     }
-    await this.prisma.receiptEmail.update({
-      where: { orderId: order.id },
+    const { count } = await this.prisma.receiptEmail.updateMany({
+      where: { orderId: order.id, status: 'SENDING', claimToken },
       data: {
         status: 'SENT',
         sentAt: new Date(),
         lastError: null,
         sendCount: { increment: 1 },
+        claimToken: null,
       },
     });
-    return true;
+    return count > 0;
   }
 
   /** Delivery state for the order screen; the address is masked. */
@@ -328,9 +339,15 @@ export class ReceiptEmailService {
         `Too many receipt emails. Try again in ${Math.ceil(wait / 60)} minute(s).`,
         HttpStatus.TOO_MANY_REQUESTS,
       );
-    if (!(await this.claim(orderId, ['PENDING', 'SENT', 'FAILED', 'SKIPPED'])))
+    const claimToken = await this.claim(orderId, [
+      'PENDING',
+      'SENT',
+      'FAILED',
+      'SKIPPED',
+    ]);
+    if (!claimToken)
       throw new ConflictException('This receipt is already being sent');
-    if (!(await this.deliver(order, row.toEmail, compose)))
+    if (!(await this.deliver(order, row.toEmail, compose, claimToken)))
       throw new BadRequestException(
         'The receipt could not be sent. Check the server email settings.',
       );

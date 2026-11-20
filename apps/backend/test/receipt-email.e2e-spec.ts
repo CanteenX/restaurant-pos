@@ -19,6 +19,7 @@ import {
 } from './../src/modules/email/email.service';
 import { MarketingService } from './../src/modules/marketing/marketing.service';
 import { PrismaService } from './../src/prisma/prisma.service';
+import { ReceiptEmailService } from './../src/modules/orders/receipt-email.service';
 
 const tag = randomUUID().slice(0, 8);
 const password = 'Password123!';
@@ -236,6 +237,105 @@ describe('Digital receipt email (e2e)', () => {
     await pay(a, o.id, { ...consent, requestId }).expect(201);
     await new Promise((r) => setTimeout(r, 300));
     expect(sent).toHaveLength(1);
+  });
+
+  it.each(['success', 'failure'] as const)(
+    'preserves the new claimant after the old SMTP attempt reports %s',
+    async (outcome) => {
+      const o = await newOrder(a);
+      await pay(a, o.id, consent).expect(201);
+      await waitFor(
+        async () =>
+          (await prisma.receiptEmail.findUnique({ where: { orderId: o.id } }))
+            ?.status === 'SENT',
+      );
+      let resolve!: () => void;
+      let reject!: (err: Error) => void;
+      const pending = new Promise<void>((ok, fail) => {
+        resolve = ok;
+        reject = fail;
+      });
+      const smtp = jest
+        .spyOn(app.get(EmailService), 'send')
+        .mockImplementationOnce(() => pending);
+      const receipts = app.get(ReceiptEmailService);
+      const first = receipts.resend(
+        a.restaurantId,
+        o.id,
+        (
+          await prisma.user.findFirstOrThrow({
+            where: { restaurantId: a.restaurantId },
+          })
+        ).id,
+      );
+      const firstResult = expect(first).rejects.toThrow(/could not be sent/);
+      try {
+        await waitFor(() => smtp.mock.calls.length === 1);
+        const old = await prisma.receiptEmail.findUniqueOrThrow({
+          where: { orderId: o.id },
+        });
+        expect(old.claimToken).toEqual(expect.any(String));
+        await prisma.receiptEmail.update({
+          where: { orderId: o.id },
+          data: { updatedAt: new Date(0) },
+        });
+        await receipts.resend(
+          a.restaurantId,
+          o.id,
+          (
+            await prisma.user.findFirstOrThrow({
+              where: { restaurantId: a.restaurantId },
+            })
+          ).id,
+        );
+        const current = await prisma.receiptEmail.findUniqueOrThrow({
+          where: { orderId: o.id },
+        });
+        expect(current.status).toBe('SENT');
+        expect(current.claimToken).toBeNull();
+        expect(current.sendCount).toBe(2);
+        if (outcome === 'success') resolve();
+        else reject(new Error('synthetic SMTP failure'));
+        await firstResult;
+        expect(
+          await prisma.receiptEmail.findUniqueOrThrow({
+            where: { orderId: o.id },
+          }),
+        ).toEqual(current);
+      } finally {
+        resolve();
+        await firstResult;
+        smtp.mockRestore();
+      }
+    },
+  );
+
+  it('recovers an old stale SENDING row with no claim token', async () => {
+    const o = await newOrder(a);
+    await pay(a, o.id, consent).expect(201);
+    await waitFor(
+      async () =>
+        (await prisma.receiptEmail.findUnique({ where: { orderId: o.id } }))
+          ?.status === 'SENT',
+    );
+    await prisma.receiptEmail.update({
+      where: { orderId: o.id },
+      data: { status: 'SENDING', claimToken: null, updatedAt: new Date(0) },
+    });
+    await app.get(ReceiptEmailService).resend(
+      a.restaurantId,
+      o.id,
+      (
+        await prisma.user.findFirstOrThrow({
+          where: { restaurantId: a.restaurantId },
+        })
+      ).id,
+    );
+    const row = await prisma.receiptEmail.findUniqueOrThrow({
+      where: { orderId: o.id },
+    });
+    expect(row.status).toBe('SENT');
+    expect(row.sendCount).toBe(2);
   });
 
   it('sends nothing without consent', async () => {

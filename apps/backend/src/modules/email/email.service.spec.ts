@@ -1,6 +1,58 @@
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EmailService } from './email.service';
+import { createTransport } from 'nodemailer';
+
+jest.mock('nodemailer', () => ({
+  createTransport: jest.fn(() => ({
+    sendMail: jest.fn().mockResolvedValue({}),
+  })),
+}));
+
+describe('EmailService SMTP timeouts', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('bounds connection, greeting and socket waits even when the URL overrides them', async () => {
+    await makeService({
+      SMTP_URL:
+        'smtp://localhost:2525?socketTimeout=600000&connectionTimeout=600000&greetingTimeout=600000',
+      SMTP_FROM: 'Cafe <cafe@example.com>',
+    }).send({ to: 'guest@example.com', subject: 'Receipt', text: 'Receipt' });
+    expect(createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host: 'localhost',
+        port: 2525,
+        connectionTimeout: 60_000,
+        greetingTimeout: 60_000,
+        socketTimeout: 60_000,
+      }),
+    );
+  });
+
+  it('reuses its bounded transporter', async () => {
+    const service = makeService({
+      SMTP_URL: 'smtp://localhost:2525',
+      SMTP_FROM: 'cafe@example.com',
+    });
+    const result = await service.sendEach([
+      { to: 'guest@example.com', subject: 'Receipt', text: 'Receipt' },
+      { to: 'guest@example.com', subject: 'Receipt', text: 'Receipt' },
+    ]);
+    expect(result).toEqual({ sent: 2, failed: 0 });
+    expect(createTransport).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses sending when email is not configured', async () => {
+    await expect(
+      makeService({}).send({
+        to: 'guest@example.com',
+        subject: 'Receipt',
+        text: 'Receipt',
+      }),
+    ).rejects.toThrow(/Email is not set up/);
+    expect(createTransport).not.toHaveBeenCalled();
+  });
+});
 
 describe('EmailService.sendEach logging', () => {
   it('logs only a count and error kind, never the address, subject or SMTP text', async () => {
