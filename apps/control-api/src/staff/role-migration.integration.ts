@@ -77,4 +77,17 @@ export async function roleMigrationCases(t: TestContext, db: PrismaClient, fixtu
     apply();
     await check();
   });
+  await t.test('staff invitation migration rolls back and reapplies without removing existing staff accounts', async () => {
+    const base = migrations + '20261120110000_control_staff_invites/';
+    const exists = async () => (await scratch.$queryRaw<{ relation: string | null }[]>
+      `SELECT to_regclass('control.staff_invite')::text AS relation`)[0].relation;
+    const baseline = await snapshot();
+    sql(base + 'migration.sql');
+    assert.ok(await exists());
+    sql(base + 'down.sql');
+    assert.equal(await exists(), null);
+    assert.deepEqual(await snapshot(), baseline);
+    sql(base + 'migration.sql');
+    assert.ok(await exists());
+  });
 }
