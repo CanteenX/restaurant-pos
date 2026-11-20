@@ -45,6 +45,7 @@ describe('loadVettedData process boundary', () => {
       columnsByTable: new Map([['Order', new Set(['name'])]]),
       sequences: new Map(),
     };
+    await fs.writeFile(options.file, 'synthetic compressed archive');
     failSpawn = false;
     jest.mocked(runPg).mockClear();
     kills.mockClear();
@@ -92,9 +93,119 @@ describe('loadVettedData process boundary', () => {
     expect(kills).toHaveBeenCalledWith('SIGKILL');
   });
 
+  it('rejects a configured aggregate budget before destructive load', async () => {
+    process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES = '10';
+    try {
+      await expect(loadVettedData(options)).rejects.toThrow(
+        /NVENTRA_RESTORE_MAX_OUTPUT_BYTES/,
+      );
+      expect(runPg).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES;
+    }
+  });
+
+  it('counts metadata as well as rows across extraction processes', async () => {
+    options.entries = [...options.entries, ...options.entries];
+    process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES = String(
+      payload.length * 2 - 1,
+    );
+    try {
+      await expect(loadVettedData(options)).rejects.toThrow(
+        /NVENTRA_RESTORE_MAX_OUTPUT_BYTES/,
+      );
+      expect(runPg).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES;
+    }
+  });
+
+  it('includes sequence output in the aggregate budget', async () => {
+    options.entries = ['1; 0 0 SEQUENCE SET public Order_id_seq app'];
+    options.sequences = new Map([
+      [
+        'Order_id_seq',
+        {
+          name: 'Order_id_seq',
+          table: 'Order',
+          column: 'id',
+          min: '1',
+          max: '2147483647',
+        },
+      ],
+    ]);
+    jest
+      .mocked(runPg)
+      .mockResolvedValueOnce(
+        "SELECT pg_catalog.setval('public.Order_id_seq', 1, true);",
+      );
+    process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES = '10';
+    try {
+      await expect(loadVettedData(options)).rejects.toThrow(
+        /NVENTRA_RESTORE_MAX_OUTPUT_BYTES/,
+      );
+      expect(
+        jest.mocked(runPg).mock.calls.some(([cmd]) => cmd === 'psql'),
+      ).toBe(false);
+    } finally {
+      delete process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES;
+    }
+  });
+
+  it('names the configurable cap when a sequence subprocess exhausts its buffer', async () => {
+    options.entries = ['1; 0 0 SEQUENCE SET public Order_id_seq app'];
+    jest.mocked(runPg).mockRejectedValueOnce(
+      Object.assign(new Error('buffer limit'), {
+        code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+      }),
+    );
+    await expect(loadVettedData(options)).rejects.toThrow(
+      /NVENTRA_RESTORE_MAX_OUTPUT_BYTES/,
+    );
+  });
+
   it('handles a missing pg_restore executable without an unhandled child error', async () => {
     failSpawn = true;
     await expect(loadVettedData(options)).rejects.toThrow();
     expect(runPg).not.toHaveBeenCalled();
   });
+});
+
+it('passes the remaining aggregate budget to the sequence subprocess', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'restore-seq-budget-'));
+  try {
+    const file = path.join(dir, 'db.dump');
+    await fs.writeFile(file, 'synthetic');
+    const output = "SELECT pg_catalog.setval('public.Order_id_seq', 1, true);";
+    jest.mocked(runPg).mockResolvedValueOnce(output);
+    process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES = '128';
+    await loadVettedData({
+      file,
+      workDir: dir,
+      entries: ['1; 0 0 SEQUENCE SET public Order_id_seq app'],
+      url: 'postgresql://fixture@db/app',
+      wipe: [],
+      columnsByTable: new Map(),
+      sequences: new Map([
+        [
+          'Order_id_seq',
+          {
+            name: 'Order_id_seq',
+            table: 'Order',
+            column: 'id',
+            min: '1',
+            max: '2147483647',
+          },
+        ],
+      ]),
+    });
+    expect(
+      jest
+        .mocked(runPg)
+        .mock.calls.some((call) => call[0] === 'pg_restore' && call[3] === 128),
+    ).toBe(true);
+  } finally {
+    delete process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });

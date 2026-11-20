@@ -23,6 +23,7 @@ const edges = 'Order|Branch\nverifactu_records|Branch\nOrder|User\n';
 let toc = '';
 
 jest.mock('./restore-load', () => ({
+  ...jest.requireActual<object>('./restore-load'),
   loadVettedData: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock('node:child_process', () => ({
@@ -82,9 +83,22 @@ describe('pg-exec restore', () => {
     delete process.env[UNSAFE_OPT_IN_ENV];
     work = await fs.mkdtemp(path.join(os.tmpdir(), 'pg-exec-spec-'));
     dump = path.join(work, 'db.dump');
+    await fs.writeFile(dump, 'synthetic dump');
   });
   afterEach(async () => {
     await fs.rm(work, { recursive: true, force: true });
+  });
+
+  it('checks the compressed cap before invoking any PostgreSQL client', async () => {
+    process.env.NVENTRA_RESTORE_MAX_ARCHIVE_BYTES = '1';
+    try {
+      await expect(restoreDatabase(dump)).rejects.toThrow(
+        /NVENTRA_RESTORE_MAX_ARCHIVE_BYTES/,
+      );
+      expect(calls).toHaveLength(0);
+    } finally {
+      delete process.env.NVENTRA_RESTORE_MAX_ARCHIVE_BYTES;
+    }
   });
 
   it('never puts the connection URL or password on argv', async () => {

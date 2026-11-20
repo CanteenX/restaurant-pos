@@ -108,3 +108,22 @@ A restore is destructive and Owner-only. Backups are untrusted input, so:
   cap) and extracted into a scratch directory before anything is changed; the
   old uploads are kept aside until the swap succeeds.
 - The backup must come from the same schema version as the running app.
+
+
+### Restore resource limits
+
+Database COPY extraction checks the compressed custom-format dump before loading:
+`NVENTRA_RESTORE_MAX_ARCHIVE_BYTES` defaults to 4 GiB. The default decompressed
+budget is 128 times the dump size, with a 1 GiB floor and 16 GiB ceiling.
+`NVENTRA_RESTORE_MAX_OUTPUT_BYTES` overrides that budget for trusted backups with
+unusually high compression. `NVENTRA_RESTORE_MAX_LINE_BYTES` defaults to the smaller
+of 64 MiB and the output budget. All three settings accept positive safe integer
+byte counts; invalid settings refuse the restore. Errors name the applicable
+setting. Output budgets apply across tables and are enforced while streaming;
+archive size alone never proves the expanded data is safe. Provision scratch disk
+space for the expanded data. Upload tarball limits remain separate.
+
+The data transaction uses a 10 second lock timeout and a 15 minute timeout per
+statement. Timeout failures roll back table changes; PostgreSQL sequence counters
+may retain forward gaps. Automatically provisioned restore credentials are sent to
+PostgreSQL as salted SCRAM-SHA-256 verifiers rather than plaintext passwords.

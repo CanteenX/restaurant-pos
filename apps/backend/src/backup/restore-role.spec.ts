@@ -1,3 +1,4 @@
+jest.mock('../prisma/prisma.service', () => ({ PrismaService: class {} }));
 import {
   RESTORE_ROLE,
   RestoreRoleService,
@@ -66,7 +67,8 @@ describe('RestoreRoleService', () => {
     expect(all).toMatch(/GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES/);
     expect(all).not.toMatch(/pg_execute_server_program|pg_write_server_files/);
     expect(all).not.toMatch(/GRANT ALL/i);
-    expect(all).toContain(deriveRestorePassword('dbpw'));
+    expect(all.includes(deriveRestorePassword('dbpw'))).toBe(false);
+    expect(all).toMatch(/SCRAM-SHA-256\$4096:/);
   });
 
   it('leaves an operator-set DATABASE_RESTORE_URL role alone', async () => {
