@@ -242,6 +242,15 @@ describe('configured COPY stream budgets (supplemental)', () => {
     );
     expect(data.data.length).toBe(row.length + 1);
   });
+  it('accepts a row exactly at the configured line boundary', async () => {
+    const result = await extract(
+      [Buffer.from(`${header()}${'x'.repeat(64)}\n\\.\n`)],
+      'Order',
+      COLS,
+      { lineBytes: 64, outputBytes: 1024 },
+    );
+    expect(result.data.length).toBe(65);
+  });
   it('rejects split and complete lines above a configured boundary', async () => {
     for (const chunks of [
       [Buffer.alloc(65, 65)],
@@ -250,6 +259,26 @@ describe('configured COPY stream budgets (supplemental)', () => {
       await expect(
         extract(chunks, 'Order', COLS, { lineBytes: 64, outputBytes: 1000 }),
       ).rejects.toThrow(/NVENTRA_RESTORE_MAX_LINE_BYTES/);
+    }
+  });
+});
+
+describe('COPY incremental allocation', () => {
+  it('copies fragmented rows in linear total bytes', async () => {
+    const row = Buffer.from(`${header()}${'x'.repeat(128 * 1024)}\n\\.\n`);
+    const real = Buffer.concat.bind(Buffer) as typeof Buffer.concat;
+    let copied = 0;
+    const spy = jest
+      .spyOn(Buffer, 'concat')
+      .mockImplementation((parts, length) => {
+        copied += length ?? parts.reduce((sum, part) => sum + part.length, 0);
+        return real(parts, length);
+      });
+    try {
+      await extract(split(row, 1024));
+      expect(copied <= row.length * 4).toBe(true);
+    } finally {
+      spy.mockRestore();
     }
   });
 });

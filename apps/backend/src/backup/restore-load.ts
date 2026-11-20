@@ -103,6 +103,7 @@ const ident = (n: string) => `"${n.replace(/"/g, '""')}"`;
 export class CopyDataExtractor extends Transform {
   columns: string[] = [];
   private rest: Buffer = Buffer.alloc(0);
+  private restBytes = 0;
   private state: 'seek' | 'data' | 'done' = 'seek';
   private bytes = 0;
 
@@ -142,7 +143,6 @@ export class CopyDataExtractor extends Transform {
 
   _transform(chunk: Buffer, _enc: BufferEncoding, cb: TransformCallback) {
     try {
-      let buf = Buffer.concat([this.rest, chunk]);
       this.bytes += chunk.length;
       if (this.bytes > this.limits.outputBytes)
         throw sizeError(
@@ -150,15 +150,39 @@ export class CopyDataExtractor extends Transform {
           this.limits.outputBytes,
         );
       const out: Buffer[] = [];
-      let nl: number;
-      while (this.state !== 'done' && (nl = buf.indexOf(LF)) !== -1) {
-        const line = buf.subarray(0, nl);
-        if (line.length > this.limits.lineBytes)
+      let cursor = 0;
+      while (this.state !== 'done' && cursor < chunk.length) {
+        const nl = chunk.indexOf(LF, cursor);
+        const end = nl === -1 ? chunk.length : nl;
+        const part = chunk.subarray(cursor, end);
+        const length = this.restBytes + part.length;
+        if (length > this.limits.lineBytes)
           throw sizeError(
             'NVENTRA_RESTORE_MAX_LINE_BYTES',
             this.limits.lineBytes,
           );
-        buf = buf.subarray(nl + 1);
+        if (nl === -1) {
+          // Geometric capacity growth bounds copying and keeps one retained
+          // buffer even when the child delivers millions of tiny fragments.
+          if (length > this.rest.length) {
+            const capacity = Math.min(
+              this.limits.lineBytes,
+              Math.max(length, 4096, this.rest.length * 2),
+            );
+            const next = Buffer.allocUnsafe(capacity);
+            this.rest.copy(next, 0, 0, this.restBytes);
+            this.rest = next;
+          }
+          part.copy(this.rest, this.restBytes);
+          this.restBytes = length;
+          break;
+        }
+        const line = this.restBytes
+          ? Buffer.concat([this.rest.subarray(0, this.restBytes), part], length)
+          : part;
+        this.rest = Buffer.alloc(0);
+        this.restBytes = 0;
+        cursor = nl + 1;
         if (this.state === 'seek') {
           this.header(line.toString('latin1'));
         } else if (line.equals(END_MARKER)) {
@@ -167,12 +191,6 @@ export class CopyDataExtractor extends Transform {
           out.push(line, Buffer.from([LF]));
         }
       }
-      this.rest = this.state === 'done' ? Buffer.alloc(0) : buf;
-      if (this.rest.length > this.limits.lineBytes)
-        throw sizeError(
-          'NVENTRA_RESTORE_MAX_LINE_BYTES',
-          this.limits.lineBytes,
-        );
       cb(null, out.length ? Buffer.concat(out) : undefined);
     } catch (err) {
       cb(err as Error);
@@ -359,11 +377,28 @@ export async function loadVettedData(o: LoadOptions): Promise<void> {
       extractedBytes += extracted.bytes;
       loads.push({ table: e.name, columns: extracted.columns, file: dataFile });
     } else {
-      const out = await runPg(
-        'pg_restore',
-        ['--data-only', '-L', list, '-f', '-', o.file],
-        o.url,
-      );
+      const remaining = limits.outputBytes - extractedBytes;
+      if (remaining <= 0)
+        throw sizeError('NVENTRA_RESTORE_MAX_OUTPUT_BYTES', limits.outputBytes);
+      let out: string;
+      try {
+        out = await runPg(
+          'pg_restore',
+          ['--data-only', '-L', list, '-f', '-', o.file],
+          o.url,
+          remaining,
+        );
+      } catch (err) {
+        if (
+          (err as { code?: unknown })?.code ===
+          'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+        ) {
+          throw new RestoreVetError(
+            'sequence output exceeds the remaining NVENTRA_RESTORE_MAX_OUTPUT_BYTES budget or the independent 64 MiB client ceiling; inspect the backup',
+          );
+        }
+        throw err;
+      }
       extractedBytes += Buffer.byteLength(out);
       if (extractedBytes > limits.outputBytes)
         throw sizeError('NVENTRA_RESTORE_MAX_OUTPUT_BYTES', limits.outputBytes);

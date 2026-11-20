@@ -152,9 +152,60 @@ describe('loadVettedData process boundary', () => {
     }
   });
 
+  it('names the configurable cap when a sequence subprocess exhausts its buffer', async () => {
+    options.entries = ['1; 0 0 SEQUENCE SET public Order_id_seq app'];
+    jest.mocked(runPg).mockRejectedValueOnce(
+      Object.assign(new Error('buffer limit'), {
+        code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+      }),
+    );
+    await expect(loadVettedData(options)).rejects.toThrow(
+      /NVENTRA_RESTORE_MAX_OUTPUT_BYTES/,
+    );
+  });
+
   it('handles a missing pg_restore executable without an unhandled child error', async () => {
     failSpawn = true;
     await expect(loadVettedData(options)).rejects.toThrow();
     expect(runPg).not.toHaveBeenCalled();
   });
+});
+
+it('passes the remaining aggregate budget to the sequence subprocess', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'restore-seq-budget-'));
+  try {
+    const file = path.join(dir, 'db.dump');
+    await fs.writeFile(file, 'synthetic');
+    const output = "SELECT pg_catalog.setval('public.Order_id_seq', 1, true);";
+    jest.mocked(runPg).mockResolvedValueOnce(output);
+    process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES = '128';
+    await loadVettedData({
+      file,
+      workDir: dir,
+      entries: ['1; 0 0 SEQUENCE SET public Order_id_seq app'],
+      url: 'postgresql://fixture@db/app',
+      wipe: [],
+      columnsByTable: new Map(),
+      sequences: new Map([
+        [
+          'Order_id_seq',
+          {
+            name: 'Order_id_seq',
+            table: 'Order',
+            column: 'id',
+            min: '1',
+            max: '2147483647',
+          },
+        ],
+      ]),
+    });
+    expect(
+      jest
+        .mocked(runPg)
+        .mock.calls.some((call) => call[0] === 'pg_restore' && call[3] === 128),
+    ).toBe(true);
+  } finally {
+    delete process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
