@@ -15,7 +15,13 @@ module.exports = async function seedPortalSupport(db, passwordHash) {
       encryptedSeed: sealSecret('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP', process.env.CONTROL_AUTH_KEY + id) };
   }) });
 
-  const business = async (name) => db.business.create({ data: { id: randomUUID(), legalName: name, displayName: name } });
+  // Directory lists page by random id, so every fixture business needs an outlet: an existing spec
+  // takes the first business and its first outlet.
+  const business = async (name) => {
+    const created = await db.business.create({ data: { id: randomUUID(), legalName: name, displayName: name } });
+    await db.outlet.create({ data: { id: randomUUID(), businessId: created.id, displayName: name + ' Outlet', timeZone: 'UTC' } });
+    return created;
+  };
   const [customer, other] = await Promise.all([business('Portal Support Bistro'), business('Portal Other Cafe')]);
   for (const [email, business] of [
     ['portal-ticket-colleague@example.test', customer],
