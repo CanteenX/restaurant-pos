@@ -9,8 +9,7 @@ const SIZES = [
 ];
 type PageDef = { name: string; path: string; auth: boolean; devanagari: boolean; main?: boolean };
 const PAGES: PageDef[] = [
-  // The login page is not localised yet (hardcoded English, not part of #55).
-  { name: "login", path: "/login", auth: false, devanagari: false },
+  { name: "login", path: "/login", auth: false, devanagari: true, main: true },
   { name: "dashboard", path: "/dashboard", auth: true, devanagari: true },
   { name: "pos", path: "/pos", auth: true, devanagari: true },
   { name: "orders", path: "/orders", auth: true, devanagari: true, main: true },
@@ -53,10 +52,61 @@ for (const p of PAGES) {
         await page.goto(p.path);
         await page.waitForLoadState("networkidle");
         await expectHindi(page, p.name, size.width, p.devanagari, p.main);
+        if (p.name === "login") {
+          await expect(page.getByRole("button", { name: "साइन इन करें", exact: true })).toBeVisible();
+          await expect(page.getByLabel("ईमेल या फ़ोन नंबर")).toBeVisible();
+          await expect(page.getByLabel("पासवर्ड", { exact: true })).toBeVisible();
+        }
       });
     });
   }
 }
+
+test.describe("login form feedback in Hindi", () => {
+  test.use({ storageState: LOGGED_OUT });
+
+  test("translates validation and the two-factor prompt", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("nodedr-locale", "hi"));
+    await page.route("**/api/v1/auth/login", async (route) => {
+      const body = route.request().postDataJSON();
+      await route.fulfill({
+        status: 401,
+        json: { message: body.totp ? "Invalid verification code" : "TWO_FACTOR_REQUIRED" },
+      });
+    });
+    await page.goto("/login");
+
+    const submit = page.getByRole("button", { name: "साइन इन करें", exact: true });
+    await submit.click();
+    await expect(page.getByText("अपना ईमेल या फ़ोन नंबर डालें।")).toBeVisible();
+    await expect(page.getByText("अपना पासवर्ड डालें।")).toBeVisible();
+    await page.getByLabel("ईमेल या फ़ोन नंबर").fill("fixture@example.test");
+    await page.getByLabel("पासवर्ड", { exact: true }).fill("fixture-placeholder");
+    await page.getByRole("button", { name: "पासवर्ड दिखाएँ" }).click();
+    await expect(page.getByLabel("पासवर्ड", { exact: true })).toHaveAttribute("type", "text");
+    await page.getByRole("button", { name: "पासवर्ड छिपाएँ" }).click();
+
+    await submit.click();
+    const code = page.getByLabel("सत्यापन कोड", { exact: true });
+    await code.fill("111111");
+    await submit.click();
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText("सत्यापन कोड गलत है।");
+  });
+});
+
+test.describe("login language switch", () => {
+  test.use({ storageState: LOGGED_OUT, locale: "en-IN" });
+  test("applies Hindi before authentication and persists it after reload", async ({ page }) => {
+    await page.goto("/login");
+    await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+    await page.getByRole("combobox", { name: "Language" }).click();
+    await page.getByRole("option", { name: "हिन्दी" }).click();
+    await expect(page.getByRole("button", { name: "साइन इन करें", exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("lang", "hi");
+    await expect(page.getByRole("button", { name: "साइन इन करें", exact: true })).toBeVisible();
+  });
+});
 
 // D2 (#252): the mobile bottom-nav "More" label is translated.
 test.describe("bottom nav @375", () => {
