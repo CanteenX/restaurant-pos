@@ -71,7 +71,7 @@ export function MobileBottomNav({
         className={cn(itemClass, "h-16 text-muted-foreground active:text-foreground")}
       >
         <MoreHorizontal className="h-5 w-5" />
-        <span>More</span>
+        <span className="max-w-full truncate px-1">{t("nav.more")}</span>
       </button>
     </nav>
   );

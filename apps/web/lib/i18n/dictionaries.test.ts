@@ -17,7 +17,8 @@ const SAME_IN_FRENCH = new Set(["Nventra POS", "QR", "Priya", "Tables", "Marketi
   "Budget", "Budgets", "GST", "Tally", "Date", "Description", "yourshop@okbank", "https://s3.example.com", "auto",
   "https://example.com/pos-hook", "{count} exception", "{count} exceptions", "Total {amount}",
   "WhatsApp", "~{minutes} min", "Menu", "Photo",
-  "Documents", "Excel", "Excel (.xlsx)", "PDF", "CSV", "owner@cafe.com, accountant@firm.com"]);
+  "zones", "Copies", "Coupons", "Happy hour", "Type", "CODE", "Audience", "Message",
+  "name, category, price", "name, unit", "Documents", "Excel", "Excel (.xlsx)", "PDF", "CSV", "owner@cafe.com, accountant@firm.com"]);
 
 for (const locale of ["es", "fr", "hi"]) {
   test(`${locale} dictionary has exactly the same keys as en`, () => {
