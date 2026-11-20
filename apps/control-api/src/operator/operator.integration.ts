@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import type { TestContext } from 'node:test';
-import { CONTROL_ROLE_PRESETS } from '@nventra/types';
 import { base32Decode, hotp, stepAt } from '@nventra/types/dist/node/totp';
 import { compare } from 'bcrypt';
 import { createControlApi } from '../bootstrap.js';
@@ -12,7 +11,7 @@ export async function operatorCases(t: TestContext, db: PrismaClient, fixtureUrl
   const email = 'operator-owner@example.test', password = 'public fixture passphrase';
   const proof = Buffer.alloc(32, 42).toString('base64url'), fresh = Buffer.alloc(32, 43).toString('base64url');
   const resetProof = Buffer.alloc(32, 44).toString('base64url');
-  const create = { operation: 'create', email: email.toUpperCase(), preset: 'OWNER', password, proof };
+  const create = { operation: 'create', email: email.toUpperCase(), role: 'admin', password, proof };
   const run = (input: unknown, url: string, extra: string[] = [], debug = '') =>
     spawnSync(process.execPath, ['dist/operator/provision.js', ...extra], {
       input: typeof input === 'string' ? input : JSON.stringify(input), encoding: 'utf8', timeout: 10_000,
@@ -24,12 +23,13 @@ export async function operatorCases(t: TestContext, db: PrismaClient, fixtureUrl
     assert.equal(result.stderr, 'Staff provisioning failed.\n');
   };
   await t.test('rejects malformed, oversized and unexpected input with a fixed diagnostic', () => {
-    for (const input of ['{private-marker', 'x'.repeat(4097), { ...create, preset: 'other' },
+    for (const input of ['{private-marker', 'x'.repeat(4097), { ...create, role: 'Not A Key' },
       { ...create, password: 'x'.repeat(73) }, { ...create, proof: 'invalid' }, { ...create, extra: true }]) {
       failure(run(input, fixtureUrl));
     }
     failure(run(create, fixtureUrl, ['unexpected']));
     failure(run(create, 'https://invalid.example.test'));
+    failure(run({ ...create, role: 'no-such-role' }, fixtureUrl));
     failure(run(create, ''));
     failure(run({ ...create, password: proof }, fixtureUrl));
     failure(run(create, fixtureUrl, [], 'prisma:*'));
@@ -52,7 +52,7 @@ export async function operatorCases(t: TestContext, db: PrismaClient, fixtureUrl
         has_any_column_privilege('cc295_operator_fixture','control.staff','UPDATE,INSERT,SELECT')
         OR has_any_column_privilege('cc295_operator_fixture','control.staff_enrollment_proof','SELECT,UPDATE,INSERT') AS direct,
         p.prosecdef AND p.proconfig = ARRAY['search_path=pg_catalog, pg_temp'] AS fixed
-      FROM pg_proc p WHERE p.oid='control.provision_staff(text,text,text,text[],bytea)'::regprocedure`;
+      FROM pg_proc p WHERE p.oid='control.provision_staff(text,text,text,text,bytea)'::regprocedure`;
     assert.deepEqual(row, { permitted: false, direct: false, fixed: true });
     const access = await db.$queryRaw<{ exposed: boolean }[]>`SELECT
       has_any_column_privilege(role_name, 'control.staff_proof_issuance','SELECT,INSERT,UPDATE')
@@ -72,20 +72,21 @@ export async function operatorCases(t: TestContext, db: PrismaClient, fixtureUrl
     assert.equal(res.stdout + res.stderr, '');
   };
   const rotate = { operation: 'rotate', email, proof: fresh };
-  await t.test('uses the catalog grants for invited Support, Manager and Marketing accounts and rejects unknown targets', async () => {
-    for (const preset of ['SUPPORT', 'MANAGER', 'MARKETING'] as const) {
-      const invited = preset.toLowerCase() + '-operator@example.test';
-      ok({ ...create, email: invited, preset });
+  await t.test('uses the database role grants for invited Support, Manager and Marketing accounts and rejects unknown targets', async () => {
+    for (const preset of ['support', 'manager', 'marketing']) {
+      const invited = preset + '-operator@example.test';
+      ok({ ...create, email: invited, role: preset });
       const staff = await db.staff.findUniqueOrThrow({ where: { email: invited } });
-      assert.deepEqual(staff.grants, [...CONTROL_ROLE_PRESETS[preset]]);
+      const role = await db.staffRole.findUniqueOrThrow({ where: { key: preset } });
+      assert.deepEqual([staff.grants, staff.roleId], [role.grants, role.id]);
     }
     failure(run({ ...rotate, email: 'absent@example.test' }, operator.toString()));
   });
   await t.test('creates normalized owner with explicit grants, verifier, short-lived digest and atomic audit', async () => {
     ok(create);
-    failure(run({ ...create, preset: 'SUPPORT' }, operator.toString()));
+    failure(run({ ...create, role: 'support' }, operator.toString()));
     const staff = await db.staff.findUniqueOrThrow({ where: { email } });
-    assert.deepEqual(staff.grants, [...CONTROL_ROLE_PRESETS.OWNER]);
+    assert.deepEqual(staff.grants, (await db.staffRole.findUniqueOrThrow({ where: { key: 'admin' } })).grants);
     assert.ok(await compare(password, staff.passwordHash));
     const issued = await db.staffEnrollmentProof.findUniqueOrThrow({ where: { staffId: staff.id } });
     assert.ok(Buffer.from(issued.digest).equals(createHash('sha256').update(Buffer.from(proof, 'base64url')).digest()));

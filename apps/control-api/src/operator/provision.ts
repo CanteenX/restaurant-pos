@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { controlChallengeSchema, CONTROL_ROLE_PRESETS } from '@nventra/types';
+import { controlChallengeSchema, controlRoleKey } from '@nventra/types';
 import { hash } from 'bcrypt';
 import { z } from 'zod';
 
@@ -7,7 +7,7 @@ const { email, enrollmentProof, password } = controlChallengeSchema.shape;
 const proof = enrollmentProof.unwrap();
 const request = z.discriminatedUnion('operation', [
   z.strictObject({ operation: z.literal('create'), email, password: password.refine((s) => s.length >= 12),
-    preset: z.enum(['OWNER', 'MANAGER', 'SUPPORT', 'MARKETING']), proof }),
+    role: controlRoleKey, proof }),
   z.strictObject({ operation: z.literal('rotate'), email, proof }),
 ]);
 
@@ -35,11 +35,11 @@ async function main() {
   const { PrismaClient } = await import('../../node_modules/.prisma/control-client/index.js');
   const db = new PrismaClient({ datasourceUrl: url });
   try {
-    let verifier: string | null = null, grants: readonly string[] | null = null;
+    let verifier: string | null = null, role: string | null = null;
     if (data.operation === 'create') {
       if (data.password === data.proof) throw new Error();
       verifier = await hash(data.password, 12);
-      grants = CONTROL_ROLE_PRESETS[data.preset];
+      role = data.role;
     }
     const digest = createHash('sha256').update(Buffer.from(data.proof, 'base64url')).digest();
     await db.$transaction(async (tx) => {
@@ -55,7 +55,7 @@ async function main() {
       if (!login.dedicated) throw new Error();
       await tx.$executeRaw`SET LOCAL ROLE control_staff_operator`;
       await tx.$executeRaw`SELECT control.provision_staff(${data.operation}, ${data.email}, ${verifier}::text,
-        ${grants}::text[], ${digest}::bytea)`;
+        ${role}::text, ${digest}::bytea)`;
     });
   } finally { await db.$disconnect(); }
 }

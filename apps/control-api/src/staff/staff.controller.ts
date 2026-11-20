@@ -1,8 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { ArgumentsHost, BadRequestException, Body, Catch, Controller, Get, HttpCode,
-  HttpException, Inject, Param, Patch, Post, Query, Req, Res, UnauthorizedException, UseFilters } from '@nestjs/common';
+import { ArgumentsHost, BadRequestException, Body, Catch, Controller, Delete, Get, HttpCode,
+  HttpException, Inject, Param, Patch, Post, Put, Query, Req, Res, UnauthorizedException, UseFilters } from '@nestjs/common';
 import type { ExceptionFilter } from '@nestjs/common';
-import { controlChallengeSchema, controlFactorSchema, controlStaffPage, controlStaffGrants, controlStaffId, controlEmptyBody } from '@nventra/types';
+import { controlChallengeSchema, controlFactorSchema, controlStaffPage, controlStaffGrants, controlStaffId, controlEmptyBody,
+  controlRoleCreate, controlRoleUpdate, controlStaffRoleAssignment } from '@nventra/types';
 import { StaffAuth } from './staff-auth.js';
 
 const cookieName = '__Host-control_staff';
@@ -75,6 +76,41 @@ export class StaffController {
     const target = controlStaffId.safeParse(id), dto = controlStaffGrants.safeParse(body);
     if (!target.success || !dto.success) throw new BadRequestException();
     return this.auth.access.change(sessionCookie(req), target.data, { kind: 'grants', grants: dto.data.grants });
+  }
+
+  @Get('roles')
+  roles(@Req() req: IncomingMessage, @Query() query: unknown) {
+    const page = controlStaffPage.safeParse(query);
+    if (!page.success) throw new BadRequestException();
+    return this.auth.roles.list(sessionCookie(req), page.data);
+  }
+
+  @Post('roles')
+  createRole(@Req() req: IncomingMessage, @Body() body: unknown) {
+    const dto = controlRoleCreate.safeParse(body);
+    if (!dto.success) throw new BadRequestException();
+    return this.auth.roles.create(sessionCookie(req), dto.data);
+  }
+
+  @Patch('roles/:id')
+  updateRole(@Req() req: IncomingMessage, @Param('id') id: string, @Body() body: unknown) {
+    const target = controlStaffId.safeParse(id), dto = controlRoleUpdate.safeParse(body);
+    if (!target.success || !dto.success) throw new BadRequestException();
+    return this.auth.roles.update(sessionCookie(req), target.data, dto.data);
+  }
+
+  @Delete('roles/:id')
+  deleteRole(@Req() req: IncomingMessage, @Param('id') id: string) {
+    const target = controlStaffId.safeParse(id);
+    if (!target.success) throw new BadRequestException();
+    return this.auth.roles.remove(sessionCookie(req), target.data);
+  }
+
+  @Put('users/:id/role')
+  assignRole(@Req() req: IncomingMessage, @Param('id') id: string, @Body() body: unknown) {
+    const target = controlStaffId.safeParse(id), dto = controlStaffRoleAssignment.safeParse(body);
+    if (!target.success || !dto.success) throw new BadRequestException();
+    return this.auth.roles.assign(sessionCookie(req), target.data, dto.data);
   }
 
   private revoke(req: IncomingMessage, id: string, body: unknown, kind: 'reset' | 'revoke') {

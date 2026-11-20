@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHmac, randomUUID } from 'node:crypto';
 import type { TestContext } from 'node:test';
-import { CONTROL_ROLE_PRESETS } from '@nventra/types';
 import type { PrismaClient } from '../../node_modules/.prisma/control-client/index.js';
 import { createControlApi } from '../bootstrap.js';
 import { appendAuditEvent } from './audit.js';
@@ -26,7 +25,7 @@ export async function auditReadCases(t: TestContext, db: PrismaClient, url: stri
   await t.test('allows verified audit readers and denies missing, expired and marketing sessions', async () => {
     assert.equal((await get('','')).status,401);
     assert.equal((await get('',await session('expired-audit',['cc.audit.read'],66,true))).status,401);
-    assert.equal((await get('',await session('marketing-audit',[...CONTROL_ROLE_PRESETS.MARKETING],67))).status,403);
+    assert.equal((await get('',await session('marketing-audit',(await db.staffRole.findUniqueOrThrow({ where: { key: 'marketing' } })).grants,67))).status,403);
     const response = await get();
     assert.equal(response.status,200); assert.equal(response.headers.get('cache-control'),'no-store');
     assert.equal((await fetch(path,{ method:'POST',headers:{ cookie: reader,origin:'https://control.example.test' } })).status,404);

@@ -38,12 +38,12 @@ async function seed() {
   const controlsId = randomUUID();
   await db.staff.createMany({ data: [
     { id: controlsId, email: 'client-controls@example.test', passwordHash: controlsPasswordHash,
-      grants: ['cc.business.read', 'cc.hosted.read', 'cc.hosted.manage', 'cc.portal.read', 'cc.portal.manage', 'cc.ticket.read'],
+      grants: ['cc.business.read', 'cc.hosted.read', 'cc.hosted.manage', 'cc.portal.read', 'cc.portal.create', 'cc.portal.manage', 'cc.ticket.read'],
       encryptedSeed: sealSecret(controlsTotpSeed, process.env.CONTROL_AUTH_KEY + controlsId) },
     { id: ownerId, email: 'owner@example.test', passwordHash, grants: [...read, 'cc.business.manage', 'cc.plan.manage'] },
     { id: readerId, email: 'reader@example.test', passwordHash, grants: read, encryptedSeed },
     { id: operationsId, email: 'operations@example.test', passwordHash,
-      grants: ['cc.business.read', 'cc.business.manage', 'cc.plan.read', 'cc.ticket.read', 'cc.billing.read', 'cc.billing.manage', 'cc.hosted.read', 'cc.hosted.manage', 'cc.portal.read', 'cc.portal.manage']
+      grants: ['cc.business.read', 'cc.business.manage', 'cc.plan.read', 'cc.ticket.read', 'cc.billing.read', 'cc.billing.manage', 'cc.hosted.read', 'cc.hosted.manage', 'cc.portal.read', 'cc.portal.create', 'cc.portal.manage']
         .filter((permission) => CONTROL_PERMISSIONS.includes(permission)),
       encryptedSeed: sealSecret('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP', process.env.CONTROL_AUTH_KEY + operationsId) },
   ] });

@@ -4,7 +4,7 @@ const { sealSecret } = require('../../packages/types/dist/node/totp');
 // Called only by seed.cjs after it validates the disposable loopback database.
 module.exports = async function seedPortalSupport(db, passwordHash) {
   const support = ['cc.ticket.read', 'cc.ticket.manage', 'cc.ticket.reply'];
-  const directory = ['cc.business.read', 'cc.business.manage', 'cc.portal.read', 'cc.portal.manage'];
+  const directory = ['cc.business.read', 'cc.business.manage', 'cc.portal.read', 'cc.portal.create', 'cc.portal.manage'];
   const access = ['cc.hosted.read', 'cc.hosted.manage'];
   await db.staff.createMany({ data: [
     ['portal-support-staff@example.test', [...directory, ...access, ...support]],

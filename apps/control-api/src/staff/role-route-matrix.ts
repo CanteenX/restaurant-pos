@@ -50,6 +50,11 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteDeclaration>> = Object.f
   'PATCH /staff/users/:id/grants': cp('cc.staff.manage', (c) => ({ path: 'staff/users/' + c.staff + '/grants', body: { grants: [] } })),
   'POST /staff/users/:id/reset-factor': cp('cc.staff.manage', (c) => ({ path: 'staff/users/' + c.staff + '/reset-factor', body: {} })),
   'POST /staff/users/:id/revoke-sessions': cp('cc.staff.manage', (c) => ({ path: 'staff/users/' + c.staff + '/revoke-sessions', body: {} })),
+  'GET /staff/roles': cp('cc.staff.read', () => ({ path: 'staff/roles' + page })),
+  'POST /staff/roles': cp('cc.role.manage', () => ({ path: 'staff/roles', body: { key: 'matrix-role', name: 'Matrix', grants: [] } })),
+  'PATCH /staff/roles/:id': cp('cc.role.manage', (c) => ({ path: 'staff/roles/' + c.staff, body: { name: 'Renamed' } })),
+  'DELETE /staff/roles/:id': cp('cc.role.manage', (c) => ({ path: 'staff/roles/' + c.staff })),
+  'PUT /staff/users/:id/role': cp('cc.staff.manage', (c) => ({ path: 'staff/users/' + c.staff + '/role', body: { roleId: c.staff } })),
 
   'GET /businesses': cp('cc.business.read', () => ({ path: 'businesses' + page })),
   'GET /businesses/:businessId': cp('cc.business.read', (c) => ({ path: 'businesses/' + c.business })),
@@ -94,7 +99,7 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteDeclaration>> = Object.f
     headers: { 'if-match': '"0"' }, body: { status: 'suspended', reason: 'matrix', requestKey: uuid } })),
 
   'GET /businesses/:id/portal-accounts': cp('cc.portal.read', (c) => ({ path: 'businesses/' + c.business + '/portal-accounts' + page })),
-  'POST /businesses/:id/portal-accounts': cp('cc.portal.manage', (c) => ({ path: 'businesses/' + c.business + '/portal-accounts',
+  'POST /businesses/:id/portal-accounts': cp('cc.portal.create', (c) => ({ path: 'businesses/' + c.business + '/portal-accounts',
     body: { email: 'matrix-portal@example.test' } })),
   'POST /businesses/:id/portal-accounts/:accountId/reissue': cp('cc.portal.manage', (c) =>
     ({ path: 'businesses/' + c.business + '/portal-accounts/' + c.account + '/reissue', body: {} })),

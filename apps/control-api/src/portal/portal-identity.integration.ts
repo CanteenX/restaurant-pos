@@ -104,8 +104,8 @@ export async function portalIdentityCases(t: TestContext, db: PrismaClient, fixt
       expiresAt: new Date(Date.now() + 900_000) } });
     return '__Host-control_staff=' + token;
   }
-  const manager = await staff(['cc.portal.manage']), reader = await staff(['cc.portal.read']);
-  const stale = await staff(['cc.portal.manage'], 660_000);
+  const manager = await staff(['cc.portal.create', 'cc.portal.manage']), reader = await staff(['cc.portal.read']);
+  const stale = await staff(['cc.portal.create', 'cc.portal.manage'], 660_000);
   const business = () => db.business.create({ data: { id: randomUUID(), legalName: 'Synthetic', displayName: 'Fixture' } });
   const [a,b] = await Promise.all([business(),business()]);
   const directory = (id: string) => 'businesses/' + id + '/portal-accounts';
