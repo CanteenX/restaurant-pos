@@ -30,6 +30,7 @@ Use **Import** `CanteenX/restaurant-pos` with these settings:
 - **Build command:** `cd ../.. && pnpm --filter @nventra/types build && pnpm --filter web build`.
 - **Production branch:** `master`.
 - **Environment variable:** `BACKEND_URL=https://nventra-pos-demo-api.onrender.com`, for Production and Preview. It's used at build time.
+- **Environment variable:** `NEXT_PUBLIC_SOCKET_TRANSPORTS=polling`, for Production and Preview. Vercel proxies HTTP only and can't proxy WebSockets, so the browser must use long-polling (see Live updates under Free-tier limits).
 
 ## 4. Load the demo restaurant (once)
 From a local checkout, with the Neon string in your own terminal only:
@@ -45,3 +46,11 @@ DATABASE_URL='<neon direct url>' npx ts-node prisma/seed.ts   # prints the demo 
 - No email unless `SMTP_URL`/`SMTP_FROM` are set. Local backups and the auto-updater are off.
 - Live updates (kitchen display, order alerts) use socket.io long-polling through Vercel, which is slightly slower than WebSockets but works.
 - Neon free: 0.5 GB storage, and the database auto-suspends when idle (a short wake-up).
+
+## Render does not deploy when I push
+- The service tracks the `master` branch only (see `render.yaml`). Merging to `staging` deploys nothing, on purpose. The release PR from `staging` into `master` is what deploys.
+- If a push to `master` starts no deploy, open the service's **Deploys** tab. If it only shows the triggers **API** or **Blueprint sync** and never **New commit**, the Render GitHub app has no access to the private repo `CanteenX/restaurant-pos`. Fix it:
+  1. In the Render dashboard, open **Account Settings**, then **GitHub**, and choose **Configure**.
+  2. Grant access to the `CanteenX/restaurant-pos` repository. This needs a GitHub organisation owner.
+  3. Use **Manual Deploy** once to confirm.
+- Until that is done, start deploys by hand: in the dashboard, **Manual Deploy**, then **Deploy latest commit**. Or use the Render API or MCP trigger-deploy call. Nothing in the repo needs to change.
