@@ -30,6 +30,7 @@ async function seed() {
   const passwordHash = await hash('browser fixture passphrase', 12);
   await require('./helpdesk-fixture.cjs')(db, passwordHash);
   await require('./audit-fixture.cjs')(db, passwordHash);
+  await require('./portal-support-fixture.cjs')(db, passwordHash);
   const controlsPasswordHash = await hash(controlsPassphrase, 12);
   const ownerId = randomUUID(), readerId = randomUUID(), operationsId = randomUUID();
   const read = ['cc.business.read', 'cc.plan.read'];
