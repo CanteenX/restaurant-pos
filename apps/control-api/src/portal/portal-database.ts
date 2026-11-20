@@ -20,9 +20,11 @@ export async function openPortalDatabase(url: string) {
         AND NOT pg_catalog.has_table_privilege(r.oid, 'control.staff', 'DELETE,TRUNCATE,TRIGGER')
         AND NOT EXISTS (SELECT FROM (VALUES ('control.business'), ('control.outlet'), ('control.billing_invoice'),
           ('control.billing_payment'), ('control.hosted_access_event'), ('control.outlet_service_term'),
-          ('control.service_plan_version')) AS protected(name)
+          ('control.service_plan_version'), ('control.ticket'), ('control.ticket_message'), ('control.portal_ticket'),
+          ('control.inbound_receipt'), ('control.ticket_reply_outbox'), ('control.audit_event')) AS protected(name)
           WHERE pg_catalog.has_any_column_privilege(r.oid, protected.name, 'SELECT,INSERT,UPDATE,REFERENCES')
              OR pg_catalog.has_table_privilege(r.oid, protected.name, 'DELETE,TRUNCATE,TRIGGER'))
+        AND NOT pg_catalog.has_function_privilege(r.oid, 'control.append_audit_event(text,uuid,uuid,text,text,uuid,uuid,text,text[])', 'EXECUTE')
         AND pg_catalog.has_schema_privilege(r.oid, pg_catalog.to_regnamespace('control'), 'USAGE')
         AND NOT pg_catalog.has_schema_privilege(r.oid, pg_catalog.to_regnamespace('control'), 'CREATE') AS dedicated
       FROM pg_catalog.pg_roles r JOIN pg_catalog.pg_database d ON d.datname = pg_catalog.current_database()
