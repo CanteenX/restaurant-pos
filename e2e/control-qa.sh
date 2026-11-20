@@ -49,13 +49,18 @@ export CONTROL_ORIGIN='https://localhost:4172' CONTROL_API_PORT=4173
 export CONTROL_API_ORIGIN='http://127.0.0.1:4173' NEXT_TELEMETRY_DISABLED=1
 docker exec "$pg" psql -U fixture -d fixture -v ON_ERROR_STOP=1 -c 'CREATE ROLE control_runtime NOLOGIN; CREATE ROLE control_mail_worker NOLOGIN' >/dev/null
 # This login, passwords and key exist only on the disposable browser fixture above.
-docker exec -i "$pg" psql -U fixture -d fixture -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+# The portal login password and the client-controls staff secrets are random per run.
+portal_password="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(18).toString("hex"))')"
+CONTROL_FIXTURE_PASSPHRASE="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(18).toString("hex"))')"
+CONTROL_FIXTURE_TOTP_SEED="$(node -e 'const a="ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";const b=require("node:crypto").randomBytes(32);process.stdout.write([...b].map((x)=>a[x%32]).join(""))')"
+export CONTROL_FIXTURE_PASSPHRASE CONTROL_FIXTURE_TOTP_SEED
+docker exec -i "$pg" psql -U fixture -d fixture -v ON_ERROR_STOP=1 >/dev/null <<SQL
 CREATE ROLE control_portal_runtime NOLOGIN;
-CREATE ROLE cc_portal_browser_fixture LOGIN PASSWORD 'fixture' IN ROLE control_portal_runtime;
+CREATE ROLE cc_portal_browser_fixture LOGIN PASSWORD '$portal_password' IN ROLE control_portal_runtime;
 SQL
 pnpm --filter @nventra/control-api exec prisma migrate deploy
 docker exec -i "$pg" psql -U fixture -d fixture -v ON_ERROR_STOP=1 < apps/control-api/operator/portal-runtime-grants.sql >/dev/null
-export CONTROL_PORTAL_DATABASE_URL="postgresql://cc_portal_browser_fixture:fixture@$binding/fixture"
+export CONTROL_PORTAL_DATABASE_URL="postgresql://cc_portal_browser_fixture:$portal_password@$binding/fixture"
 printf -v CONTROL_PORTAL_AUTH_KEY 'b6%.0s' {1..32}
 export CONTROL_PORTAL_AUTH_KEY
 docker exec -i "$pg" psql -U fixture -d fixture -v ON_ERROR_STOP=1 < apps/control-api/operator/mail-worker-grants.sql >/dev/null

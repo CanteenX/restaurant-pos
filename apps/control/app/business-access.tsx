@@ -91,7 +91,7 @@ export function HostedAccess({ id, name, manage, onError }: AccessProps & { name
     {access && <>
       <p>{active ? 'Active' : 'Suspended'}</p>
       {access.reason && <p>{access.reason}</p>}
-      {manage && !editing && <button type="button" onClick={() => setEditing(true)}>
+      {manage && !editing && <button type="button" onClick={() => { setStale(false); setEditing(true); }}>
         {active ? 'Suspend hosted access' : 'Restore hosted access'}
       </button>}
       {manage && editing && <form onSubmit={change}><fieldset disabled={busy}>
