@@ -45,6 +45,7 @@ describe('loadVettedData process boundary', () => {
       columnsByTable: new Map([['Order', new Set(['name'])]]),
       sequences: new Map(),
     };
+    await fs.writeFile(options.file, 'synthetic compressed archive');
     failSpawn = false;
     jest.mocked(runPg).mockClear();
     kills.mockClear();
@@ -90,6 +91,33 @@ describe('loadVettedData process boundary', () => {
     await expect(loadVettedData(options)).rejects.toThrow(/incomplete/);
     expect(runPg).not.toHaveBeenCalled();
     expect(kills).toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it('rejects a configured aggregate budget before destructive load', async () => {
+    process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES = '10';
+    try {
+      await expect(loadVettedData(options)).rejects.toThrow(
+        /NVENTRA_RESTORE_MAX_OUTPUT_BYTES/,
+      );
+      expect(runPg).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES;
+    }
+  });
+
+  it('counts metadata as well as rows across extraction processes', async () => {
+    options.entries = [...options.entries, ...options.entries];
+    process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES = String(
+      payload.length * 2 - 1,
+    );
+    try {
+      await expect(loadVettedData(options)).rejects.toThrow(
+        /NVENTRA_RESTORE_MAX_OUTPUT_BYTES/,
+      );
+      expect(runPg).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.NVENTRA_RESTORE_MAX_OUTPUT_BYTES;
+    }
   });
 
   it('handles a missing pg_restore executable without an unhandled child error', async () => {

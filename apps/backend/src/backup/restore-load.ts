@@ -34,6 +34,65 @@ const END_MARKER = Buffer.from('\\.');
 const MAX_LINE_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024 * 1024;
 
+export interface RestoreLimits {
+  lineBytes: number;
+  outputBytes: number;
+}
+
+function configuredBytes(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: number,
+): number {
+  const raw = env[name];
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!/^[0-9]+$/.test(raw) || !Number.isSafeInteger(value) || value <= 0) {
+    throw new RestoreVetError(
+      `${name} must be a positive safe integer in bytes`,
+    );
+  }
+  return value;
+}
+
+/** Compressed size is a sizing hint, never proof of the decompressed size. */
+export function restoreLimits(
+  archiveBytes: number,
+  env = process.env,
+): RestoreLimits {
+  const archiveMax = configuredBytes(
+    env,
+    'NVENTRA_RESTORE_MAX_ARCHIVE_BYTES',
+    4 * 1024 ** 3,
+  );
+  if (
+    !Number.isSafeInteger(archiveBytes) ||
+    archiveBytes < 0 ||
+    archiveBytes > archiveMax
+  ) {
+    throw new RestoreVetError(
+      `compressed archive exceeds NVENTRA_RESTORE_MAX_ARCHIVE_BYTES (${archiveMax} bytes)`,
+    );
+  }
+  const outputBytes = configuredBytes(
+    env,
+    'NVENTRA_RESTORE_MAX_OUTPUT_BYTES',
+    Math.max(MAX_OUTPUT_BYTES, Math.min(16 * 1024 ** 3, archiveBytes * 128)),
+  );
+  const lineBytes = configuredBytes(
+    env,
+    'NVENTRA_RESTORE_MAX_LINE_BYTES',
+    Math.min(64 * 1024 ** 2, outputBytes),
+  );
+  return { lineBytes, outputBytes };
+}
+
+function sizeError(name: string, limit: number): RestoreVetError {
+  return new RestoreVetError(
+    `data exceeds size limit: ${name} (${limit} bytes); increase this setting only for a trusted, expected backup`,
+  );
+}
+
 const ident = (n: string) => `"${n.replace(/"/g, '""')}"`;
 
 /**
@@ -47,9 +106,17 @@ export class CopyDataExtractor extends Transform {
   private state: 'seek' | 'data' | 'done' = 'seek';
   private bytes = 0;
 
+  get outputBytes(): number {
+    return this.bytes;
+  }
+
   constructor(
     private readonly table: string,
     private readonly liveColumns: ReadonlySet<string>,
+    private readonly limits: RestoreLimits = {
+      lineBytes: MAX_LINE_BYTES,
+      outputBytes: MAX_OUTPUT_BYTES,
+    },
   ) {
     super();
   }
@@ -77,14 +144,20 @@ export class CopyDataExtractor extends Transform {
     try {
       let buf = Buffer.concat([this.rest, chunk]);
       this.bytes += chunk.length;
-      if (this.bytes > MAX_OUTPUT_BYTES)
-        throw new RestoreVetError('data output exceeds size limit');
+      if (this.bytes > this.limits.outputBytes)
+        throw sizeError(
+          'NVENTRA_RESTORE_MAX_OUTPUT_BYTES',
+          this.limits.outputBytes,
+        );
       const out: Buffer[] = [];
       let nl: number;
       while (this.state !== 'done' && (nl = buf.indexOf(LF)) !== -1) {
         const line = buf.subarray(0, nl);
-        if (line.length > MAX_LINE_BYTES)
-          throw new RestoreVetError('COPY line exceeds size limit');
+        if (line.length > this.limits.lineBytes)
+          throw sizeError(
+            'NVENTRA_RESTORE_MAX_LINE_BYTES',
+            this.limits.lineBytes,
+          );
         buf = buf.subarray(nl + 1);
         if (this.state === 'seek') {
           this.header(line.toString('latin1'));
@@ -95,8 +168,11 @@ export class CopyDataExtractor extends Transform {
         }
       }
       this.rest = this.state === 'done' ? Buffer.alloc(0) : buf;
-      if (this.rest.length > MAX_LINE_BYTES)
-        throw new RestoreVetError('COPY line exceeds size limit');
+      if (this.rest.length > this.limits.lineBytes)
+        throw sizeError(
+          'NVENTRA_RESTORE_MAX_LINE_BYTES',
+          this.limits.lineBytes,
+        );
       cb(null, out.length ? Buffer.concat(out) : undefined);
     } catch (err) {
       cb(err as Error);
@@ -157,6 +233,8 @@ export function buildLoadScript(i: LoadScriptInput): string {
     "SET app.sync_origin = '__skip';", // do not replay the restore to sync peers
     "SET client_encoding = 'UTF8';",
     'SET search_path = pg_catalog, public;',
+    "SET LOCAL lock_timeout = '10000ms';",
+    "SET LOCAL statement_timeout = '900000ms';",
     ...(i.wipe.length
       ? [
           `LOCK TABLE ${i.wipe.map(qualified).join(', ')} IN ACCESS EXCLUSIVE MODE;`,
@@ -204,7 +282,8 @@ async function extractTable(
   list: string,
   table: string,
   out: string,
-): Promise<string[]> {
+  limits: RestoreLimits,
+): Promise<{ columns: string[]; bytes: number }> {
   const env = { ...process.env, ...pgEnvFromUrl(o.url) };
   const child = spawn(
     'pg_restore',
@@ -232,7 +311,11 @@ async function extractTable(
   const exited = new Promise<number>((resolve) =>
     child.on('close', (c: number | null) => resolve(c ?? 1)),
   );
-  const extractor = new CopyDataExtractor(table, o.columnsByTable.get(table)!);
+  const extractor = new CopyDataExtractor(
+    table,
+    o.columnsByTable.get(table)!,
+    limits,
+  );
   try {
     await pipeline(child.stdout, extractor, createWriteStream(out));
   } catch (err) {
@@ -248,7 +331,7 @@ async function extractTable(
       ),
     );
   }
-  return extractor.columns;
+  return { columns: extractor.columns, bytes: extractor.outputBytes };
 }
 
 /**
@@ -258,6 +341,7 @@ async function extractTable(
  * the table rows. PostgreSQL sequence counters may retain forward gaps.
  */
 export async function loadVettedData(o: LoadOptions): Promise<void> {
+  const limits = restoreLimits((await fs.stat(o.file)).size);
   const loads: LoadScriptInput['loads'] = [];
   const setvals: Setval[] = [];
   let n = 0;
@@ -268,11 +352,12 @@ export async function loadVettedData(o: LoadOptions): Promise<void> {
     const list = await entryList(o.workDir, n, line);
     if (e.kind === 'TABLE DATA') {
       const dataFile = path.join(o.workDir, `data-${n}.copy`);
-      const columns = await extractTable(o, list, e.name, dataFile);
-      extractedBytes += (await fs.stat(dataFile)).size;
-      if (extractedBytes > MAX_OUTPUT_BYTES)
-        throw new RestoreVetError('data output exceeds size limit');
-      loads.push({ table: e.name, columns, file: dataFile });
+      const extracted = await extractTable(o, list, e.name, dataFile, {
+        ...limits,
+        outputBytes: limits.outputBytes - extractedBytes,
+      });
+      extractedBytes += extracted.bytes;
+      loads.push({ table: e.name, columns: extracted.columns, file: dataFile });
     } else {
       const out = await runPg(
         'pg_restore',
