@@ -5,6 +5,7 @@ import { ApiError, call, pagePath, useRequestScope, type Page } from './api';
 import { ticketPatch } from '@nventra/types/dist/control-ticket';
 import { TicketReply, type ReplyTarget } from './ticket-reply';
 import { TicketAssignment } from './ticket-routing';
+import { PortalReply, PortalTicketScope } from './portal-ticket';
 
 export const statuses = ticketPatch.shape.status.unwrap().options;
 const priorities = ticketPatch.shape.priority.unwrap().options;
@@ -21,7 +22,8 @@ const deliveryLabels = new Map([
   ['queued', 'Queued'], ['sending', 'Sending'], ['held', 'Held for review'], ['sent', 'Sent'], ['failed', 'Delivery failed'],
 ]);
 type Message = { id: string; direction: string; visibility: string; text: string; deliveryState?: string };
-type Detail = Ticket & { messages: Page<Message>; replyTarget?: ReplyTarget | null; needsBusinessLinkConfirmation?: boolean };
+type Detail = Ticket & { messages: Page<Message>; replyTarget?: ReplyTarget | null; needsBusinessLinkConfirmation?: boolean;
+  scopeLocked?: boolean; replyChannel?: 'portal' | 'email' | null };
 
 export function TicketDetails({ id, manage, directory, reply, report, clearError, onTriageChange }: {
   id: string; manage: boolean; directory: boolean; reply: boolean; report: (failure: unknown) => void; clearError: () => void;
@@ -138,6 +140,8 @@ export function TicketDetails({ id, manage, directory, reply, report, clearError
   return <section className="detail ticket-detail">
     <h2>{ticket.subject}</h2>
     <p>{label(ticket.status)} · {label(ticket.priority)} priority</p>
+    {ticket.scopeLocked && <><p className="portal-ticket-badge">Portal ticket</p>
+      <PortalTicketScope businessId={ticket.businessId} directory={directory} /></>}
     {manage && <form key={ticket.status + ticket.priority} onSubmit={saveTriage}>
       <fieldset className="ticket-status" disabled={busy}>
         <label>Status<select name="status" defaultValue={ticket.status}>
@@ -150,7 +154,7 @@ export function TicketDetails({ id, manage, directory, reply, report, clearError
       </fieldset>
     </form>}
     {manage && <TicketAssignment key={[ticket.businessId, ticket.outletId, ticket.ownerId].join(':')}
-      ticket={ticket} directory={directory} busy={busy} save={(patch) => savePatch(patch, 'Ticket assignment saved.')} />}
+      ticket={ticket} directory={directory && !ticket.scopeLocked} busy={busy} save={(patch) => savePatch(patch, 'Ticket assignment saved.')} />}
     <h3>Conversation</h3>
     <button type="button" disabled={busy} onClick={() => void change(refreshConversation)}>Refresh conversation</button>
     {!ticket.messages.items.length && <p>No messages yet.</p>}
@@ -173,7 +177,9 @@ export function TicketDetails({ id, manage, directory, reply, report, clearError
       <small>Visible only to staff.</small>
       <button className="primary" type="submit">Add internal note</button>
     </fieldset></form>}
-    {reply && (ticket.replyTarget ?
+    {reply && ticket.replyChannel === 'portal' && <PortalReply path={path} busy={busy} change={change}
+      refresh={refreshConversation} posted={() => setNotice('Portal reply posted.')} />}
+    {reply && ticket.replyChannel !== 'portal' && (ticket.replyTarget ?
       <TicketReply key={ticket.replyTarget.address + ':' + ticket.replyTarget.verified}
         path={path} target={ticket.replyTarget} busy={busy} change={change}
         refresh={refreshConversation} queued={() => setNotice('Reply queued.')} /> :

@@ -12,7 +12,7 @@ cleanup() {
     [ -z "$pid" ] || kill "$pid" 2>/dev/null || true
   done
   [ -z "$pg" ] || docker rm -f "$pg" >/dev/null 2>&1 || true
-  rm -f "$work/control-api.log" "$work/control-web.log"
+  rm -f "$work/control-api.log" "$work/control-web.log" "$work/OrderRestro.msix"
   rmdir "$work"
 }
 trap cleanup EXIT
@@ -63,6 +63,9 @@ docker exec -i "$pg" psql -U fixture -d fixture -v ON_ERROR_STOP=1 < apps/contro
 export CONTROL_PORTAL_DATABASE_URL="postgresql://cc_portal_browser_fixture:$portal_password@$binding/fixture"
 printf -v CONTROL_PORTAL_AUTH_KEY 'b6%.0s' {1..32}
 export CONTROL_PORTAL_AUTH_KEY
+printf '%s' 'synthetic installer' >"$work/OrderRestro.msix"
+CONTROL_PORTAL_DOWNLOAD_DIR="$(cd "$work" && (cygpath -aw . 2>/dev/null || pwd -P))"
+export CONTROL_PORTAL_DOWNLOAD_DIR
 docker exec -i "$pg" psql -U fixture -d fixture -v ON_ERROR_STOP=1 < apps/control-api/operator/mail-worker-grants.sql >/dev/null
 node e2e/control/seed.cjs "${binding#127.0.0.1:}"
 export CONTROL_DATABASE_URL="${CONTROL_DATABASE_URL}?options=-c%20role%3Dcontrol_runtime"
