@@ -36,7 +36,12 @@ async function seed() {
   const read = ['cc.business.read', 'cc.plan.read'];
   const encryptedSeed = sealSecret('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP', process.env.CONTROL_AUTH_KEY + readerId);
   const controlsId = randomUUID();
+  const teamAdminId = randomUUID();
+  const adminRole = await db.staffRole.findUniqueOrThrow({ where: { key: 'admin' } });
   await db.staff.createMany({ data: [
+    { id: teamAdminId, email: 'team-admin@example.test', passwordHash: controlsPasswordHash, name: 'Team owner',
+      roleId: adminRole.id, grants: adminRole.grants,
+      encryptedSeed: sealSecret(controlsTotpSeed, process.env.CONTROL_AUTH_KEY + teamAdminId) },
     { id: controlsId, email: 'client-controls@example.test', passwordHash: controlsPasswordHash,
       grants: ['cc.business.read', 'cc.hosted.read', 'cc.hosted.manage', 'cc.portal.read', 'cc.portal.create', 'cc.portal.manage', 'cc.ticket.read'],
       encryptedSeed: sealSecret(controlsTotpSeed, process.env.CONTROL_AUTH_KEY + controlsId) },

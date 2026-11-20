@@ -45,7 +45,7 @@ export async function staffInviteCases(t: TestContext, db: PrismaClient, root: s
     return { token, expiresAt: Date.parse(issued.expiresAt) };
   };
   const password = randomBytes(16).toString('hex');
-  const accept = (token: string, value = password) => post('users/invite/accept', { token, password: value });
+  const accept = (token: string, value = password) => post('users/invite/accept', { token, password: value, name: '  Morgan Lee  ' });
 
   await t.test('definer helpers revalidate live sessions and ceilings and reject a stored digest as bearer proof', async () => {
     const digest = (cookie: string) => createHmac('sha256', key).update('session\0' + cookie.split('=')[1]).digest('hex');
@@ -98,6 +98,10 @@ export async function staffInviteCases(t: TestContext, db: PrismaClient, root: s
     const accepted = redemption.find((answer) => answer.status === 200)!;
     assert.equal(accepted.headers.get('set-cookie'), null);
     const enrollment = await accepted.json() as { challenge: string; enrollmentSecret: string };
+    const [pendingProfile] = await db.$queryRaw<{ name: string | null; lastSignInAt: Date | null }[]>`
+      SELECT name, last_sign_in_at AS "lastSignInAt" FROM control.staff WHERE email = ${email}`;
+    assert.equal(pendingProfile.name, 'Morgan Lee');
+    assert.equal(pendingProfile.lastSignInAt, null);
     assert.equal((await post('session/challenge', { email, password })).status, 401);
     const proof = hotp(base32Decode(enrollment.enrollmentSecret), stepAt(Date.now()));
     assert.equal((await post('session/verify', { challenge: enrollment.challenge, code: proof })).status, 401);
@@ -105,6 +109,13 @@ export async function staffInviteCases(t: TestContext, db: PrismaClient, root: s
     assert.equal(enrolled.status, 200);
     const cookie = enrolled.headers.get('set-cookie')!.split(';', 1)[0];
     const staff = await db.staff.findUniqueOrThrow({ where: { email } });
+    const directory = await fetch(root + 'users?limit=50', { headers: { cookie: owner.cookie } });
+    const entry = (await directory.json() as { items: Record<string, unknown>[] }).items.find((s) => s.id === staff.id)!;
+    assert.equal(entry.name, 'Morgan Lee');
+    assert.equal(entry.twoFactorEnabled, true);
+    assert.ok(Date.parse(String(entry.lastSignInAt)) <= Date.now());
+    assert.equal(entry.roleId, support.id);
+    for (const key of ['passwordHash', 'encryptedSeed', 'pendingSeed', 'recoveryDigests', 'sessions']) assert.equal(key in entry, false);
     assert.equal(staff.roleId, support.id);
     assert.ok(staff.grants.includes('cc.portal.read') && !staff.grants.includes('cc.ticket.reply'));
     assert.equal((await current(cookie)).status, 200);

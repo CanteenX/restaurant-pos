@@ -46,7 +46,7 @@ export async function staffAccessCases(t: TestContext, db: PrismaClient, root: s
     assert.equal(res.status, 200);
     const page = await res.json() as { items: { id: string }[]; nextCursor: string };
     assert.equal(page.items.length, 1);
-    assert.deepEqual(Object.keys(page.items[0]).sort(), ['email', 'enabled', 'grants', 'id']);
+    assert.deepEqual(Object.keys(page.items[0]).sort(), ['email', 'enabled', 'grants', 'id', 'lastSignInAt', 'name', 'roleId', 'twoFactorEnabled']);
     assert.ok(page.nextCursor);
     const next = await request('users?limit=1&cursor=' + page.nextCursor, cookie);
     assert.notEqual((await next.json() as typeof page).items[0].id, page.items[0].id);

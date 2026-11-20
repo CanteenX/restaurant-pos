@@ -92,6 +92,7 @@ export async function staffAuthCases(t: TestContext, db: PrismaClient, datasourc
     assert.equal((await verify(first.challenge, '000000')).status, 401);
     const pending = await db.staff.findUniqueOrThrow({ where: { id } });
     assert.ok(pending.pendingSeed && !pending.pendingSeed.includes(first.enrollmentSecret));
+    assert.equal(pending.lastSignInAt, null);
     assert.notEqual(pending.challengeDigest, first.challenge);
     const seed = base32Decode(first.enrollmentSecret);
     const step = stepAt(Date.now());
@@ -101,6 +102,7 @@ export async function staffAuthCases(t: TestContext, db: PrismaClient, datasourc
     const { recoveryCodes } = await enrolled.json() as { recoveryCodes: string[] };
     assert.ok(recoveryCodes.length >= 4);
     const stored = await db.staff.findUniqueOrThrow({ where: { id } });
+    assert.ok(stored.lastSignInAt && stored.lastSignInAt.getTime() <= Date.now());
     assert.ok(stored.encryptedSeed && !stored.encryptedSeed.includes(first.enrollmentSecret));
     assert.equal(stored.pendingSeed, null);
     assert.equal(stored.challengeDigest, null);

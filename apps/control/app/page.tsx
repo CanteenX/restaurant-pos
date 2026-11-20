@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { controlPermissionSatisfied } from '@nventra/types/dist/permissions';
+import { visibleSections } from './team-permissions';
+import { Team } from './team';
 import { Dashboard } from './dashboard';
 import { AuditLog } from './audit-log';
 import { Helpdesk } from './helpdesk';
@@ -16,10 +17,8 @@ export default function ControlCenter() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [workspace, setWorkspace] = useState('Client operations');
-  const views = [
-    ['Client operations','cc.business.read'], ['Helpdesk','cc.ticket.read'], ['Audit log','cc.audit.read'],
-  ] as const;
-  const available = views.filter(([,grant]) => controlPermissionSatisfied(session?.grants, grant));
+  const [invitation, setInvitation] = useState<string>();
+  const available = visibleSections(session?.grants ?? []);
   const active = available.find(([name]) => name === workspace)?.[0] ?? available[0]?.[0];
 
   const billingAttempts = useRef(new Map<string, string>());
@@ -29,6 +28,12 @@ export default function ControlCenter() {
   }, []);
 
   useEffect(() => {
+    const fragment = window.location.hash;
+    if (fragment) {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      const token = new URLSearchParams(fragment.slice(1)).get('token');
+      if (token && /^[A-Za-z0-9_-]{43}$/.test(token)) queueMicrotask(() => setInvitation(token));
+    }
     const controller = new AbortController();
     void call<Session>('staff/session', undefined, controller.signal).then(setSession).catch((failure: unknown) => {
       if (controller.signal.aborted) return;
@@ -45,6 +50,12 @@ export default function ControlCenter() {
     setBusy(true);
     try {
       if (!challenge) {
+        if (invitation) {
+          setChallenge(await call<Challenge>('staff/users/invite/accept', { token: invitation,
+            password: values.get('password'), name: values.get('name') || undefined }));
+          setInvitation(undefined);
+          return;
+        }
         const proof = values.get('proof');
         setChallenge(await call<Challenge>('staff/session/challenge', {
           email: values.get('email'), password: values.get('password'), ...(proof ? { enrollmentProof: proof } : {}),
@@ -92,18 +103,20 @@ export default function ControlCenter() {
             onClick={() => setWorkspace(name)}>{name}</button>)}
         </nav>}
         {active === 'Audit log' ? <AuditLog onExpired={expire} /> : active === 'Helpdesk'
-          ? <Helpdesk session={session} onExpired={expire} /> : <Dashboard session={session} onExpired={expire} billingAttempts={billingAttempts} />}
+          ? <Helpdesk session={session} onExpired={expire} /> : active === 'Team' || active === 'Roles'
+            ? <Team key={active} session={session} rolesOnly={active === 'Roles'} onExpired={expire} /> : active === 'Client operations'
+              ? <Dashboard session={session} onExpired={expire} billingAttempts={billingAttempts} /> : <p>No sections are available for your current permissions.</p>}
       </> : session === null ?
-        <section className="signin"><h1>{challenge ? 'Two-factor verification' : 'Staff sign-in'}</h1>
+        <section className="signin"><h1>{challenge ? 'Two-factor verification' : invitation ? 'Accept invitation' : 'Staff sign-in'}</h1>
           <form method="post" key={challenge ? 'factor' : 'credentials'} onSubmit={signIn}>
             <fieldset disabled={busy}>
               {challenge ? <>
                 {challenge.enrollmentSecret && <p>Enter this key in your authenticator app. <code data-testid="authenticator-key">{challenge.enrollmentSecret}</code></p>}
                 <label>Verification code<input name="code" autoComplete="one-time-code" maxLength={14} required /></label>
               </> : <>
-                <label>Email<input name="email" type="email" autoComplete="username" required /></label>
-                <label>Password<input name="password" type="password" autoComplete="current-password" required /></label>
-                <label>Enrollment proof <small>for first-time setup</small><input name="proof" type="password" autoComplete="off" /></label>
+                {invitation ? <label>Your name<input name="name" maxLength={120} autoComplete="name" /></label> : <label>Email<input name="email" type="email" autoComplete="username" required /></label>}
+                <label>Password<input name="password" type="password" minLength={invitation ? 12 : undefined} autoComplete={invitation ? 'new-password' : 'current-password'} required /></label>
+                {!invitation && <label>Enrollment proof <small>for first-time setup</small><input name="proof" type="password" autoComplete="off" /></label>}
               </>}
               <div className="actions">
                 <button className="primary" type="submit">{challenge ? 'Verify' : 'Continue'}</button>

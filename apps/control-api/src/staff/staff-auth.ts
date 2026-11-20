@@ -83,7 +83,7 @@ export class StaffAuth {
     });
   }
 
-  async acceptInvite(proof: string, password: string, ip: string) {
+  async acceptInvite(proof: string, password: string, ip: string, name?: string) {
     await this.limitPeer('invite', ip);
     const verifier = await hash(password, 12);
     return this.db.$transaction(async (tx) => {
@@ -95,6 +95,7 @@ export class StaffAuth {
         role: { select: { grants: true } } } });
       const challenge = token(), enrollmentSecret = generateSecret();
       await tx.staff.update({ where: { id }, data: {
+        ...(name && { name }),
         grants: effectiveControlGrants(staff.role?.grants ?? [], staff.extraGrants, staff.removedGrants),
         challengeDigest: this.digest('challenge', challenge), challengeExpiresAt: minutes(5),
         pendingSeed: sealSecret(enrollmentSecret, this.key + id),
@@ -125,7 +126,7 @@ export class StaffAuth {
     await this.db.$transaction(async (tx) => {
       const used = await tx.staff.updateMany({
         where: { id: staff.id, enabled: true, challengeDigest, challengeExpiresAt: { gt: new Date() } },
-        data: { challengeDigest: null, challengeExpiresAt: null, pendingSeed: null, encryptedSeed: sealed,
+        data: { lastSignInAt: new Date(), challengeDigest: null, challengeExpiresAt: null, pendingSeed: null, encryptedSeed: sealed,
           lastStep: step ?? staff.lastStep, recoveryDigests: recoveryCodes
             ? recoveryCodes.map((c) => this.digest('recovery:' + staff.id, c))
             : staff.recoveryDigests.filter((c) => c !== recovery) },

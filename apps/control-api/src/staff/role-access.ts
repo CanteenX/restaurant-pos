@@ -34,7 +34,7 @@ export class RoleAccess {
         take: page.limit + 1, select: roleFields });
       const items = rows.slice(0, page.limit);
       return { items, nextCursor: rows.length > page.limit ? items[items.length - 1].id : null };
-    });
+    }, { alternative: 'cc.role.manage' });
   }
 
   create(cookie: string, dto: z.infer<typeof controlRoleCreate>) {
@@ -54,9 +54,17 @@ export class RoleAccess {
       if (!role) throw new NotFoundException();
       if (role.isSystem) throw new ForbiddenException();
       const members = await tx.staff.findMany({ where: { roleId: id }, select: memberFields });
+      const membersAllowed = members.every((member) => {
+        const desired = effectiveControlGrants(dto.grants ?? role.grants, member.extraGrants, member.removedGrants);
+        if (actor.id === member.id || !actor.grants.includes('cc.staff.manage')) return false;
+        if (actor.role?.isSystem) return holds(actor.grants, member.grants) && holds(actor.grants, desired);
+        return canManageControlStaff({ staffId: actor.id, grants: actor.grants }, { staffId: member.id, grants: member.grants }, desired);
+      });
       // An actor cannot edit a role holding permissions it lacks, add any it lacks, or reach members above it.
       if (!holds(actor.grants, role.grants) || !holds(actor.grants, dto.grants ?? role.grants) ||
-          !members.every((m) => holds(actor.grants, m.grants))) throw new ForbiddenException();
+          !membersAllowed) {
+        throw new ForbiddenException();
+      }
       const changed = (Object.keys(dto) as (keyof typeof dto)[]).filter((k) =>
         k === 'grants' ? !same(role.grants, dto.grants ?? []) : dto[k] !== role[k]);
       const updated = await tx.staffRole.update({ where: { id }, data: { ...dto, updatedAt: new Date(), updatedBy: actor.id },

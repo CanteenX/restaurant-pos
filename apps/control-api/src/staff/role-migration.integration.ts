@@ -89,4 +89,20 @@ export async function roleMigrationCases(t: TestContext, db: PrismaClient, fixtu
     sql(base + 'migration.sql');
     assert.ok(await exists());
   });
+  await t.test('profile migration preserves existing staff, starts unknown values null, and rolls back and reapplies', async () => {
+    const base = migrations + '20261120120000_control_staff_profile/';
+    const baseline = await snapshot();
+    sql(base + 'migration.sql');
+    const profiles = await scratch.$queryRaw<{ name: string | null; lastSignInAt: Date | null }[]>`
+      SELECT name, last_sign_in_at AS "lastSignInAt" FROM control.staff`;
+    assert.ok(profiles.length > 0 && profiles.every((p) => p.name === null && p.lastSignInAt === null));
+    await scratch.$transaction(async (tx) => {
+      await tx.$executeRaw`SET LOCAL ROLE control_runtime`;
+      await tx.$executeRaw`UPDATE control.staff SET name = 'Migration fixture', last_sign_in_at = now()`;
+    });
+    sql(base + 'down.sql');
+    assert.deepEqual(await snapshot(), baseline);
+    sql(base + 'migration.sql');
+    assert.deepEqual(await snapshot(), baseline);
+  });
 }

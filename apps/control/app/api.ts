@@ -1,13 +1,13 @@
 import { useLayoutEffect, useRef } from 'react';
 
-export type Session = { grants: string[]; verifiedAt: string };
+export type Session = { staffId: string; grants: string[]; verifiedAt: string };
 export type Page<T> = { items: T[]; nextCursor: string | number | null };
 
 export class ApiError extends Error {
   constructor(readonly status: number) { super('Control API request failed'); }
 }
 
-export async function call<T>(path: string, body?: object, signal?: AbortSignal, method: 'POST' | 'PATCH' = 'POST'): Promise<T> {
+export async function call<T>(path: string, body?: object, signal?: AbortSignal, method: 'POST' | 'PATCH' | 'PUT' | 'DELETE' = 'POST'): Promise<T> {
   const response = await fetch('/api/control/v1/' + path, {
     signal, cache: 'no-store', ...(body && {
       method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),

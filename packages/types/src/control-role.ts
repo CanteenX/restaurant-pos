@@ -27,6 +27,7 @@ export const controlStaffRoleAssignment = z.strictObject({
 
 export const controlStaffInvite = controlStaffRoleAssignment.extend({ email: controlChallengeSchema.shape.email });
 export const controlStaffInviteAcceptance = z.strictObject({
+  name: z.string().trim().min(1).max(120).optional(),
   token: controlChallengeSchema.shape.enrollmentProof.unwrap(),
   password: controlChallengeSchema.shape.password.refine((password) => [...password].length >= 12),
 });
