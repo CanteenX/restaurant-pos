@@ -3,7 +3,7 @@ import { ArgumentsHost, BadRequestException, Body, Catch, Controller, Delete, Ge
   HttpException, Inject, Param, Patch, Post, Put, Query, Req, Res, UnauthorizedException, UseFilters } from '@nestjs/common';
 import type { ExceptionFilter } from '@nestjs/common';
 import { controlChallengeSchema, controlFactorSchema, controlStaffPage, controlStaffGrants, controlStaffId, controlEmptyBody,
-  controlRoleCreate, controlRoleUpdate, controlStaffRoleAssignment } from '@nventra/types';
+  controlRoleCreate, controlRoleUpdate, controlStaffInvite, controlStaffInviteAcceptance, controlStaffRoleAssignment } from '@nventra/types';
 import { StaffAuth } from './staff-auth.js';
 
 const cookieName = '__Host-control_staff';
@@ -76,6 +76,36 @@ export class StaffController {
     const target = controlStaffId.safeParse(id), dto = controlStaffGrants.safeParse(body);
     if (!target.success || !dto.success) throw new BadRequestException();
     return this.auth.access.change(sessionCookie(req), target.data, { kind: 'grants', grants: dto.data.grants });
+  }
+
+  @Post('users/invite')
+  invite(@Req() req: IncomingMessage, @Body() body: unknown) {
+    const dto = controlStaffInvite.safeParse(body);
+    if (!dto.success) throw new BadRequestException();
+    return this.auth.lifecycle.invite(sessionCookie(req), dto.data);
+  }
+
+  @Post('users/invite/accept') @HttpCode(200)
+  acceptInvite(@Req() req: IncomingMessage, @Body() body: unknown) {
+    const dto = controlStaffInviteAcceptance.safeParse(body);
+    if (!dto.success) throw new BadRequestException();
+    return this.auth.acceptInvite(dto.data.token, dto.data.password, req.socket.remoteAddress ?? 'unknown');
+  }
+
+  private setEnabled(req: IncomingMessage, id: string, body: unknown, enabled: boolean) {
+    const target = controlStaffId.safeParse(id);
+    if (!target.success || !controlEmptyBody.safeParse(body === undefined ? {} : body).success) throw new BadRequestException();
+    return this.auth.lifecycle.setEnabled(sessionCookie(req), target.data, enabled);
+  }
+
+  @Post('users/:id/deactivate') @HttpCode(200)
+  deactivate(@Req() req: IncomingMessage, @Param('id') id: string, @Body() body: unknown) {
+    return this.setEnabled(req, id, body, false);
+  }
+
+  @Post('users/:id/reactivate') @HttpCode(200)
+  reactivate(@Req() req: IncomingMessage, @Param('id') id: string, @Body() body: unknown) {
+    return this.setEnabled(req, id, body, true);
   }
 
   @Get('roles')

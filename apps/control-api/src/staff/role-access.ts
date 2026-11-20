@@ -18,9 +18,9 @@ const audit = (tx: Tx, actorId: string, action: string, subjectType: string, sub
   appendAuditEvent(tx, { actorType: 'staff', actorId, action, subjectType, subjectId, requestId: randomUUID(),
     outcome: 'succeeded', changedFields });
 
-/** Refuses a change that would leave no enabled member in a locked system (Admin) role. */
+/** Refuses a change that would leave no enabled, enrolled member in the locked system role. */
 export async function ensureAnotherAdmin(tx: Tx, leaving: string) {
-  const others = await tx.staff.count({ where: { id: { not: leaving }, enabled: true, role: { isSystem: true } } });
+  const others = await tx.staff.count({ where: { id: { not: leaving }, enabled: true, encryptedSeed: { not: null }, role: { isSystem: true } } });
   if (others === 0) throw new ConflictException();
 }
 

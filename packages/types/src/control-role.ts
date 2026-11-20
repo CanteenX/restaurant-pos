@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { controlChallengeSchema } from './control-auth';
 import { CONTROL_PERMISSIONS, type ControlPermissionKey } from './permissions';
 
 const permission = z.enum(CONTROL_PERMISSIONS);
@@ -22,6 +23,12 @@ export const controlStaffRoleAssignment = z.strictObject({
   roleId: z.uuid().toLowerCase(),
   extraGrants: uniquePermissions.default([]),
   removedGrants: uniquePermissions.default([]),
+});
+
+export const controlStaffInvite = controlStaffRoleAssignment.extend({ email: controlChallengeSchema.shape.email });
+export const controlStaffInviteAcceptance = z.strictObject({
+  token: controlChallengeSchema.shape.enrollmentProof.unwrap(),
+  password: controlChallengeSchema.shape.password.refine((password) => [...password].length >= 12),
 });
 
 /** Effective grants are the role's grants plus the person's extras minus removals, in vocabulary order. */
