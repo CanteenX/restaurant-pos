@@ -1,12 +1,11 @@
 "use client";
 
-import { zodResolver } from "@hookform/resolvers/zod";
 import { loginSchema, type LoginDto } from "@nventra/types";
 import { motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, type FieldErrors, type Resolver } from "react-hook-form";
 import { AlertCircle } from "lucide-react";
 import { Logo } from "@/components/layout/logo";
 import { LanguageSwitcher } from "@/components/layout/language-switcher";
@@ -18,6 +17,20 @@ import { useLogin } from "@/hooks/use-auth";
 import { ApiError } from "@/lib/api";
 import { usePasswordResetEnabled } from "@/hooks/use-password-reset";
 import { useI18n, type TranslationKey } from "@/lib/i18n/context";
+
+const validateLogin: Resolver<LoginDto> = (input) => {
+  const parsed = loginSchema.safeParse(input);
+  if (parsed.success) return { values: parsed.data, errors: {} };
+
+  const errors: FieldErrors<LoginDto> = {};
+  for (const issue of parsed.error.issues) {
+    const field = issue.path[0];
+    if (field === "email" || field === "password" || field === "totp") {
+      errors[field] = { type: issue.code };
+    }
+  }
+  return { values: {}, errors };
+};
 
 function loginError(error: unknown): TranslationKey {
   if (!(error instanceof ApiError)) return "auth.login.connectionError";
@@ -45,7 +58,7 @@ export default function LoginPage() {
     register,
     handleSubmit,
     formState: { errors },
-  } = useForm<LoginDto>({ resolver: zodResolver(loginSchema) });
+  } = useForm<LoginDto>({ resolver: validateLogin });
 
   const onSubmit = (dto: LoginDto) => {
     setError(null);
