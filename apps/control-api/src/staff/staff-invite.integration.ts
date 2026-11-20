@@ -3,6 +3,7 @@ import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import type { TestContext } from 'node:test';
 import { base32Decode, hotp, stepAt } from '@nventra/types/dist/node/totp';
 import type { PrismaClient } from '../../node_modules/.prisma/control-client/index.js';
+import { ensureAnotherAdmin } from './role-access.js';
 
 export async function staffInviteCases(t: TestContext, db: PrismaClient, root: string, origin: string) {
   const admin = await db.staffRole.findUniqueOrThrow({ where: { key: 'admin' } });
@@ -51,12 +52,13 @@ export async function staffInviteCases(t: TestContext, db: PrismaClient, root: s
     const raw = randomBytes(32), id = randomUUID(), email = 'definer-defense@example.test';
     const runtime = <T>(run: (tx: import('../../node_modules/.prisma/control-client/index.js').Prisma.TransactionClient) => Promise<T>) =>
       db.$transaction(async (tx) => { await tx.$executeRaw`SET LOCAL ROLE control_runtime`; return run(tx); });
-    const issue = (session: string, roleId = support.id, grants = support.grants) => runtime((tx) => tx.$queryRaw<{ expires: Date | null }[]>`
-      SELECT control.issue_staff_invite(${id}::uuid, ${email}, ${roleId}::uuid, ${owner.id}::uuid,
+    const issue = (session: string, roleId = support.id, grants = support.grants, issuer = owner.id) => runtime((tx) => tx.$queryRaw<{ expires: Date | null }[]>`
+      SELECT control.issue_staff_invite(${id}::uuid, ${email}, ${roleId}::uuid, ${issuer}::uuid,
         ${createHash('sha256').update(raw).digest()}::bytea, ${grants}::text[], ARRAY[]::text[], ARRAY[]::text[], ${session}) AS expires`);
     assert.deepEqual(await issue('0'.repeat(64)), [{ expires: null }]);
     assert.deepEqual(await issue(digest(supportUser.cookie)), [{ expires: null }]);
-    assert.deepEqual(await issue(digest(lesser.cookie), admin.id, admin.grants), [{ expires: null }]);
+    assert.deepEqual(await issue(digest(supportUser.cookie), support.id, support.grants, supportUser.id), [{ expires: null }]);
+    assert.deepEqual(await issue(digest(lesser.cookie), admin.id, admin.grants, lesser.id), [{ expires: null }]);
     assert.deepEqual(await issue(digest(await makeSession(owner.id, 660_000))), [{ expires: null }]);
     assert.ok((await issue(digest(owner.cookie)))[0].expires);
     const verifier = '$2b$12$' + '.'.repeat(53);
@@ -142,11 +144,11 @@ export async function staffInviteCases(t: TestContext, db: PrismaClient, root: s
     assert.equal((await accept(pending.token)).status, 200);
     const stillPending = await db.staff.findUniqueOrThrow({ where: { email: 'pending-admin@example.test' } });
     assert.equal(stillPending.encryptedSeed, null);
-    const changed = await db.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL ROLE control_runtime`;
-      return tx.$queryRaw<{ changed: boolean }[]>`SELECT control.set_staff_enabled(${owner.id}::uuid, false) AS changed`;
-    });
-    assert.deepEqual(changed, [{ changed: false }]);
+    await assert.rejects(db.$transaction(async (tx) => {
+      await tx.staff.updateMany({ where: { roleId: admin.id, id: { notIn: [owner.id, stillPending.id] } }, data: { enabled: false } });
+      await assert.rejects(ensureAnotherAdmin(tx, owner.id), { status: 409 });
+      throw new Error('roll back fixture');
+    }), /roll back fixture/);
     assert.equal((await current(owner.cookie)).status, 200);
   });
 

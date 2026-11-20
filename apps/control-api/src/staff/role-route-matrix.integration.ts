@@ -116,8 +116,9 @@ export async function roleRouteMatrixCases(t: TestContext, db: PrismaClient, roo
     assert.equal((await call(admin.cookie, 'GET', 'staff/session')).status, 200);
     // Within the ceiling a Manager can still manage a lesser role.
     assert.equal((await patch(support.id, await roleGrants('marketing'))).status, 200);
-    // No route can disable a staff account, so deactivation is not reachable by any role.
-    assert.deepEqual(Object.keys(ROUTE_ACCESS).filter((r) => /deactivat|disable/i.test(r)), []);
+    assert.equal((await call(manager.cookie, 'POST', 'staff/users/' + admin.id + '/deactivate', {})).status, 403);
+    assert.equal((await call(manager.cookie, 'POST', 'staff/users/' + peer.id + '/deactivate', {})).status, 403);
+    assert.equal((await call(manager.cookie, 'POST', 'staff/users/' + support.id + '/deactivate', {})).status, 200);
   });
 
   await t.test('Marketing can create a business, an outlet and a portal login', async () => {

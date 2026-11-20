@@ -7,7 +7,7 @@ import { generateSecret, generateRecoveryCode, openSecret, sealSecret, verifyTot
 import { PrismaClient } from '../../node_modules/.prisma/control-client/index.js';
 import { RoleAccess } from './role-access.js';
 import { StaffAccess } from './staff-access.js';
-import { invitationDigest, StaffLifecycle, type readStaffInviteMail } from './staff-lifecycle.js';
+import { StaffLifecycle, type readStaffInviteMail } from './staff-lifecycle.js';
 import { appendAuditEvent } from '../audit/audit.js';
 
 const token = () => randomBytes(32).toString('base64url');
@@ -21,7 +21,7 @@ export class StaffAuth {
     readonly origin: string, private readonly dummyHash: string, mail: ReturnType<typeof readStaffInviteMail>) {
     this.access = new StaffAccess(db, (cookie) => this.digest('session', cookie));
     this.roles = new RoleAccess(this.access);
-    this.lifecycle = new StaffLifecycle(this.access, origin, mail);
+    this.lifecycle = new StaffLifecycle(this.access, origin, mail, (cookie) => this.digest('session', cookie));
   }
 
   static async create(url: string, key: string, origin: string, mail?: ReturnType<typeof readStaffInviteMail>) {
@@ -89,7 +89,7 @@ export class StaffAuth {
     return this.db.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('control.staff_roles'))`;
       const [{ id }] = await tx.$queryRaw<{ id: string | null }[]>`
-        SELECT control.redeem_staff_invite(${invitationDigest(proof)}::bytea, ${verifier}) AS id`;
+        SELECT control.redeem_staff_invite(${Buffer.from(proof, 'base64url')}::bytea, ${verifier}) AS id`;
       if (!id) throw new UnauthorizedException();
       const staff = await tx.staff.findUniqueOrThrow({ where: { id }, select: { extraGrants: true, removedGrants: true,
         role: { select: { grants: true } } } });

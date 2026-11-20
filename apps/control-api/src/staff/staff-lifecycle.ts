@@ -2,7 +2,6 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { canManageControlStaff, type controlStaffInvite } from '@nventra/types';
 import type { z } from 'zod';
-import { appendAuditEvent } from '../audit/audit.js';
 import { createGmailSmtp } from '../helpdesk/mail/gmail-smtp.js';
 import type { StaffAccess } from './staff-access.js';
 
@@ -21,7 +20,7 @@ const staffFields = { id: true, email: true, enabled: true, grants: true, roleId
 
 export class StaffLifecycle {
   constructor(private readonly access: StaffAccess, private readonly origin: string,
-    private readonly mail: ReturnType<typeof readStaffInviteMail>) {}
+    private readonly mail: ReturnType<typeof readStaffInviteMail>, private readonly sessionDigest: (cookie: string) => string) {}
 
   async invite(cookie: string, dto: z.infer<typeof controlStaffInvite>) {
     const id = randomUUID();
@@ -36,10 +35,8 @@ export class StaffLifecycle {
       if (role.isSystem && (extraGrants.length || removedGrants.length)) throw new BadRequestException();
       const [{ expiresAt }] = await tx.$queryRaw<{ expiresAt: Date | null }[]>`
         SELECT control.issue_staff_invite(${id}::uuid, ${dto.email}, ${role.id}::uuid, ${actor.id}::uuid,
-          ${invitationDigest(token)}::bytea, ${role.grants}::text[], ${extraGrants}::text[], ${removedGrants}::text[]) AS "expiresAt"`;
+          ${invitationDigest(token)}::bytea, ${role.grants}::text[], ${extraGrants}::text[], ${removedGrants}::text[], ${this.sessionDigest(cookie)}) AS "expiresAt"`;
       if (!expiresAt) throw new ConflictException();
-      await appendAuditEvent(tx, { actorType: 'staff', actorId: actor.id, action: 'staff.invite.issue', subjectType: 'staff',
-        subjectId: id, requestId: randomUUID(), outcome: 'succeeded', changedFields: ['roleId'] });
       return expiresAt;
     }, { recent: true, serialize: true });
 
@@ -61,11 +58,8 @@ export class StaffLifecycle {
         { staffId: id, grants: subject.grants }, subject.grants)) throw new ForbiddenException();
       if (subject.enabled === enabled) return subject;
       const [{ changed }] = await tx.$queryRaw<{ changed: boolean }[]>`
-        SELECT control.set_staff_enabled(${id}::uuid, ${enabled}) AS changed`;
+        SELECT control.set_staff_enabled(${id}::uuid, ${enabled}, ${this.sessionDigest(cookie)}) AS changed`;
       if (!changed) throw new ConflictException();
-      await appendAuditEvent(tx, { actorType: 'staff', actorId: actor.id,
-        action: enabled ? 'staff.reactivate' : 'staff.deactivate', subjectType: 'staff',
-        subjectId: id, requestId: randomUUID(), outcome: 'succeeded', changedFields: ['enabled'] });
       return { ...subject, enabled };
     }, { recent: true, staffTarget: id, serialize: true });
   }

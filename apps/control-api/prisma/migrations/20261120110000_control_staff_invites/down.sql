@@ -5,8 +5,8 @@ DO $$ BEGIN
     RAISE EXCEPTION 'Outstanding staff invitations prevent rollback';
   END IF;
 END $$;
-DROP FUNCTION control.set_staff_enabled(uuid,boolean);
+DROP FUNCTION control.set_staff_enabled(uuid,boolean,text);
 DROP FUNCTION control.redeem_staff_invite(bytea,text);
-DROP FUNCTION control.issue_staff_invite(uuid,text,uuid,uuid,bytea,text[],text[],text[]);
+DROP FUNCTION control.issue_staff_invite(uuid,text,uuid,uuid,bytea,text[],text[],text[],text);
 DROP TABLE control.staff_invite;
 COMMIT;
