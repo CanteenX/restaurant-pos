@@ -46,6 +46,29 @@ export async function staffInviteCases(t: TestContext, db: PrismaClient, root: s
   const password = randomBytes(16).toString('hex');
   const accept = (token: string, value = password) => post('users/invite/accept', { token, password: value });
 
+  await t.test('definer helpers revalidate live sessions and ceilings and reject a stored digest as bearer proof', async () => {
+    const digest = (cookie: string) => createHmac('sha256', key).update('session\0' + cookie.split('=')[1]).digest('hex');
+    const raw = randomBytes(32), id = randomUUID(), email = 'definer-defense@example.test';
+    const runtime = <T>(run: (tx: import('../../node_modules/.prisma/control-client/index.js').Prisma.TransactionClient) => Promise<T>) =>
+      db.$transaction(async (tx) => { await tx.$executeRaw`SET LOCAL ROLE control_runtime`; return run(tx); });
+    const issue = (session: string, roleId = support.id, grants = support.grants) => runtime((tx) => tx.$queryRaw<{ expires: Date | null }[]>`
+      SELECT control.issue_staff_invite(${id}::uuid, ${email}, ${roleId}::uuid, ${owner.id}::uuid,
+        ${createHash('sha256').update(raw).digest()}::bytea, ${grants}::text[], ARRAY[]::text[], ARRAY[]::text[], ${session}) AS expires`);
+    assert.deepEqual(await issue('0'.repeat(64)), [{ expires: null }]);
+    assert.deepEqual(await issue(digest(supportUser.cookie)), [{ expires: null }]);
+    assert.deepEqual(await issue(digest(lesser.cookie), admin.id, admin.grants), [{ expires: null }]);
+    assert.deepEqual(await issue(digest(await makeSession(owner.id, 660_000))), [{ expires: null }]);
+    assert.ok((await issue(digest(owner.cookie)))[0].expires);
+    const verifier = '$2b$12$' + '.'.repeat(53);
+    assert.deepEqual(await runtime((tx) => tx.$queryRaw<{ id: string | null }[]>`
+      SELECT control.redeem_staff_invite(${createHash('sha256').update(raw).digest()}::bytea, ${verifier}) AS id`), [{ id: null }]);
+    assert.equal(await db.staff.count({ where: { email } }), 0);
+    assert.deepEqual(await runtime((tx) => tx.$queryRaw<{ changed: boolean }[]>`
+      SELECT control.set_staff_enabled(${supportUser.id}::uuid, false, ${digest(supportUser.cookie)}) AS changed`), [{ changed: false }]);
+    assert.deepEqual(await runtime((tx) => tx.$queryRaw<{ changed: boolean }[]>`
+      SELECT control.set_staff_enabled(${owner.id}::uuid, false, ${digest(lesser.cookie)}) AS changed`), [{ changed: false }]);
+  });
+
   await t.test('staff invitations require permission, recent factor and a bounded database role', async () => {
     const email = 'staff-invite-ceiling@example.test';
     for (const [cookie, status] of [[supportUser.cookie, 403], ['', 401]] as const) {
