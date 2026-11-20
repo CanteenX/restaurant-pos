@@ -10,7 +10,7 @@ Use the operator command to invite the first owner and subsequent staff. Build i
 | --- | --- | --- |
 | `operation` | `create` | `rotate` |
 | `email` | Staff email, normalized on input | Existing staff email |
-| `preset` | `OWNER`, `SUPPORT` or `SALES` | Omit |
+| `preset` | `OWNER`, `MANAGER`, `SUPPORT` or `MARKETING` | Omit |
 | `password` | Owner-supplied passphrase of at least 12 characters and at most 72 UTF-8 bytes | Omit |
 | `proof` | Independently supplied 32 random bytes encoded as unpadded base64url | A fresh proof in the same format |
 

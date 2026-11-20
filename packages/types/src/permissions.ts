@@ -137,9 +137,28 @@ export const CONTROL_PERMISSIONS = Object.freeze([
 
 export type ControlPermissionKey = (typeof CONTROL_PERMISSIONS)[number];
 
-/** Initial grant choices for staff setup. Authorization uses stored grants. */
+/**
+ * Initial grant choices for staff setup. Authorization uses stored grants, never these names.
+ * OWNER is shown as "Admin" in the UI. MANAGER holds everything except billing.
+ */
 export const CONTROL_ROLE_PRESETS = Object.freeze({
   OWNER: CONTROL_PERMISSIONS,
+  MANAGER: Object.freeze([
+    "cc.staff.read",
+    "cc.staff.manage",
+    "cc.business.read",
+    "cc.business.manage",
+    "cc.plan.read",
+    "cc.plan.manage",
+    "cc.audit.read",
+    "cc.hosted.read",
+    "cc.hosted.manage",
+    "cc.portal.read",
+    "cc.portal.manage",
+    "cc.ticket.read",
+    "cc.ticket.manage",
+    "cc.ticket.reply",
+  ] as const),
   SUPPORT: Object.freeze([
     "cc.business.read",
     "cc.plan.read",
@@ -147,10 +166,12 @@ export const CONTROL_ROLE_PRESETS = Object.freeze({
     "cc.ticket.manage",
     "cc.ticket.reply",
   ] as const),
-  SALES: Object.freeze([
+  MARKETING: Object.freeze([
     "cc.business.read",
     "cc.business.manage",
     "cc.plan.read",
+    "cc.portal.read",
+    "cc.portal.manage",
   ] as const),
 } satisfies Record<string, readonly ControlPermissionKey[]>);
 

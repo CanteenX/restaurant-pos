@@ -4,7 +4,7 @@ const { sealSecret } = require('../../packages/types/dist/node/totp');
 const { appendAuditEvent } = require('../../apps/control-api/dist/audit/audit');
 
 module.exports = async function seedAudit(db, passwordHash) {
-  for (const [name,grants] of [['audit-owner',CONTROL_ROLE_PRESETS.OWNER],['audit-sales',CONTROL_ROLE_PRESETS.SALES],['audit-reader',['cc.audit.read']]]) {
+  for (const [name,grants] of [['audit-owner',CONTROL_ROLE_PRESETS.OWNER],['audit-marketing',CONTROL_ROLE_PRESETS.MARKETING],['audit-reader',['cc.audit.read']]]) {
     const id = randomUUID();
     await db.staff.create({ data: { id, email: name + '@example.test', passwordHash, grants: [...grants],
       encryptedSeed: sealSecret('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP', process.env.CONTROL_AUTH_KEY + id) } });

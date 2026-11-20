@@ -50,7 +50,7 @@ describe('Control permission registry', () => {
     expect(permissionSatisfied(['menu.manage'], 'menu.view')).toBe(true);
   });
 
-  it('provides explicit owner, support and sales presets for initial grants', () => {
+  it('provides explicit owner, manager, support and marketing presets for initial grants', () => {
     expect(CONTROL_ROLE_PRESETS.OWNER).toEqual(CONTROL_PERMISSIONS);
     expect(CONTROL_ROLE_PRESETS.SUPPORT).toEqual([
       'cc.business.read',
@@ -59,10 +59,23 @@ describe('Control permission registry', () => {
       'cc.ticket.manage',
       'cc.ticket.reply',
     ]);
-    expect(CONTROL_ROLE_PRESETS.SALES).toEqual([
+    expect(CONTROL_ROLE_PRESETS.MARKETING).toEqual([
       'cc.business.read',
       'cc.business.manage',
       'cc.plan.read',
+      'cc.portal.read',
+      'cc.portal.manage',
+    ]);
+    expect(CONTROL_ROLE_PRESETS.MANAGER).toEqual(
+      CONTROL_PERMISSIONS.filter(
+        (key) => key !== 'cc.billing.read' && key !== 'cc.billing.manage',
+      ),
+    );
+    expect(Object.keys(CONTROL_ROLE_PRESETS).sort()).toEqual([
+      'MANAGER',
+      'MARKETING',
+      'OWNER',
+      'SUPPORT',
     ]);
     expect(Object.isFrozen(CONTROL_ROLE_PRESETS)).toBe(true);
     expect(Object.values(CONTROL_ROLE_PRESETS).every(Object.isFrozen)).toBe(

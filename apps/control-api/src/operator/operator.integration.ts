@@ -72,8 +72,8 @@ export async function operatorCases(t: TestContext, db: PrismaClient, fixtureUrl
     assert.equal(res.stdout + res.stderr, '');
   };
   const rotate = { operation: 'rotate', email, proof: fresh };
-  await t.test('uses the catalog grants for invited Support and Sales accounts and rejects unknown targets', async () => {
-    for (const preset of ['SUPPORT', 'SALES'] as const) {
+  await t.test('uses the catalog grants for invited Support, Manager and Marketing accounts and rejects unknown targets', async () => {
+    for (const preset of ['SUPPORT', 'MANAGER', 'MARKETING'] as const) {
       const invited = preset.toLowerCase() + '-operator@example.test';
       ok({ ...create, email: invited, preset });
       const staff = await db.staff.findUniqueOrThrow({ where: { email: invited } });

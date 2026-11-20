@@ -7,7 +7,7 @@ const { email, enrollmentProof, password } = controlChallengeSchema.shape;
 const proof = enrollmentProof.unwrap();
 const request = z.discriminatedUnion('operation', [
   z.strictObject({ operation: z.literal('create'), email, password: password.refine((s) => s.length >= 12),
-    preset: z.enum(['OWNER', 'SUPPORT', 'SALES']), proof }),
+    preset: z.enum(['OWNER', 'MANAGER', 'SUPPORT', 'MARKETING']), proof }),
   z.strictObject({ operation: z.literal('rotate'), email, proof }),
 ]);
 
