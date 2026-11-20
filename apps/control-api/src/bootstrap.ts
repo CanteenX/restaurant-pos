@@ -14,6 +14,8 @@ import { PlansController } from './plans/plans.controller.js';
 import { PortalAccountsController } from './portal/portal-accounts.controller.js';
 import { PortalAuthController } from './portal/portal-auth.controller.js';
 import { PortalAuth } from './portal/portal-auth.js';
+import { readPortalResources } from './portal/portal-downloads.js';
+import { PortalReadController, portalResourceConfig } from './portal/portal-read.controller.js';
 import { readPortalConfig } from './portal/portal-identity-policy.js';
 import { TicketsController } from './helpdesk/tickets/tickets.controller.js';
 import { StaffController } from './staff/staff.controller.js';
@@ -31,15 +33,17 @@ export async function createControlApi(env: NodeJS.ProcessEnv) {
   const port = readControlPort(env);
   const config = readStaffConfig(env);
   const portalConfig = readPortalConfig(env);
+  const resources = portalConfig && readPortalResources(env);
   const portal = portalConfig && await PortalAuth.create(portalConfig);
   const auth = config && await StaffAuth.create(config.url, config.key, config.origin);
   const app = await NestFactory.create<NestExpressApplication>({
     module: ControlApiModule,
     controllers: auth ? [StaffController, BusinessController, PlansController, TicketsController,
       AuditReadController, BillingController, HostedAccessController,
-      ...(portal ? [PortalAccountsController, PortalAuthController] : [])] : [],
+      ...(portal ? [PortalAccountsController, PortalAuthController, PortalReadController] : [])] : [],
     providers: [
       ...(auth ? [{ provide: StaffAuth, useValue: auth }] : []),
+      ...(resources ? [{ provide: portalResourceConfig, useValue: resources }] : []),
       ...(portal ? [{ provide: PortalAuth, useValue: portal }] : []),
     ],
   }, { abortOnError: false, bodyParser: false });

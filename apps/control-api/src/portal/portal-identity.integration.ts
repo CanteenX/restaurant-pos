@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { portalReadCases } from './portal-read.integration.js';
 import { execFileSync } from 'node:child_process';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import type { TestContext } from 'node:test';
@@ -23,6 +27,12 @@ export async function portalIdentityCases(t: TestContext, db: PrismaClient, fixt
   await t.test('requires the actual dedicated portal login and keeps auth storage isolated', async () => {
     await assert.rejects(openPortalDatabase(fixtureUrl), /^Error: Invalid Control portal database identity$/);
     await assert.rejects(openPortalDatabase(staffUrl.toString()), /^Error: Invalid Control portal database identity$/);
+    await db.$executeRaw`GRANT SELECT (description) ON control.billing_invoice TO cc325_portal_fixture`;
+    try {
+      await assert.rejects(openPortalDatabase(portalUrl.toString()), /^Error: Invalid Control portal database identity$/);
+    } finally {
+      await db.$executeRaw`REVOKE SELECT (description) ON control.billing_invoice FROM cc325_portal_fixture`;
+    }
     const [grants] = await db.$queryRaw<{ portalBusiness: boolean; portalStaff: boolean; staffVerifier: boolean }[]>`
       SELECT has_any_column_privilege('cc325_portal_fixture','control.business','SELECT,UPDATE') AS "portalBusiness",
         has_any_column_privilege('cc325_portal_fixture','control.staff','SELECT,UPDATE') AS "portalStaff",
@@ -68,9 +78,12 @@ export async function portalIdentityCases(t: TestContext, db: PrismaClient, fixt
     assert.deepEqual(functions, { count: 5, secured: true });
   });
 
+  const releaseDirectory = await mkdtemp(path.join(await realpath(tmpdir()), 'control-portal-fixture-'));
+  t.after(() => rm(releaseDirectory, { recursive: true, force: true }));
+  await writeFile(path.join(releaseDirectory, 'OrderRestro.msix'), 'fixture installer');
   const { app } = await createControlApi({ CONTROL_API_PORT: '4002', CONTROL_DATABASE_URL: staffUrl.toString(),
     CONTROL_AUTH_KEY: 'a5'.repeat(32), CONTROL_ORIGIN: origin,
-    CONTROL_PORTAL_DATABASE_URL: portalUrl.toString(), CONTROL_PORTAL_AUTH_KEY: 'a6'.repeat(32) });
+    CONTROL_PORTAL_DOWNLOAD_DIR: releaseDirectory, CONTROL_PORTAL_DATABASE_URL: portalUrl.toString(), CONTROL_PORTAL_AUTH_KEY: 'a6'.repeat(32) });
   t.after(() => app.close());
   await app.listen(0, '127.0.0.1');
   const root = (await app.getUrl()) + '/api/control/v1/';
@@ -180,4 +193,5 @@ export async function portalIdentityCases(t: TestContext, db: PrismaClient, fixt
     assert.equal(limited.status, 429);
     assert.equal(await limited.text(), '');
   });
+  await portalReadCases(t, db, root, 'a6'.repeat(32));
 }
