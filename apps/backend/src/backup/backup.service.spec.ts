@@ -12,6 +12,7 @@ import {
 } from './backup-integrity';
 
 jest.mock('./restore-load', () => ({
+  ...jest.requireActual<object>('./restore-load'),
   loadVettedData: jest.fn().mockResolvedValue(undefined),
 }));
 const execCalls: string[][] = [];
