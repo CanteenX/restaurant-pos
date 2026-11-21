@@ -105,4 +105,18 @@ export async function roleMigrationCases(t: TestContext, db: PrismaClient, fixtu
     sql(base + 'migration.sql');
     assert.deepEqual(await snapshot(), baseline);
   });
+  await t.test('system identity boundary migration revokes private implementations and rolls back and reapplies', async () => {
+    const base = migrations + '20261120130000_control_system_identity/';
+    const check = async () => {
+      const [result] = await scratch.$queryRaw<{ issue: boolean; redeem: boolean; wrapper: boolean }[]>`
+        SELECT has_function_privilege('control_runtime', 'control.issue_staff_invite_internal_v1(uuid,text,uuid,uuid,bytea,text[],text[],text[],text)', 'EXECUTE') AS issue,
+        has_function_privilege('control_runtime', 'control.redeem_staff_invite_internal_v1(bytea,text)', 'EXECUTE') AS redeem,
+        has_function_privilege('control_runtime', 'control.redeem_staff_invite(bytea,text)', 'EXECUTE') AS wrapper`;
+      assert.deepEqual(result, { issue: false, redeem: false, wrapper: true });
+    };
+    const baseline = await snapshot();
+    sql(base + 'migration.sql'); await check();
+    sql(base + 'down.sql'); assert.deepEqual(await snapshot(), baseline);
+    sql(base + 'migration.sql'); await check();
+  });
 }

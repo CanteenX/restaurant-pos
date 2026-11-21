@@ -24,6 +24,7 @@ test('Admin creates a role, invites and enrolls a member, then edits their live 
   await page.getByLabel('Email', { exact: true }).fill('team-admin@example.test');
   await page.getByLabel('Password', { exact: true }).fill(process.env.CONTROL_FIXTURE_PASSPHRASE!);
   await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
   await page.getByLabel('Verification code').fill(hotp(base32Decode(process.env.CONTROL_FIXTURE_TOTP_SEED!), stepAt(Date.now())));
   await page.getByRole('button', { name: 'Verify', exact: true }).click();
   await page.getByRole('button', { name: 'Roles', exact: true }).click();
@@ -54,6 +55,8 @@ test('Admin creates a role, invites and enrolls a member, then edits their live 
     await colleague.getByLabel('Your name').fill('Morgan Lee');
     await colleague.getByLabel('Password', { exact: true }).fill('Synthetic browser acceptance passphrase');
     await colleague.getByRole('button', { name: 'Continue' }).click();
+    await expect(colleague.getByRole('heading', { name: 'Two-factor verification' })).toBeVisible();
+    await expect(colleague.getByRole('button', { name: 'Back', exact: true })).toHaveCount(0);
     await enroll(colleague);
     await expect(colleague.getByRole('heading', { name: 'Helpdesk', exact: true })).toBeVisible();
     await expect(colleague.getByRole('button', { name: 'Team', exact: true })).toHaveCount(0);

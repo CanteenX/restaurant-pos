@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { canManageControlStaff } from '@nventra/types/dist/permissions';
 import { call, ApiError, pagePath, useRequestScope, type Page, type Session } from './api';
-import { PermissionEditor, SectionPreview } from './team-permissions';
+import { canSelectRole, PermissionEditor, SectionPreview } from './team-permissions';
 
 type Role = { id: string; key: string; name: string; description: string; grants: string[]; isSystem: boolean; _count: { members: number } };
 type Staff = { id: string; name: string | null; email: string; enabled: boolean; twoFactorEnabled: boolean;
@@ -46,7 +46,7 @@ export function Team({ session, rolesOnly = false, onExpired }: { session: Sessi
     // The parent remounts this view when its session or workspace changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const roleAllowed = (role: Role) => role.grants.every((g) => session.grants.includes(g));
+  const roleAllowed = (role: Role) => canSelectRole(role, session.grants, session.isSystemAdmin === true);
   const personAllowed = (person: Staff) => canManageControlStaff({ staffId: session.staffId, grants: session.grants },
     { staffId: person.id, grants: person.grants }, person.grants);
   async function write(path: string, body: object, method: 'POST' | 'PATCH' | 'PUT' | 'DELETE' = 'POST') {

@@ -3,6 +3,8 @@ import { controlPermissionSatisfied, type ControlPermissionKey } from '@nventra/
 export const sections = [['Client operations', 'cc.business.read'], ['Helpdesk', 'cc.ticket.read'],
   ['Audit log', 'cc.audit.read'], ['Team', 'cc.staff.read'], ['Roles', 'cc.role.manage']] as const;
 export const visibleSections = (grants: readonly string[]) => sections.filter(([, key]) => controlPermissionSatisfied(grants, key));
+export const canSelectRole = (role: { isSystem: boolean; grants: string[] }, grants: string[], isSystemAdmin = false) =>
+  (!role.isSystem || isSystemAdmin) && role.grants.every((key) => grants.includes(key));
 const groups: [string, [ControlPermissionKey, string][]][] = [
   ['Team', [['cc.staff.read', 'View staff'], ['cc.staff.manage', 'Manage staff'], ['cc.role.manage', 'Manage roles']]],
   ['Businesses', [['cc.business.read', 'View businesses'], ['cc.business.manage', 'Manage businesses']]],

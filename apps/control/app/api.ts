@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef } from 'react';
 
-export type Session = { staffId: string; grants: string[]; verifiedAt: string };
+export type Session = { staffId: string; grants: string[]; verifiedAt: string; isSystemAdmin?: boolean };
 export type Page<T> = { items: T[]; nextCursor: string | number | null };
 
 export class ApiError extends Error {

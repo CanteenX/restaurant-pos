@@ -99,6 +99,7 @@ export class RoleAccess {
         select: { id: true, grants: true, roleId: true, role: { select: { isSystem: true } } } });
       const role = await tx.staffRole.findUnique({ where: { id: dto.roleId } });
       if (!subject || !role) throw new NotFoundException();
+      if (role.isSystem && !actor.role?.isSystem) throw new ForbiddenException();
       if (role.isSystem && (dto.extraGrants.length > 0 || dto.removedGrants.length > 0)) throw new BadRequestException();
       const next = effectiveControlGrants(role.grants, dto.extraGrants, dto.removedGrants);
       if (!canManageControlStaff({ staffId: actor.id, grants: actor.grants }, { staffId: subject.id, grants: subject.grants }, next) ||

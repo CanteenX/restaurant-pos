@@ -8,6 +8,15 @@ require.extensions['.tsx'] = (module, path) => module._compile(ts.transpileModul
 const React = require('../apps/control/node_modules/react');
 const { renderToStaticMarkup } = require('../apps/control/node_modules/react-dom/server');
 
+test('the role picker requires system identity as well as held grants for the system role', () => {
+  const { canSelectRole } = require('../apps/control/app/team-permissions.tsx');
+  const system = { name: 'Anything', isSystem: true, grants: ['cc.staff.manage'] };
+  assert.equal(canSelectRole(system, system.grants, false), false);
+  assert.equal(canSelectRole(system, system.grants, true), true);
+  assert.equal(canSelectRole(system, [], true), false);
+  assert.equal(canSelectRole({ ...system, name: 'Admin', isSystem: false }, system.grants, false), true);
+});
+
 test('role preview uses the same permission mapping as navigation, without role names', () => {
   const { visibleSections } = require('../apps/control/app/team-permissions.tsx');
   assert.deepEqual(visibleSections(['cc.ticket.read']).map(([name]) => name), ['Helpdesk']);

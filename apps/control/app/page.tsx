@@ -8,7 +8,7 @@ import { AuditLog } from './audit-log';
 import { Helpdesk } from './helpdesk';
 import { call, ApiError, type Session } from './api';
 
-type Challenge = { challenge: string; enrollmentSecret?: string };
+type Challenge = { challenge: string; enrollmentSecret?: string; invited?: boolean };
 
 export default function ControlCenter() {
   const [session, setSession] = useState<Session | null>();
@@ -51,8 +51,9 @@ export default function ControlCenter() {
     try {
       if (!challenge) {
         if (invitation) {
-          setChallenge(await call<Challenge>('staff/users/invite/accept', { token: invitation,
-            password: values.get('password'), name: values.get('name') || undefined }));
+          const accepted = await call<Challenge>('staff/users/invite/accept', { token: invitation,
+            password: values.get('password'), name: values.get('name') || undefined });
+          setChallenge({ ...accepted, invited: true });
           setInvitation(undefined);
           return;
         }
@@ -120,7 +121,7 @@ export default function ControlCenter() {
               </>}
               <div className="actions">
                 <button className="primary" type="submit">{challenge ? 'Verify' : 'Continue'}</button>
-                {challenge && <button type="button" onClick={() => { setChallenge(undefined); setError(''); }}>Back</button>}
+                {challenge && !challenge.invited && <button type="button" onClick={() => { setChallenge(undefined); setError(''); }}>Back</button>}
               </div>
             </fieldset>
           </form>
