@@ -23,6 +23,47 @@ export async function roleAccessCases(t: TestContext, db: PrismaClient, root: st
   const member = async (label: string, roleKey: string) => (await actor(label, roleKey)).id;
   const staffRow = (id: string) => db.staff.findUniqueOrThrow({ where: { id } });
   const actions = async (actorId: string) => (await db.auditEvent.findMany({ where: { actorId }, orderBy: { sequence: 'asc' } })).map((e) => e.action);
+  await t.test('locked system Admin can edit equal-effective members of a custom role', async () => {
+    const role = await db.staffRole.create({ data: { key: 'admin-exception', name: 'Admin exception', grants: [...CONTROL_PERMISSIONS] } });
+    const subject = await actor('rl-full-member', 'admin');
+    await db.staff.update({ where: { id: subject.id }, data: { roleId: role.id } });
+    assert.equal((await call(admin.cookie, 'PATCH', 'staff/roles/' + role.id, { grants: ['cc.ticket.read'] })).status, 200);
+    assert.deepEqual((await staffRow(subject.id)).grants, ['cc.ticket.read']);
+  });
+  await t.test('a full-grants custom actor gets no system Admin exception', async () => {
+    const role = await db.staffRole.create({ data: { key: 'full-custom', name: 'Admin', grants: [...CONTROL_PERMISSIONS] } });
+    const editor = await actor('rl-custom-editor', 'admin');
+    await db.staff.update({ where: { id: editor.id }, data: { roleId: role.id } });
+    const target = await db.staffRole.create({ data: { key: 'equal-custom', name: 'Equal', grants: [...CONTROL_PERMISSIONS] } });
+    const subject = await actor('rl-custom-peer', 'admin');
+    await db.staff.update({ where: { id: subject.id }, data: { roleId: target.id } });
+    assert.equal((await call(editor.cookie, 'PATCH', 'staff/roles/' + target.id, { grants: ['cc.ticket.read'] })).status, 403);
+    assert.equal((await call(editor.cookie, 'PATCH', 'staff/roles/' + role.id, { grants: [] })).status, 403);
+  });
+  await t.test('role edits cannot demote peers or their editor', async () => {
+    const role = await db.staffRole.create({ data: { key: 'peer-fixture', name: 'Peer fixture', grants: (await roleRow('manager')).grants } });
+    const peer = await actor('rl-peer', 'manager');
+    await db.staff.update({ where: { id: peer.id }, data: { roleId: role.id } });
+    const before = await actions(manager.id);
+    assert.equal((await call(manager.cookie, 'PATCH', 'staff/roles/' + role.id, { grants: ['cc.ticket.read'] })).status, 403);
+    assert.deepEqual((await staffRow(peer.id)).grants, role.grants);
+    assert.deepEqual(await actions(manager.id), before);
+    await db.staff.update({ where: { id: manager.id }, data: { roleId: role.id } });
+    assert.equal((await call(manager.cookie, 'PATCH', 'staff/roles/' + role.id, { grants: [] })).status, 403);
+  });
+  await t.test('populated role edits require staff.manage, and an authorized proper subset still works', async () => {
+    const editor = await actor('rl-editor', 'support');
+    await db.staff.update({ where: { id: editor.id }, data: { roleId: null, grants: ['cc.role.manage', 'cc.ticket.read', 'cc.ticket.reply'] } });
+    assert.equal((await call(editor.cookie, 'GET', 'staff/roles')).status, 200);
+    const role = await db.staffRole.create({ data: { key: 'subset-denial', name: 'Subset', grants: ['cc.ticket.read'] } });
+    const subject = await actor('rl-subset', 'support');
+    assert.equal((await call(admin.cookie, 'PUT', 'staff/users/' + subject.id + '/role', { roleId: role.id })).status, 200);
+    const endpoint = 'staff/roles/' + role.id;
+    assert.equal((await call(editor.cookie, 'PATCH', endpoint, { grants: ['cc.ticket.read', 'cc.ticket.reply'] })).status, 403);
+    await db.staff.update({ where: { id: editor.id }, data: { grants: ['cc.role.manage', 'cc.staff.manage', 'cc.ticket.read', 'cc.ticket.reply'] } });
+    assert.equal((await call(editor.cookie, 'PATCH', endpoint, { grants: ['cc.ticket.read', 'cc.ticket.reply'] })).status, 200);
+    assert.deepEqual((await staffRow(subject.id)).grants, ['cc.ticket.read', 'cc.ticket.reply']);
+  });
   const invariantHolds = async () => {
     for (const s of await db.staff.findMany({ where: { roleId: { not: null } }, include: { role: true } })) {
       assert.deepEqual(s.grants, effectiveControlGrants(s.role?.grants ?? [], s.extraGrants, s.removedGrants), s.email);

@@ -89,7 +89,7 @@ export class StaffController {
   acceptInvite(@Req() req: IncomingMessage, @Body() body: unknown) {
     const dto = controlStaffInviteAcceptance.safeParse(body);
     if (!dto.success) throw new BadRequestException();
-    return this.auth.acceptInvite(dto.data.token, dto.data.password, req.socket.remoteAddress ?? 'unknown');
+    return this.auth.acceptInvite(dto.data.token, dto.data.password, req.socket.remoteAddress ?? 'unknown', dto.data.name);
   }
 
   private setEnabled(req: IncomingMessage, id: string, body: unknown, enabled: boolean) {

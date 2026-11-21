@@ -210,10 +210,18 @@ export async function ticketCases(t: TestContext, db: PrismaClient, url: string,
     const disabled = await actor(['cc.ticket.read']);
     await db.staff.update({ where: { id: disabled.id }, data: { enabled: false } });
     assert.equal((await req('/eligible-owners')).status, 403);
-    const response = await req('/eligible-owners', writer.cookie);
-    assert.equal(response.status, 200);
-    const directory = await response.json() as { items: { id: string; email: string }[] };
+    const directory: { items: { id: string; email: string }[] } = { items: [] };
+    let cursor: string | null = null;
+    do {
+      const response = await req('/eligible-owners?limit=1' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''), writer.cookie);
+      assert.equal(response.status, 200);
+      const page = await response.json() as { items: typeof directory.items; nextCursor: string | null };
+      directory.items.push(...page.items);
+      cursor = page.nextCursor;
+    } while (cursor !== null);
     assert.ok(directory.items.some((candidate) => candidate.id === reader.id && candidate.email.endsWith('@example.test')));
+    assert.equal(directory.items.filter((candidate) => candidate.id === reader.id).length, 1);
+    assert.equal(new Set(directory.items.map((candidate) => candidate.id)).size, directory.items.length);
     assert.ok(directory.items.every((candidate) => Object.keys(candidate).sort().join(',') === 'email,id'));
     assert.ok(directory.items.every((candidate) => ![disabled.id, replyOnly.id, writer.id].some((id) => id === candidate.id)));
   });

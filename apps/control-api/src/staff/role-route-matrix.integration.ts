@@ -49,6 +49,7 @@ export async function roleRouteMatrixCases(t: TestContext, db: PrismaClient, roo
   const groups: Record<string, readonly string[]> = {
     OWNER: await roleGrants('admin'), MANAGER: await roleGrants('manager'), SUPPORT: await roleGrants('support'),
     MARKETING: await roleGrants('marketing'),
+    ROLE_EDITOR: ['cc.role.manage'],
     // Stored before the rename: authorization must follow these grants, not any preset name.
     LEGACY_SALES_GRANTS: ['cc.business.read', 'cc.business.manage', 'cc.plan.read'],
     NO_GRANTS: [],
@@ -60,7 +61,8 @@ export async function roleRouteMatrixCases(t: TestContext, db: PrismaClient, roo
       const reached: string[] = [];
       for (const [route, declared] of gatedRoutes) {
         const status = (await drive(staff.cookie, route, ctx())).status;
-        const permitted = controlPermissionSatisfied(grants, declared.access as (typeof CONTROL_PERMISSIONS)[number]);
+        const permitted = controlPermissionSatisfied(grants, declared.access as (typeof CONTROL_PERMISSIONS)[number]) ||
+          Boolean(declared.alternative && controlPermissionSatisfied(grants, declared.alternative));
         if (permitted) assert.ok(status !== 401 && status !== 403 && status < 500, route + ' ' + status + ' for ' + name);
         else assert.equal(status, 403, route + ' must be 403 for ' + name);
         if (status !== 403) reached.push(route);
@@ -70,6 +72,7 @@ export async function roleRouteMatrixCases(t: TestContext, db: PrismaClient, roo
         MANAGER: everyGatedRoute.filter((r) => !BILLING_ROUTES.includes(r)),
         SUPPORT: SUPPORT_REACHES,
         MARKETING: MARKETING_REACHES,
+        ROLE_EDITOR: ['GET /staff/roles', 'POST /staff/roles', 'PATCH /staff/roles/:id', 'DELETE /staff/roles/:id'],
         LEGACY_SALES_GRANTS: ['GET /businesses', 'GET /businesses/:businessId', 'POST /businesses', 'PATCH /businesses/:businessId',
           'GET /businesses/:businessId/outlets', 'GET /businesses/:businessId/outlets/:id', 'POST /businesses/:businessId/outlets',
           'PATCH /businesses/:businessId/outlets/:id', 'GET /plans', 'GET /plans/renewals', 'GET /outlets/:id/service-plans'],

@@ -28,6 +28,7 @@ export class StaffLifecycle {
     const expiresAt = await this.access.withPermission(cookie, 'cc.staff.manage', async (tx, actor) => {
       const role = await tx.staffRole.findUnique({ where: { id: dto.roleId } });
       if (!role) throw new NotFoundException();
+      if (role.isSystem && !actor.role?.isSystem) throw new ForbiddenException();
       const { extraGrants, removedGrants } = dto;
       if ([...role.grants, ...extraGrants, ...removedGrants].some((grant) => !actor.grants.includes(grant))) {
         throw new ForbiddenException();
