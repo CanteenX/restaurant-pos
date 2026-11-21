@@ -8,7 +8,7 @@ import {
   selectDataEntries,
 } from './pg-restore-vet';
 import { restoreConnectionUrl } from './restore-role';
-import { loadVettedData } from './restore-load';
+import { loadVettedData, restoreLimits } from './restore-load';
 import { psqlQuery as psql, runPg } from './pg-run';
 import { parseSequences, simpleName } from './restore-sequences';
 
@@ -124,6 +124,7 @@ export function deleteOrder(
  * structural or executable text from the dump is ever passed to psql.
  */
 export async function restoreDatabase(file: string): Promise<void> {
+  restoreLimits((await fs.stat(file)).size); // before TOC parsing or any DB client
   const url = restoreConnectionUrl();
   await assertRestoreRoleIsLimited(url);
   const tables = new Set(
