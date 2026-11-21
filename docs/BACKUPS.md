@@ -72,10 +72,10 @@ A restore is destructive and Owner-only. Backups are untrusted input, so:
   NOCREATEROLE, NOCREATEDB, no predefined `pg_*` memberships, no database or
   schema CREATE, no schema/table/sequence/function ownership or TRIGGER rights;
   only data privileges on the app tables
-  and USAGE/SELECT/UPDATE on sequences). The backend creates and re-syncs this
-  role at startup and before every restore when it is connected as a superuser
-  (the shipped Docker default). Its password is derived from the database
-  password, so there is nothing to configure.
+  and USAGE/SELECT/UPDATE on sequences). For stock Docker installs, `db-setup`
+  provisions the role. Its password is derived from the runtime database
+  password, so there is nothing to configure. The database dump uses the
+  runtime login, with read access to all application data.
 - **`DATABASE_RESTORE_URL`** (optional) points restores at a role you manage.
   The restore is refused unless that role is limited as above, including any
   roles it is a member of.

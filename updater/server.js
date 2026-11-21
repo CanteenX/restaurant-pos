@@ -40,7 +40,7 @@ function docker(method, path, body, extraHeaders = {}) {
         if (res.statusCode >= 400) {
           let msg = text;
           try { msg = JSON.parse(text).message || text; } catch {}
-          return reject(new Error(`docker ${method} ${path.split('?')[0]} -> ${res.statusCode}: ${msg}`));
+          return reject(Object.assign(new Error(`docker ${method} ${path.split('?')[0]} -> ${res.statusCode}: ${msg}`), { statusCode: res.statusCode }));
         }
         resolve(text);
       });
@@ -106,6 +106,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function createUpdater({
   docker: dk,
   targets = TARGETS,
+  dbSetup = process.env.DB_SETUP_CONTAINER || '',
   healthTimeoutMs = Number(process.env.HEALTH_TIMEOUT_MS || 300000),
   graceMs = Number(process.env.HEALTH_GRACE_MS || 15000),
   pollMs = 1000,
@@ -125,12 +126,18 @@ function createUpdater({
 
   // Put N back under its own name and start it. A start failure throws, so
   // rollBack() reports it instead of claiming N is running.
-  async function restore({ name, oldName, wasRunning, renamed }) {
+  async function restore({ name, oldName, wasRunning, renamed, previousSetupImage }) {
     if (renamed) {
       await dk('DELETE', `/containers/${enc(name)}?force=true`).catch(() => {});
       await dk('POST', `/containers/${enc(oldName)}/rename?name=${enc(name)}`);
     }
+    let setupError;
+    if (previousSetupImage) {
+      try { await runDatabaseSetup(previousSetupImage); }
+      catch (err) { setupError = err; }
+    }
     if (wasRunning) await dk('POST', `/containers/${enc(name)}/start`);
+    if (setupError) throw setupError;
   }
 
   // Put every swapped container back on N (newest first), carrying on past
@@ -159,6 +166,47 @@ function createUpdater({
     return problems;
   }
 
+  // The stopped Compose service supplies the private setup configuration. Run
+  // its command from the exact backend image being installed, on the same network.
+  async function runDatabaseSetup(newImage) {
+    const name = `${dbSetup}-update`;
+    const label = 'com.nventra.update-db-setup';
+    let id;
+    try {
+      const info = await json('GET', `/containers/${enc(dbSetup)}/json`);
+      if (info.State.Running || info.Config.Cmd?.join(' ') !== 'setup' ||
+          splitImage(info.Config.Image).repo !== splitImage(newImage).repo) throw new Error();
+      const previous = await json('GET', `/containers/${enc(name)}/json`).catch((err) => {
+        if (err.statusCode !== 404) throw err;
+        return null;
+      });
+      if (previous) {
+        if (previous.State.Running || previous.Config.Labels?.[label] !== dbSetup) throw new Error();
+        await dk('DELETE', `/containers/${enc(previous.Id)}`);
+      }
+      const oldImage = await json('GET', `/images/${enc(info.Image)}/json`);
+      const body = createBody(info, newImage, oldImage?.Config?.Env ?? []);
+      body.Labels = { [label]: dbSetup };
+      ({ Id: id } = await json('POST', `/containers/create?name=${enc(name)}`, body));
+      await dk('POST', `/containers/${enc(id)}/start`);
+      const deadline = Date.now() + healthTimeoutMs;
+      while (Date.now() < deadline) {
+        const { State } = await json('GET', `/containers/${enc(id)}/json`);
+        if (!State.Running) {
+          if (State.ExitCode === 0) return;
+          break;
+        }
+        await sleep(pollMs);
+      }
+      throw new Error();
+    } catch {
+      // Setup config and logs may contain privileged connection information.
+      throw new Error('database setup failed; check the db-setup service before retrying');
+    } finally {
+      if (id) await dk('DELETE', `/containers/${enc(id)}?force=true`).catch(() => {});
+    }
+  }
+
   // Stop the current container and keep it as <name>-old (until the whole
   // update is healthy), then create and start the new one with its config.
   // The container is recorded in `swapped` as soon as it is stopped, so a
@@ -171,6 +219,11 @@ function createUpdater({
     await dk('POST', `/containers/${enc(name)}/stop?t=20`);
     const record = { name, oldName, wasRunning: info.State.Running, renamed: false };
     swapped.push(record);
+    if (dbSetup && name === targets[0]) {
+      status.step = 'preparing database';
+      await runDatabaseSetup(newImage);
+      record.previousSetupImage = info.Config.Image;
+    }
     await dk('POST', `/containers/${enc(name)}/rename?name=${enc(oldName)}`);
     record.renamed = true;
     const oldImage = await json('GET', `/images/${enc(info.Image)}/json`).catch(() => null);

@@ -6,7 +6,7 @@
 #      with demo data through the old DATABASE_URL.
 #   2. Upgrade: recreate the Postgres container with the NEW compose settings
 #      (nventra / nventra_pos) on the SAME volume, then start the backend with
-#      the new DATABASE_URL using the exact CMD from apps/backend/Dockerfile.
+#      the new DATABASE_URL using the image's external-database entrypoint.
 #   3. Check: the compose healthcheck passes before and after, the backend is
 #      healthy, demo data is still there (row counts + owner login), and a
 #      second start is a no-op.
@@ -45,9 +45,7 @@ step() { echo "== $*"; }
 
 # Values the shipped files use, read from them so the drill tracks changes.
 HEALTHCHECK="$(grep -o 'pg_isready -U [a-z_]* -d [a-z_]*' docker-compose.yml)"
-CMD="$(sed -n 's/^CMD \["sh", "-c", "\(.*\)"\]$/\1/p' apps/backend/Dockerfile)"
 grep -q 'POSTGRES_USER: nventra' docker-compose.yml || fail "docker-compose.yml no longer uses nventra"
-[ -n "$CMD" ] || fail "could not read CMD from apps/backend/Dockerfile"
 
 start_pg() { # start_pg <user> <db>
   docker rm -f "$N" >/dev/null 2>&1 || true
@@ -98,7 +96,7 @@ echo "   before the backend starts, nventra cannot log in (the reported failure)
 start_backend() { # start_backend <logfile>
   ! curl -s -o /dev/null "http://localhost:$API_PORT/" 2>/dev/null || fail "port $API_PORT is already in use"
   # Own process group, so stop_backend also stops node (a child of sh -c).
-  ( cd apps/backend && DATABASE_URL="$NEW_URL" exec setsid sh -c "$CMD" ) >"$1" 2>&1 &
+  ( cd apps/backend && DATABASE_URL="$NEW_URL" exec setsid sh ./container-entrypoint.sh serve ) >"$1" 2>&1 &
   BACKEND_PID=$!
   for _ in $(seq 1 90); do
     curl -sf "http://localhost:$API_PORT/api/health" >/dev/null 2>&1 && return 0

@@ -1,7 +1,7 @@
 // In-memory stand-in for the Docker Engine API, used by server.test.js only.
-// `health(image)` decides how a container started from `image` behaves:
+// `health(image, name)` decides how a container started from `image` behaves:
 // 'healthy' | 'unhealthy' | 'starting' | 'running' (no healthcheck) | 'exits' | 'fail-start'
-// | 'crashloop' (no healthcheck, restarted by Docker between every inspect).
+// | 'completed' (successful one-shot) | 'crashloop' (restarted on every inspect).
 // Set `fd.failRename = (from, to) => bool` to make a rename fail.
 function fakeDocker({ health = () => 'healthy', images = [] } = {}) {
   const containers = new Map();
@@ -11,10 +11,11 @@ function fakeDocker({ health = () => 'healthy', images = [] } = {}) {
   const err = (code, msg) => Object.assign(new Error(`docker -> ${code}: ${msg}`), { statusCode: code });
 
   function stateFor(c) {
-    const h = health(c._image);
+    const h = health(c._image, c.Name.slice(1));
     const StartedAt = `t${c._starts}`;
     if (!c._running) return { Running: false, Restarting: false, ExitCode: 0, StartedAt };
     if (h === 'exits') return { Running: false, Restarting: false, ExitCode: 1, StartedAt };
+    if (h === 'completed') return { Running: false, Restarting: false, ExitCode: 0, StartedAt };
     if (h === 'running') return { Running: true, Restarting: false, ExitCode: 0, StartedAt };
     if (h === 'crashloop') {
       c._restarts += 1; c._starts += 1; // crashed and restarted since the last look
@@ -76,7 +77,7 @@ function fakeDocker({ health = () => 'healthy', images = [] } = {}) {
       if (method === 'DELETE') { if (c._running && q.get('force') !== 'true') throw err(409, 'running'); containers.delete(name); return ''; }
       if (action === 'stop') { c._running = false; return ''; }
       if (action === 'start') {
-        if (health(c._image) === 'fail-start') throw err(500, 'start failed');
+        if (health(c._image, name) === 'fail-start') throw err(500, 'start failed');
         c._running = true; c._starts += 1; return '';
       }
       if (action === 'rename') {

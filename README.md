@@ -388,7 +388,7 @@ git clone https://github.com/CanteenX/restaurant-pos.git
 cd restaurant-pos
 cp .env.example .env        # set JWT_SECRET, POSTGRES_PASSWORD and UPDATER_TOKEN (openssl rand -hex 32)
 docker compose up -d --build
-docker exec nventra-pos-backend npx ts-node prisma/seed.ts   # optional: demo data + login; upsert-based, safe to re-run
+docker compose exec backend ./container-entrypoint.sh node dist/prisma/seed.js   # optional demo data
 ```
 
 ### Client IPs (reverse proxy, Cloudflare)
@@ -412,7 +412,7 @@ container:
 The Postgres user and database are now `nventra` / `nventra_pos` (previously
 the upstream names), and the login cookie is `nventra_session` (it used the
 upstream prefix before). Postgres only creates its user and database on an
-empty volume, so the backend container renames the old ones in place the first
+empty volume, so database setup renames the old ones in place the first
 time it starts on an existing volume. Your data stays where it is: just update
 and start as usual (`git pull && ./install.sh`, `apt upgrade`, or the CasaOS
 update). There is no need to delete the volume.
@@ -448,15 +448,18 @@ git pull
 ```
 
 Re-running [`install.sh`](install.sh) is safe any time — it never overwrites
-an existing `.env` or touches existing data. It rebuilds the backend + web
-images and restarts the stack; the backend runs `prisma migrate deploy`
-automatically on startup, so any new database migrations from the pull are
-applied before it starts accepting traffic. If you installed manually
+an existing `.env` or deletes existing data. It rebuilds the backend + web
+images and restarts the stack. The `db-setup` service applies migrations with
+a dedicated schema owner before starting the API with a separate runtime login.
+Use the updated installer or Compose definition for the first upgrade to this
+layout. See the [upgrade guide](docs/UPGRADING.md). If you installed manually
 instead, the equivalent is:
 
 ```bash
 git pull
-docker compose up -d --build
+docker compose build
+docker compose stop backend
+docker compose up -d --no-build
 ```
 
 **Local dev (no Docker for the apps):**

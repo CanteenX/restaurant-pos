@@ -8,7 +8,7 @@ export const RESTORE_ROLE = 'nventra_restore';
 /**
  * Deterministic password for the restore role, derived from the app's own
  * DB password so no extra secret has to be stored or configured. It
- * changes when the DB password rotates; the role is re-synced at startup.
+ * changes when the DB password rotates; managed database setup syncs the role.
  */
 export function deriveRestorePassword(dbPassword: string): string {
   return createHmac('sha256', dbPassword)
@@ -48,8 +48,8 @@ export function restoreConnectionUrl(): string | undefined {
 /**
  * Makes sure the restore role exists with only data privileges on the app
  * schema (DML + TRUNCATE on tables, USAGE/SELECT/UPDATE on sequences, no
- * CREATE, no pg_* server roles). Runs at startup when the app is connected
- * as a superuser (the shipped docker-compose default); idempotent.
+ * CREATE, no pg_* server roles) for legacy or operator-managed deployments.
+ * The stock database setup provisions the role before the backend starts.
  */
 @Injectable()
 export class RestoreRoleService implements OnApplicationBootstrap {
@@ -63,7 +63,11 @@ export class RestoreRoleService implements OnApplicationBootstrap {
 
   async ensure(): Promise<void> {
     // An operator-managed restore role is theirs to provision.
-    if (process.env.DATABASE_RESTORE_URL) return;
+    if (
+      process.env.NVENTRA_DATABASE_URL_FILE ||
+      process.env.DATABASE_RESTORE_URL
+    )
+      return;
     try {
       const rows = await this.prisma.$queryRawUnsafe<{ rolsuper: boolean }[]>(
         'SELECT rolsuper FROM pg_roles WHERE rolname = current_user',
