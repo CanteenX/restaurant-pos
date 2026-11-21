@@ -5,10 +5,10 @@ import type { Prisma, PrismaClient } from '../../node_modules/.prisma/control-cl
 import { appendAuditEvent } from '../audit/audit.js';
 
 const directoryFields = { id: true, email: true, enabled: true, grants: true } as const;
-type Actor = { id: string; grants: string[] };
+type Actor = { id: string; grants: string[]; role: { isSystem: boolean } | null };
 type Mutation = { kind: 'grants'; grants: ControlPermissionKey[] } | { kind: 'reset' | 'revoke' };
 /** `serialize` takes the single role-administration lock first; `roleMembers` also row-locks every member of that role. */
-type Options = { recent?: boolean; staffTarget?: string; serialize?: boolean; roleMembers?: string };
+type Options = { recent?: boolean; staffTarget?: string; serialize?: boolean; roleMembers?: string; alternative?: ControlPermissionKey };
 
 export class StaffAccess {
   constructor(private readonly db: PrismaClient, private readonly sessionDigest: (cookie: string) => string) {}
@@ -28,9 +28,10 @@ export class StaffAccess {
       const now = new Date();
       const session = await tx.staffSession.findFirst({ where: { digest, staffId: initial.staffId,
         expiresAt: { gt: now }, verifiedAt: { lte: now }, staff: { enabled: true } },
-        select: { verifiedAt: true, staff: { select: { id: true, grants: true } } } });
+        select: { verifiedAt: true, staff: { select: { id: true, grants: true, role: { select: { isSystem: true } } } } } });
       if (!session) throw new UnauthorizedException();
-      if (!controlPermissionSatisfied(session.staff.grants, permission) ||
+      if (!(controlPermissionSatisfied(session.staff.grants, permission) ||
+          (options.alternative && controlPermissionSatisfied(session.staff.grants, options.alternative))) ||
           (options.recent && now.getTime() - session.verifiedAt.getTime() > 10 * 60_000)) throw new ForbiddenException();
       return run(tx, session.staff);
     });
@@ -39,8 +40,8 @@ export class StaffAccess {
   list(cookie: string, page: { cursor?: string; limit: number }) {
     return this.withPermission(cookie, 'cc.staff.read', async (tx) => {
       const rows = await tx.staff.findMany({ where: { id: { gt: page.cursor } }, orderBy: { id: 'asc' },
-        take: page.limit + 1, select: directoryFields });
-      const items = rows.slice(0, page.limit);
+        take: page.limit + 1, select: { ...directoryFields, name: true, lastSignInAt: true, roleId: true, encryptedSeed: true } });
+      const items = rows.slice(0, page.limit).map(({ encryptedSeed, ...staff }) => ({ ...staff, twoFactorEnabled: encryptedSeed !== null }));
       return { items, nextCursor: rows.length > page.limit ? items[items.length - 1].id : null };
     });
   }

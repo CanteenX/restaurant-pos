@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as types from '@nventra/types';
-import { CONTROL_PERMISSIONS, controlRoleCreate, controlRoleUpdate, controlStaffRoleAssignment,
+import { CONTROL_PERMISSIONS, controlRoleCreate, controlRoleUpdate, controlStaffRoleAssignment, controlStaffInviteAcceptance,
   effectiveControlGrants } from '@nventra/types';
 
 void test('role management is a fixed-vocabulary permission and no role list is exported from code', () => {
@@ -31,4 +31,8 @@ void test('role request bodies reject unknown, duplicate and oversized input', (
   const id = '00000000-0000-4000-8000-0000000000a1';
   assert.deepEqual(controlStaffRoleAssignment.parse({ roleId: id }), { roleId: id, extraGrants: [], removedGrants: [] });
   assert.equal(controlStaffRoleAssignment.safeParse({ roleId: 'nope' }).success, false);
+  const invite = { token: Buffer.alloc(32, 42).toString('base64url'), password: 'synthetic fixture passphrase' };
+  assert.equal(controlStaffInviteAcceptance.parse(invite).name, undefined);
+  assert.equal(controlStaffInviteAcceptance.parse({ ...invite, name: '  Morgan Lee  ' }).name, 'Morgan Lee');
+  for (const name of [' ', 'x'.repeat(121)]) assert.equal(controlStaffInviteAcceptance.safeParse({ ...invite, name }).success, false);
 });

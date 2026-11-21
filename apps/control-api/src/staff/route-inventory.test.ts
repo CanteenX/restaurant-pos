@@ -12,6 +12,12 @@ void test('every control-api route is derived from the controllers and declares 
   const undeclared = routes.filter((route) => !(route in ROUTE_ACCESS));
   assert.deepEqual(undeclared, [], 'routes without a declared permission');
 });
+void test('only the roles directory allows role.manage as an alternative, while Team needs staff.read', () => {
+  assert.deepEqual(Object.entries(ROUTE_ACCESS).filter(([, rule]) => rule.alternative).map(([route, rule]) => [route, rule.alternative]),
+    [['GET /staff/roles', 'cc.role.manage']]);
+  assert.equal(ROUTE_ACCESS['GET /staff/users'].access, 'cc.staff.read');
+  assert.equal(ROUTE_ACCESS['GET /staff/session'].access, 'staff-session');
+});
 
 void test('the declared table has no stale routes and only known access classes', () => {
   assert.deepEqual(Object.keys(ROUTE_ACCESS).filter((route) => !routes.includes(route)), []);

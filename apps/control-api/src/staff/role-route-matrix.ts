@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { RequestMethod } from '@nestjs/common';
 import type { ControlPermissionKey } from '@nventra/types';
 
-/** Access class of one HTTP route. Staff routes name the single permission they enforce. */
+/** Access class of one HTTP route, with an explicit alternate for shared read directories. */
 export type RouteAccess = ControlPermissionKey | 'public' | 'staff-session' | 'portal-session';
 
 export interface MatrixContext {
@@ -10,7 +10,7 @@ export interface MatrixContext {
   readonly staff: string; readonly account: string;
 }
 export interface MatrixRequest { readonly path: string; readonly body?: unknown; readonly headers?: Record<string, string> }
-export interface RouteDeclaration { readonly access: RouteAccess; readonly send?: (c: MatrixContext) => MatrixRequest }
+export interface RouteDeclaration { readonly access: RouteAccess; readonly alternative?: ControlPermissionKey; readonly send?: (c: MatrixContext) => MatrixRequest }
 
 type Controller = abstract new (...args: never[]) => object;
 
@@ -55,7 +55,7 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteDeclaration>> = Object.f
   'POST /staff/users/invite/accept': { access: 'public' },
   'POST /staff/users/:id/deactivate': cp('cc.staff.manage', (c) => ({ path: 'staff/users/' + c.staff + '/deactivate', body: {} })),
   'POST /staff/users/:id/reactivate': cp('cc.staff.manage', (c) => ({ path: 'staff/users/' + c.staff + '/reactivate', body: {} })),
-  'GET /staff/roles': cp('cc.staff.read', () => ({ path: 'staff/roles' + page })),
+  'GET /staff/roles': { ...cp('cc.staff.read', () => ({ path: 'staff/roles' + page })), alternative: 'cc.role.manage' },
   'POST /staff/roles': cp('cc.role.manage', () => ({ path: 'staff/roles', body: { key: 'matrix-role', name: 'Matrix', grants: [] } })),
   'PATCH /staff/roles/:id': cp('cc.role.manage', (c) => ({ path: 'staff/roles/' + c.staff, body: { name: 'Renamed' } })),
   'DELETE /staff/roles/:id': cp('cc.role.manage', (c) => ({ path: 'staff/roles/' + c.staff })),

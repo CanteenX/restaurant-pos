@@ -45,7 +45,39 @@ export async function staffInviteCases(t: TestContext, db: PrismaClient, root: s
     return { token, expiresAt: Date.parse(issued.expiresAt) };
   };
   const password = randomBytes(16).toString('hex');
-  const accept = (token: string, value = password) => post('users/invite/accept', { token, password: value });
+  const accept = (token: string, value = password) => post('users/invite/accept', { token, password: value, name: '  Morgan Lee  ' });
+  const customAdmin = await db.staffRole.create({ data: { key: 'invite-full-custom', name: 'Admin', grants: admin.grants } });
+  const customIssuer = await actor(customAdmin.id, admin.grants);
+  await t.test('custom full grants cannot assign system Admin identity; a system Admin still can', async () => {
+    assert.equal((await (await current(customIssuer.cookie)).json() as { isSystemAdmin: boolean }).isSystemAdmin, false);
+    assert.equal((await (await current(owner.cookie)).json() as { isSystemAdmin: boolean }).isSystemAdmin, true);
+    const target = await actor(support.id, support.grants);
+    const assign = (cookie: string) => fetch(root + 'users/' + target.id + '/role', {
+      method: 'PUT', headers: { cookie, origin, 'content-type': 'application/json' }, body: JSON.stringify({ roleId: admin.id }),
+    });
+    assert.equal((await assign(customIssuer.cookie)).status, 403);
+    assert.equal((await assign(owner.cookie)).status, 200);
+  });
+  await t.test('custom full grants cannot invite a system Admin through the API', async () => {
+    assert.equal((await invite('custom-admin-denied@example.test', admin.id, customIssuer.cookie)).status, 403);
+  });
+  await t.test('the SQL issue helper cannot give system Admin identity to a custom full-grants issuer', async () => {
+    const digest = createHmac('sha256', key).update('session\0' + customIssuer.cookie.split('=')[1]).digest('hex');
+    const result = await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SET LOCAL ROLE control_runtime`;
+      return tx.$queryRaw<{ expires: Date | null }[]>`SELECT control.issue_staff_invite(${randomUUID()}::uuid,
+        'custom-admin-sql@example.test', ${admin.id}::uuid, ${customIssuer.id}::uuid,
+        ${randomBytes(32)}::bytea, ${admin.grants}::text[], ARRAY[]::text[], ARRAY[]::text[], ${digest}) AS expires`;
+    });
+    assert.deepEqual(result, [{ expires: null }]);
+  });
+  await t.test('an outstanding system Admin invite rejects an issuer now in a non-system full-grants role', async () => {
+    const issuer = await actor(admin.id, admin.grants);
+    const { token } = await tokenFrom(await invite('issuer-demoted-admin@example.test', admin.id, issuer.cookie));
+    await db.staff.update({ where: { id: issuer.id }, data: { roleId: customAdmin.id } });
+    assert.equal((await accept(token)).status, 401);
+    assert.equal(await db.staff.count({ where: { email: 'issuer-demoted-admin@example.test' } }), 0);
+  });
 
   await t.test('definer helpers revalidate live sessions and ceilings and reject a stored digest as bearer proof', async () => {
     const digest = (cookie: string) => createHmac('sha256', key).update('session\0' + cookie.split('=')[1]).digest('hex');
@@ -98,6 +130,10 @@ export async function staffInviteCases(t: TestContext, db: PrismaClient, root: s
     const accepted = redemption.find((answer) => answer.status === 200)!;
     assert.equal(accepted.headers.get('set-cookie'), null);
     const enrollment = await accepted.json() as { challenge: string; enrollmentSecret: string };
+    const [pendingProfile] = await db.$queryRaw<{ name: string | null; lastSignInAt: Date | null }[]>`
+      SELECT name, last_sign_in_at AS "lastSignInAt" FROM control.staff WHERE email = ${email}`;
+    assert.equal(pendingProfile.name, 'Morgan Lee');
+    assert.equal(pendingProfile.lastSignInAt, null);
     assert.equal((await post('session/challenge', { email, password })).status, 401);
     const proof = hotp(base32Decode(enrollment.enrollmentSecret), stepAt(Date.now()));
     assert.equal((await post('session/verify', { challenge: enrollment.challenge, code: proof })).status, 401);
@@ -105,6 +141,13 @@ export async function staffInviteCases(t: TestContext, db: PrismaClient, root: s
     assert.equal(enrolled.status, 200);
     const cookie = enrolled.headers.get('set-cookie')!.split(';', 1)[0];
     const staff = await db.staff.findUniqueOrThrow({ where: { email } });
+    const directory = await fetch(root + 'users?limit=50', { headers: { cookie: owner.cookie } });
+    const entry = (await directory.json() as { items: Record<string, unknown>[] }).items.find((s) => s.id === staff.id)!;
+    assert.equal(entry.name, 'Morgan Lee');
+    assert.equal(entry.twoFactorEnabled, true);
+    assert.ok(Date.parse(String(entry.lastSignInAt)) <= Date.now());
+    assert.equal(entry.roleId, support.id);
+    for (const key of ['passwordHash', 'encryptedSeed', 'pendingSeed', 'recoveryDigests', 'sessions']) assert.equal(key in entry, false);
     assert.equal(staff.roleId, support.id);
     assert.ok(staff.grants.includes('cc.portal.read') && !staff.grants.includes('cc.ticket.reply'));
     assert.equal((await current(cookie)).status, 200);
