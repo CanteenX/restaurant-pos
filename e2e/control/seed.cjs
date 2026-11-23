@@ -52,6 +52,19 @@ async function seed() {
         .filter((permission) => CONTROL_PERMISSIONS.includes(permission)),
       encryptedSeed: sealSecret('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP', process.env.CONTROL_AUTH_KEY + operationsId) },
   ] });
+  const customRole = await db.staffRole.create({ data: {
+    key: 'qa-ticket-reader', name: 'QA Ticket Reader', grants: ['cc.ticket.read'],
+  } });
+  const seededRoles = await db.staffRole.findMany({
+    where: { key: { in: ['admin', 'manager', 'support', 'marketing'] } },
+  });
+  if (seededRoles.length !== 4) throw new Error('Missing starting role in the browser fixture');
+  await db.staff.createMany({ data: [...seededRoles, customRole].map((role) => {
+    const id = randomUUID();
+    return { id, email: 'role-' + (role.id === customRole.id ? 'custom' : role.key) + '@example.test',
+      name: role.name + ' browser fixture', passwordHash: controlsPasswordHash, roleId: role.id, grants: role.grants,
+      encryptedSeed: sealSecret(controlsTotpSeed, process.env.CONTROL_AUTH_KEY + id) };
+  }) });
   await db.staffEnrollmentProof.create({ data: { staffId: ownerId, expiresAt: new Date(Date.now() + 900_000),
     digest: createHash('sha256').update(Buffer.alloc(32, 42)).digest() } });
   const business = await db.business.create({ data: {
