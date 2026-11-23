@@ -16,12 +16,25 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+  db-setup:
+    image: ghcr.io/canteenx/nventra-pos-backend:@VERSION@
+    container_name: nventra-pos-db-setup
+    command: ["setup"]
+    environment:
+      NVENTRA_DB_HOST: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?missing POSTGRES_PASSWORD in /etc/nodedr-orderrestro/nodedr-orderrestro.env}
+      NVENTRA_DATABASE_URL_FILE: /run/nventra-db/runtime-url
+    volumes:
+      - db_runtime_auth:/run/nventra-db
+    depends_on:
+      postgres:
+        condition: service_healthy
   backend:
     image: ghcr.io/canteenx/nventra-pos-backend:@VERSION@
     container_name: nventra-pos-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgresql://nventra:${POSTGRES_PASSWORD}@postgres:5432/nventra_pos"
+      NVENTRA_DATABASE_URL_FILE: /run/nventra-db/runtime-url
       SESSION_IDLE_MINUTES: "${SESSION_IDLE_MINUTES:-60}"
       SESSION_MAX_HOURS: "${SESSION_MAX_HOURS:-12}"
       PORT: "4000"
@@ -33,11 +46,12 @@ services:
       VERIFACTU_PRODUCER_COUNTRY: "${VERIFACTU_PRODUCER_COUNTRY:-}"
       VERIFACTU_SYSTEM_ID: "${VERIFACTU_SYSTEM_ID:-}"
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-setup:
+        condition: service_completed_successfully
     expose:
       - "4000"
     volumes:
+      - db_runtime_auth:/run/nventra-db:ro
       - uploads_data:/data/uploads
       - state:/data/state
       - /dev/bus/usb:/dev/bus/usb
@@ -54,5 +68,6 @@ services:
       - backend
 volumes:
   pg_data:
+  db_runtime_auth:
   uploads_data:
   state:

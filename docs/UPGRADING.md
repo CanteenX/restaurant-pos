@@ -2,6 +2,32 @@
 
 Release notes for changes that affect existing installs. Newest first.
 
+## Separate database logins for stock Docker installs (#249)
+
+Apply the updated Compose project, CasaOS manifest or Debian package for this
+upgrade. The earlier in-app updater preserves the old container's configuration
+and cannot add the database setup service. For a cloned install, run `git pull`
+and `./install.sh`. For CasaOS, stop the backend and apply the new store
+definition with the same AppData paths and existing Postgres password. For an
+existing Debian installation, upgrade the package. Keep your existing database
+and uploads volumes and take a backup before upgrading.
+
+The one-shot `db-setup` service keeps the existing PostgreSQL bootstrap
+password. It handles pre-rename volumes and migrates the app schema as
+`nventra_owner`. The backend uses a generated `nventra_runtime` login from a
+read-only volume. Restore uses its own restricted login. Subsequent in-app
+updates run `db-setup` from the selected backend version before starting it.
+The updater pins setup and the backend to the same downloaded image. If an
+update fails, it reruns setup from the previously running image before
+restarting that backend. A `rollback_failed` status means the database
+still needs operator attention. If the previous setup failed, the backend
+stays stopped. Correct the cause and apply the matching Compose definition.
+
+If setup fails, inspect `docker compose logs db-setup` and verify the database,
+the original bootstrap credentials and migration state. Correct the problem
+and rerun the installer or `docker compose up -d`. An existing `DATABASE_URL`
+using an external database follows the existing operator-managed startup path.
+
 ## Multi-branch sync: per-branch keys, ownership, store-credit ledger (#82)
 
 **Upgrade HQ first, then each branch.** A branch whose app version differs
@@ -61,7 +87,7 @@ migrations (`apps/backend/src/system/db-identity-upgrade.ts`):
 3. If neither can log in, it changes nothing and `prisma migrate deploy` reports
    the connection error as before.
 
-The backend log shows one line from `DbIdentityUpgrade` on every start, for
+On builds that ran the rename from the backend, `DbIdentityUpgrade` logged one line, for
 example `renamed Postgres role nodedr -> nventra and database
 nodedr_restaurant -> nventra_pos` on the first start after the upgrade and
 `database identity is current` afterwards. The step is idempotent: if the
@@ -79,9 +105,8 @@ after it. The backend therefore starts, and the rename can run.
 **Sign in again.** The session cookie is now `nventra_session`, so everyone
 signs in once after the update.
 
-**In-app updates (Settings > Updates)** keep the containers' existing settings,
-including the old `DATABASE_URL`, so they keep working without the rename. The
-rename runs the next time the stack is started from the new compose file.
+Apply the current Compose project for the database-role upgrade above. Its
+setup job runs the identity rename before applying the new roles.
 
 **Local development.** If your dev Postgres volume predates the rename, point
 `apps/backend/.env` at `nventra` / `nventra_pos` (see `.env.example`) and run

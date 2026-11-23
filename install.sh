@@ -6,7 +6,7 @@
 #
 # Generates a .env with random secrets (only if one doesn't already exist),
 # builds the backend + web Docker images, starts the stack, and waits for the
-# backend to come up (migrations run automatically on container start). Safe
+# backend to come up (database setup runs before the API starts). Safe
 # to re-run any time (after `git pull`, to rebuild) — nothing here overwrites
 # an existing .env or destroys existing data.
 #
@@ -98,11 +98,12 @@ fi
 
 # --- 3. Build the images and start the stack --------------------------------
 echo "Building Nventra POS images and starting the stack (this can take a few minutes on first run)..."
-docker compose up -d --build
+docker compose build
+docker compose stop backend
+docker compose up -d --no-build
 
 # --- 4. Wait for the app to report healthy ----------------------------------
-# The backend container's own start command runs `prisma migrate deploy`
-# before it starts listening, so a 200 here means migrations already applied.
+# The backend starts after the database setup service completes migrations.
 HOST_PORT="$(grep -m1 '^HOST_PORT=' .env 2>/dev/null | cut -d= -f2- || true)"
 HOST_PORT="${HOST_PORT:-1995}"
 
@@ -127,7 +128,7 @@ fi
 # re-install without duplicating or clobbering anything.
 if [ "$load_demo" = true ]; then
   echo "Loading demo data (restaurant, menu, staff logins)..."
-  docker exec nventra-pos-backend npx ts-node prisma/seed.ts
+  docker compose exec -T backend ./container-entrypoint.sh node dist/prisma/seed.js
 fi
 
 # --- 6. Done -----------------------------------------------------------------

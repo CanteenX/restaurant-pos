@@ -27,6 +27,8 @@ const GHCR_TOKEN = (process.env.GHCR_TOKEN || '').trim();
 const TARGETS = (process.env.TARGET_CONTAINERS || 'nventra-pos-backend,nventra-pos-web').split(',').map((s) => s.trim()).filter(Boolean);
 const PORT = Number(process.env.PORT || 8080);
 const VERSION_RE = /^\d+\.\d+\.\d+$/;
+const IMAGE_REF = 'com.nventra.updater.source';
+const IMAGE_ID = /^sha256:[a-f0-9]{64}$/;
 
 
 function docker(method, path, body, extraHeaders = {}) {
@@ -40,7 +42,7 @@ function docker(method, path, body, extraHeaders = {}) {
         if (res.statusCode >= 400) {
           let msg = text;
           try { msg = JSON.parse(text).message || text; } catch {}
-          return reject(new Error(`docker ${method} ${path.split('?')[0]} -> ${res.statusCode}: ${msg}`));
+          return reject(Object.assign(new Error(`docker ${method} ${path.split('?')[0]} -> ${res.statusCode}: ${msg}`), { statusCode: res.statusCode }));
         }
         resolve(text);
       });
@@ -58,6 +60,17 @@ function splitImage(ref) {
   const slash = ref.lastIndexOf('/');
   const colon = ref.indexOf(':', slash + 1);
   return colon === -1 ? { repo: ref, tag: 'latest' } : { repo: ref.slice(0, colon), tag: ref.slice(colon + 1) };
+}
+
+// Docker stores the supplied ID in Config.Image when a replacement is pinned.
+// Preserve the original repository and version on that replacement for the next update.
+function sourceImage(info) {
+  if (!IMAGE_ID.test(info.Config.Image)) return splitImage(info.Config.Image);
+  const source = info.Config.Labels?.[IMAGE_REF];
+  if (info.Config.Image !== info.Image || !source || !VERSION_RE.test(splitImage(source).tag)) {
+    throw new Error('Missing update source for pinned container image');
+  }
+  return splitImage(source);
 }
 
 // Docker Engine API X-Registry-Auth value for a GHCR image, or null when no
@@ -106,6 +119,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function createUpdater({
   docker: dk,
   targets = TARGETS,
+  dbSetup = process.env.DB_SETUP_CONTAINER || '',
   healthTimeoutMs = Number(process.env.HEALTH_TIMEOUT_MS || 300000),
   graceMs = Number(process.env.HEALTH_GRACE_MS || 15000),
   pollMs = 1000,
@@ -125,11 +139,12 @@ function createUpdater({
 
   // Put N back under its own name and start it. A start failure throws, so
   // rollBack() reports it instead of claiming N is running.
-  async function restore({ name, oldName, wasRunning, renamed }) {
+  async function restore({ name, oldName, wasRunning, renamed, previousSetup }) {
     if (renamed) {
       await dk('DELETE', `/containers/${enc(name)}?force=true`).catch(() => {});
       await dk('POST', `/containers/${enc(oldName)}/rename?name=${enc(name)}`);
     }
+    if (previousSetup) await runDatabaseSetup(previousSetup);
     if (wasRunning) await dk('POST', `/containers/${enc(name)}/start`);
   }
 
@@ -159,22 +174,83 @@ function createUpdater({
     return problems;
   }
 
+  // The stopped Compose service supplies the private setup configuration. Run
+  // its command from the exact backend image being installed, on the same network.
+  const setupJobName = `${dbSetup}-update`;
+  async function prepareDatabaseSetup({ repo, imageId }) {
+    const label = 'com.nventra.update-db-setup';
+    try {
+      const info = await json('GET', `/containers/${enc(dbSetup)}/json`);
+      if (info.State.Running || info.Config.Cmd?.join(' ') !== 'setup' ||
+          sourceImage(info).repo !== repo) throw new Error();
+      const previous = await json('GET', `/containers/${enc(setupJobName)}/json`).catch((err) => {
+        if (err.statusCode !== 404) throw err;
+        return null;
+      });
+      if (previous) {
+        if (previous.State.Running || previous.Config.Labels?.[label] !== dbSetup) throw new Error();
+        await dk('DELETE', `/containers/${enc(previous.Id)}`);
+      }
+      const oldImage = await json('GET', `/images/${enc(info.Image)}/json`);
+      const body = createBody(info, imageId, oldImage?.Config?.Env ?? []);
+      body.Labels = { [label]: dbSetup };
+      return body;
+    } catch {
+      // Docker can return privileged configuration details in failures.
+      throw new Error('database setup failed; check the db-setup service before retrying');
+    }
+  }
+
+  async function runDatabaseSetup(target, body, onStarting) {
+    let id;
+    try {
+      body ??= await prepareDatabaseSetup(target);
+      ({ Id: id } = await json('POST', `/containers/create?name=${enc(setupJobName)}`, body));
+      // A lost response to start can mean the job already committed changes.
+      onStarting?.();
+      await dk('POST', `/containers/${enc(id)}/start`);
+      const deadline = Date.now() + healthTimeoutMs;
+      while (Date.now() < deadline) {
+        const { State } = await json('GET', `/containers/${enc(id)}/json`);
+        if (!State.Running) {
+          if (State.ExitCode === 0) return;
+          break;
+        }
+        await sleep(pollMs);
+      }
+      throw new Error();
+    } catch {
+      // Setup config and logs may contain privileged connection information.
+      throw new Error('database setup failed; check the db-setup service before retrying');
+    } finally {
+      if (id) await dk('DELETE', `/containers/${enc(id)}?force=true`).catch(() => {});
+    }
+  }
+
   // Stop the current container and keep it as <name>-old (until the whole
   // update is healthy), then create and start the new one with its config.
   // The container is recorded in `swapped` as soon as it is stopped, so a
   // failure anywhere after that goes through rollBack() like every other
   // container: restore errors collected, N health-checked.
-  async function swap(name, newImage, swapped) {
+  async function swap({ name, repo, to, imageId, setupBody }, swapped) {
     const info = await json('GET', `/containers/${enc(name)}/json`);
     const oldName = `${name}-old`;
     await dk('DELETE', `/containers/${enc(oldName)}?force=true`).catch(() => {}); // leftover from a failed run
     await dk('POST', `/containers/${enc(name)}/stop?t=20`);
     const record = { name, oldName, wasRunning: info.State.Running, renamed: false };
     swapped.push(record);
+    if (setupBody) {
+      status.step = 'preparing database';
+      await runDatabaseSetup({ repo, imageId }, setupBody, () => {
+        record.previousSetup = { repo, imageId: info.Image };
+      });
+    }
     await dk('POST', `/containers/${enc(name)}/rename?name=${enc(oldName)}`);
     record.renamed = true;
     const oldImage = await json('GET', `/images/${enc(info.Image)}/json`).catch(() => null);
-    const created = await json('POST', `/containers/create?name=${enc(name)}`, createBody(info, newImage, oldImage?.Config?.Env ?? []));
+    const body = createBody(info, imageId, oldImage?.Config?.Env ?? []);
+    body.Labels = { ...body.Labels, [IMAGE_REF]: `${repo}:${to}` };
+    const created = await json('POST', `/containers/create?name=${enc(name)}`, body);
     await dk('POST', `/containers/${enc(created.Id)}/start`);
   }
 
@@ -221,10 +297,16 @@ function createUpdater({
     try {
       for (const name of targets) {
         const info = await json('GET', `/containers/${enc(name)}/json`);
-        const { repo, tag } = splitImage(info.Config.Image);
+        const { repo, tag } = sourceImage(info);
         if (tag !== version) plan.push({ name, repo, from: tag, to: version });
       }
-      for (const p of plan) await pull(p.repo, p.to);
+      for (const p of plan) {
+        await pull(p.repo, p.to);
+        const image = await json('GET', `/images/${enc(`${p.repo}:${p.to}`)}/json`);
+        if (!IMAGE_ID.test(image?.Id)) throw new Error('Could not resolve the pulled image ID');
+        p.imageId = image.Id;
+        if (dbSetup && p.name === targets[0]) p.setupBody = await prepareDatabaseSetup(p);
+      }
     } catch (err) {
       return fail(redact(err.message)); // nothing has been touched yet
     }
@@ -232,7 +314,7 @@ function createUpdater({
     try {
       for (const p of plan) {
         status.step = `restarting ${p.name}`;
-        await swap(p.name, `${p.repo}:${p.to}`, swapped);
+        await swap(p, swapped);
         status.step = `checking ${p.name}`;
         await waitHealthy(p.name);
       }

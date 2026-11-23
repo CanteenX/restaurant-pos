@@ -19,7 +19,7 @@ on:
     paths-ignore:
       - "**/*.md"
       - "docs/**"
-      - "casaos/**"
+      - "casaos/*.png"
       - "mobile/store/**"
       - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
@@ -61,6 +61,19 @@ jobs:
         uses: dorny/paths-filter@v3
         with:
           filters: |
+            db_runtime:
+              - "docker-compose.yml"
+              - "casaos/docker-compose.yml"
+              - "packaging/deb/docker-compose.yml"
+              - "updater/**"
+              - "apps/backend/Dockerfile"
+              - "apps/backend/container-entrypoint.sh"
+              - "apps/backend/src/system/db-*.ts"
+              - "apps/backend/src/backup/{pg-exec,restore-role}.ts"
+              - "apps/backend/src/sync/{capture-install,sync.service}.ts"
+              - "apps/backend/prisma/**"
+              - "scripts/test-db-runtime*"
+              - ".github/workflows/ci.yml"
             backend:
               - "apps/backend/**"
               - "packages/types/**"
@@ -101,6 +114,13 @@ jobs:
 
       - name: Unit tests
         run: pnpm -r --if-present test
+
+      - name: Managed database startup, recovery and PostgreSQL role checks
+        if: steps.changes.outputs.db_runtime == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          pnpm --filter "./apps/backend" build
+          node --test updater/server.test.js scripts/test-db-runtime-startup.cjs
+          bash scripts/test-db-runtime-role.sh
 
       - name: Backend e2e (only when backend changed)
         if: steps.changes.outputs.backend == 'true'

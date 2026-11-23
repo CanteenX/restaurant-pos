@@ -9,6 +9,7 @@ import { dirname } from 'node:path';
 import { AppModule } from './app.module';
 import { uploadsDir } from './common/upload/image-upload.config';
 import { applyTrustProxy } from './common/trust-proxy';
+import { refuseLegacyStockRuntime } from './system/db-identity-upgrade';
 
 // Known example/placeholder secrets that appear verbatim in this repo's own
 // .env.example, docker-compose.yml, and the CasaOS/ZimaOS app-store
@@ -95,6 +96,7 @@ function resolveJwtSecret(): string {
 }
 
 async function bootstrap() {
+  refuseLegacyStockRuntime(process.env.DATABASE_URL);
   process.env.JWT_SECRET = resolveJwtSecret();
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     rawBody: true, // signed aggregator webhooks are verified against the exact bytes received

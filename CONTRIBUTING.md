@@ -81,7 +81,7 @@ git clone https://github.com/CanteenX/restaurant-pos.git
 cd restaurant-pos
 cp .env.example .env                 # edit JWT_SECRET / POSTGRES_PASSWORD for anything beyond local dev
 docker compose up -d --build
-docker exec nventra-pos-backend npx ts-node prisma/seed.ts   # first run only — demo data + login
+docker compose exec backend ./container-entrypoint.sh node dist/prisma/seed.js   # optional demo data
 ```
 
 Open <http://localhost:1995> and sign in with `owner@demo.local` /

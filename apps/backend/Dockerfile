@@ -92,13 +92,14 @@ COPY --from=builder /repo/apps/backend/node_modules ./apps/backend/node_modules
 COPY --from=builder /repo/apps/backend/dist ./apps/backend/dist
 COPY --from=builder /repo/apps/backend/prisma ./apps/backend/prisma
 COPY --from=builder /repo/apps/backend/package.json ./apps/backend/package.json
+COPY --chmod=755 apps/backend/container-entrypoint.sh ./apps/backend/container-entrypoint.sh
+# CasaOS runs this in its separate Docker-socket sidecar from the pinned backend image.
+COPY updater/server.js ./updater/server.js
 COPY --from=builder /repo/packages/types/dist ./packages/types/dist
 COPY --from=builder /repo/packages/types/package.json ./packages/types/package.json
 COPY --from=builder /repo/packages/types/node_modules ./packages/types/node_modules
 
 WORKDIR /repo/apps/backend
 EXPOSE 4000
-# db-identity-upgrade renames a pre-rename install's Postgres role/database
-# (pre-rename upstream names -> nventra/nventra_pos) in place; a no-op otherwise.
-# scripts/test-db-identity-upgrade.sh runs this exact CMD against an old volume.
-CMD ["sh", "-c", "node dist/src/system/db-identity-upgrade.cli.js && npx prisma migrate deploy && node dist/src/main.js"]
+ENTRYPOINT ["./container-entrypoint.sh"]
+CMD ["serve"]

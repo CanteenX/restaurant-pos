@@ -80,8 +80,8 @@ async function assertRestoreRoleIsLimited(url: string | undefined) {
       'privileges (superuser, CREATEROLE/CREATEDB, server file/program ' +
       'access, database/schema CREATE, schema/table/sequence/function ' +
       'ownership or TRIGGER, including member roles). Use the ' +
-      'limited "nventra_restore" role (created automatically when the ' +
-      'backend starts as a superuser) or set DATABASE_RESTORE_URL to a ' +
+      'limited "nventra_restore" role (provisioned by stock database setup) ' +
+      'or set DATABASE_RESTORE_URL to a ' +
       `limited role. ${UNSAFE_OPT_IN_ENV}=1 overrides this and is dangerous.`,
   );
 }

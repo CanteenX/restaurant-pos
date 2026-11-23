@@ -3,7 +3,11 @@
 // database to nventra / nventra_pos. No-op on current installs. Also:
 //   pnpm --filter ./apps/backend db:upgrade-identity     (local dev)
 import { Logger } from '@nestjs/common';
-import { prismaConnector, upgradeDbIdentity } from './db-identity-upgrade';
+import {
+  prismaConnector,
+  refuseLegacyStockRuntime,
+  upgradeDbIdentity,
+} from './db-identity-upgrade';
 
 const log = new Logger('DbIdentityUpgrade');
 
@@ -18,6 +22,8 @@ const MESSAGES = {
 
 async function main() {
   const url = process.env.DATABASE_URL;
+  refuseLegacyStockRuntime(url);
+  if (process.argv[2] === '--check-stock-config') return;
   if (!url) {
     log.warn('DATABASE_URL is not set; skipping');
     return;
