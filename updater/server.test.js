@@ -134,6 +134,38 @@ test('managed update runs the target image setup between stopping and replacing 
   assert.equal(fd.imageOf('app-db-setup'), `${B}:1.0.0`);
 });
 
+for (const problem of ['missing', 'running', 'occupied job name']) {
+  test(`managed setup preflight leaves the healthy backend serving with ${problem}`, async () => {
+    const { fd, up } = installWithSetup('completed');
+    if (problem === 'missing') fd.containers.delete('app-db-setup');
+    if (problem === 'running') fd.containers.get('app-db-setup')._running = true;
+    if (problem === 'occupied job name') fd.add('app-db-setup-update', `${B}:1.0.0`, false);
+    await up.run('1.0.1');
+    assert.ok(!fd.log.includes('POST /containers/app-backend/stop'));
+    assert.ok(fd.running('app-backend'));
+    assert.equal(up.status.state, 'error');
+    assert.match(up.status.error, /database setup failed/);
+    assert.ok(!fd.log.includes('POST /containers/create?name=app-db-setup-update'));
+  });
+}
+
+test('a setup create failure restores service without running the previous setup', async () => {
+  const { fd } = installWithSetup('completed');
+  let attempts = 0;
+  const docker = (...args) => {
+    if (args[0] === 'POST' && args[1] === '/containers/create?name=app-db-setup-update') {
+      attempts++;
+      throw new Error('create rejected');
+    }
+    return fd.docker(...args);
+  };
+  const up = createUpdater({ docker, targets: ['app-backend'], dbSetup: 'app-db-setup', ...fast });
+  await up.run('1.0.1');
+  assert.equal(attempts, 1);
+  assert.ok(fd.running('app-backend'));
+  assert.equal(up.status.state, 'rolled_back');
+});
+
 test('managed update restores the previous backend if the setup job fails', async () => {
   const { fd, up } = installWithSetup('exits');
   await up.run('1.0.1');

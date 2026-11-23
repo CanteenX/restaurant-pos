@@ -176,15 +176,14 @@ function createUpdater({
 
   // The stopped Compose service supplies the private setup configuration. Run
   // its command from the exact backend image being installed, on the same network.
-  async function runDatabaseSetup({ repo, imageId }) {
-    const name = `${dbSetup}-update`;
+  const setupJobName = `${dbSetup}-update`;
+  async function prepareDatabaseSetup({ repo, imageId }) {
     const label = 'com.nventra.update-db-setup';
-    let id;
     try {
       const info = await json('GET', `/containers/${enc(dbSetup)}/json`);
       if (info.State.Running || info.Config.Cmd?.join(' ') !== 'setup' ||
           sourceImage(info).repo !== repo) throw new Error();
-      const previous = await json('GET', `/containers/${enc(name)}/json`).catch((err) => {
+      const previous = await json('GET', `/containers/${enc(setupJobName)}/json`).catch((err) => {
         if (err.statusCode !== 404) throw err;
         return null;
       });
@@ -195,7 +194,20 @@ function createUpdater({
       const oldImage = await json('GET', `/images/${enc(info.Image)}/json`);
       const body = createBody(info, imageId, oldImage?.Config?.Env ?? []);
       body.Labels = { [label]: dbSetup };
-      ({ Id: id } = await json('POST', `/containers/create?name=${enc(name)}`, body));
+      return body;
+    } catch {
+      // Docker can return privileged configuration details in failures.
+      throw new Error('database setup failed; check the db-setup service before retrying');
+    }
+  }
+
+  async function runDatabaseSetup(target, body, onStarting) {
+    let id;
+    try {
+      body ??= await prepareDatabaseSetup(target);
+      ({ Id: id } = await json('POST', `/containers/create?name=${enc(setupJobName)}`, body));
+      // A lost response to start can mean the job already committed changes.
+      onStarting?.();
       await dk('POST', `/containers/${enc(id)}/start`);
       const deadline = Date.now() + healthTimeoutMs;
       while (Date.now() < deadline) {
@@ -220,19 +232,18 @@ function createUpdater({
   // The container is recorded in `swapped` as soon as it is stopped, so a
   // failure anywhere after that goes through rollBack() like every other
   // container: restore errors collected, N health-checked.
-  async function swap({ name, repo, to, imageId }, swapped) {
+  async function swap({ name, repo, to, imageId, setupBody }, swapped) {
     const info = await json('GET', `/containers/${enc(name)}/json`);
     const oldName = `${name}-old`;
     await dk('DELETE', `/containers/${enc(oldName)}?force=true`).catch(() => {}); // leftover from a failed run
     await dk('POST', `/containers/${enc(name)}/stop?t=20`);
     const record = { name, oldName, wasRunning: info.State.Running, renamed: false };
     swapped.push(record);
-    if (dbSetup && name === targets[0]) {
+    if (setupBody) {
       status.step = 'preparing database';
-      // Setup commits in phases. Even a failed or timed-out job may already
-      // have changed capture definitions or grants used by the previous backend.
-      record.previousSetup = { repo, imageId: info.Image };
-      await runDatabaseSetup({ repo, imageId });
+      await runDatabaseSetup({ repo, imageId }, setupBody, () => {
+        record.previousSetup = { repo, imageId: info.Image };
+      });
     }
     await dk('POST', `/containers/${enc(name)}/rename?name=${enc(oldName)}`);
     record.renamed = true;
@@ -294,6 +305,7 @@ function createUpdater({
         const image = await json('GET', `/images/${enc(`${p.repo}:${p.to}`)}/json`);
         if (!IMAGE_ID.test(image?.Id)) throw new Error('Could not resolve the pulled image ID');
         p.imageId = image.Id;
+        if (dbSetup && p.name === targets[0]) p.setupBody = await prepareDatabaseSetup(p);
       }
     } catch (err) {
       return fail(redact(err.message)); // nothing has been touched yet
