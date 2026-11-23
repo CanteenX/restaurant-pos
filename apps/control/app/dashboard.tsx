@@ -148,6 +148,7 @@ export function Dashboard({ session, onExpired, billingAttempts }: { session: Se
         {business && can('cc.hosted.read') && <HostedAccess key={'access-' + business.id} id={business.id} name={business.displayName}
           manage={can('cc.hosted.manage') && !business.archived} onError={onError} />}
         {business && can('cc.portal.read') && <PortalContacts key={'contacts-' + business.id} id={business.id}
+          canCreate={can('cc.portal.create') && !business.archived}
           manage={can('cc.portal.manage') && !business.archived} onError={onError} />}
         {business && can('cc.ticket.read') && <BusinessTicketHistory key={'tickets-' + business.id} id={business.id} onError={onError} />}
         {business && canReadBilling && <BusinessBilling key={business.id} id={business.id} attempts={billingAttempts}

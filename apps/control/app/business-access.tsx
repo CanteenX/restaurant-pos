@@ -110,18 +110,19 @@ export function HostedAccess({ id, name, manage, onError }: AccessProps & { name
   </section>;
 }
 
-export function PortalContacts({ id, manage, onError }: AccessProps) {
+export function PortalContacts({ id, canCreate, manage, onError }: AccessProps & { canCreate: boolean }) {
   const path = 'businesses/' + id + '/portal-accounts';
   const [refresh, setRefresh] = useState(0);
   const [adding, setAdding] = useState(false);
   const [action, setAction] = useState<{ account: Account; kind: 'reissue' | 'revoke' }>();
-  const [activation, setActivation] = useState<Activation>();
+  const [activation, setActivation] = useState<{ source: 'create' | 'reissue'; receipt: Activation }>();
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const requests = useRequestScope();
   const { page, more, loading } = useOperationList<Account>(path, refresh, onError);
 
   async function run(body: { email: string } | { account: Account; kind: 'reissue' | 'revoke' }) {
+    if (!('email' in body ? canCreate : manage)) return;
     const signal = requests.current;
     if (!signal || signal.aborted || pending.current) return;
     pending.current = true;
@@ -130,10 +131,10 @@ export function PortalContacts({ id, manage, onError }: AccessProps) {
     try {
       if ('email' in body) {
         const created = await call<Activation>(path, { email: body.email });
-        if (!signal.aborted) setActivation(created);
+        if (!signal.aborted) setActivation({ source: 'create', receipt: created });
       } else if (body.kind === 'reissue') {
         const issued = await call<Activation>(path + '/' + body.account.id + '/reissue', {});
-        if (!signal.aborted) setActivation(issued);
+        if (!signal.aborted) setActivation({ source: 'reissue', receipt: issued });
       } else {
         await call(path + '/' + body.account.id + '/revoke', {});
       }
@@ -167,8 +168,8 @@ export function PortalContacts({ id, manage, onError }: AccessProps) {
       </div>}
     </li>)}</ul>}
     {page?.nextCursor && <button type="button" disabled={loading} onClick={more}>More contacts</button>}
-    {manage && !adding && !action && <button type="button" onClick={() => setAdding(true)}>Add contact</button>}
-    {manage && adding && <form onSubmit={create}><fieldset disabled={busy}>
+    {canCreate && !adding && !(manage && action) && <button type="button" onClick={() => setAdding(true)}>Add contact</button>}
+    {canCreate && adding && <form onSubmit={create}><fieldset disabled={busy}>
       <label>Contact email<input name="email" type="email" maxLength={254} required /></label>
       <div className="actions"><button className="primary">Create portal account</button>
         <button type="button" onClick={() => setAdding(false)}>Cancel</button></div>
@@ -180,10 +181,10 @@ export function PortalContacts({ id, manage, onError }: AccessProps) {
         <button type="button" disabled={busy} onClick={() => setAction(undefined)}>Cancel</button>
       </div>
     </aside>}
-    {manage && page && activation && <aside aria-label="New activation">
-      <p><strong>Activation code</strong> for {activation.account.email}</p>
-      <p><code>{activation.activationCode}</code></p>
-      <p>Expires at {new Date(activation.expiresAt).toLocaleTimeString()}</p>
+    {page && activation && (activation.source === 'create' ? canCreate : manage) && <aside aria-label="New activation">
+      <p><strong>Activation code</strong> for {activation.receipt.account.email}</p>
+      <p><code>{activation.receipt.activationCode}</code></p>
+      <p>Expires at {new Date(activation.receipt.expiresAt).toLocaleTimeString()}</p>
       <button type="button" onClick={() => setActivation(undefined)}>Close activation code</button>
     </aside>}
   </section>;
