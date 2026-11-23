@@ -18,7 +18,7 @@ cleanup() {
 trap cleanup EXIT
 
 pg_query() {
-  PGPASSWORD="$1" docker exec -e PGPASSWORD "$pg" psql -X -At -v ON_ERROR_STOP=1 \
+  PGPASSWORD="$1" docker exec -e PGPASSWORD "$pg" psql -X -qAt -v ON_ERROR_STOP=1 \
     -h 127.0.0.1 -U "$2" -d "$3" -c "$4"
 }
 
@@ -68,6 +68,7 @@ for scenario in fresh renamed pre-rename; do
 
   check "SELECT current_user = 'nventra_runtime' AND NOT (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls) FROM pg_roles WHERE rolname = current_user" t "$scenario runtime login is limited"
   check "SELECT NOT pg_has_role('nventra_owner', 'MEMBER') AND NOT has_schema_privilege('public', 'CREATE') AND NOT has_database_privilege(current_database(), 'TEMP')" t "$scenario runtime has no role membership or schema creation"
+  check "SELECT has_database_privilege('nventra_restore', current_database(), 'TEMP') AND NOT has_database_privilege('nventra_restore', current_database(), 'CREATE')" t "$scenario restore can reconcile sequence counters using temporary tables only"
   check "SELECT NOT has_table_privilege('sync_state', 'TRUNCATE, TRIGGER') AND NOT has_table_privilege('_prisma_migrations', 'INSERT, UPDATE, DELETE') AND has_table_privilege('_prisma_migrations', 'SELECT')" t "$scenario runtime has read-only migration history and DML without TRUNCATE or TRIGGER"
   check "SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = 'sync_state'" nventra_owner "$scenario migration owner owns data objects"
   check "SELECT NOT rolcanlogin AND NOT (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls) FROM pg_roles WHERE rolname = 'nventra_owner'" t "$scenario migration owner cannot log in between runs"
@@ -85,7 +86,7 @@ for scenario in fresh renamed pre-rename; do
        INSERT INTO branches (id, \"restaurantId\", name, \"updatedAt\") VALUES ('fixture-b', 'fixture-r', 'fixture', now());
        INSERT INTO verifactu_records (id, \"restaurantId\", \"branchId\", \"issuerNif\", seq, type, \"invoiceType\",
          \"invoiceNumber\", \"issueDate\", \"taxTotalCents\", \"totalCents\", \"generatedAt\", hash, xml, environment)
-         VALUES ('fixture-v', 'fixture-r', 'fixture-b', 'fixture', 1, 'ALTA', 'F1', 'fixture', 0, 0, 'fixture', 'fixture', 'fixture', 'TEST')" >/dev/null
+         VALUES ('fixture-v', 'fixture-r', 'fixture-b', 'fixture', 1, 'ALTA', 'F1', 'fixture', '23-11-2026', 0, 0, 'fixture', 'fixture', 'fixture', 'TEST')" >/dev/null
     check 'SELECT public.sync_reset_for_adopt()' f 'adopt refuses to reset a nonempty fiscal ledger'
     check 'SELECT count(*) FROM verifactu_records' 1 'adopt preserves fiscal records'
     check 'SELECT count(*) FROM restaurants' 1 'adopt refusal preserves app records'

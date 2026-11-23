@@ -157,7 +157,7 @@ services:
   updater:
     image: ghcr.io/canteenx/nventra-pos-backend:1.20.0
     container_name: nventra-pos-updater
-    command: ["node", "updater/server.js"]
+    command: ["node", "/repo/updater/server.js"]
     hostname: nventra-pos-updater
     restart: unless-stopped
     environment:

@@ -6,6 +6,7 @@
 function fakeDocker({ health = () => 'healthy', images = [] } = {}) {
   const containers = new Map();
   const imageSet = new Set(images);
+  const imageId = (ref) => 'sha256:' + require('node:crypto').createHash('sha256').update(ref).digest('hex');
   const log = [];
   let seq = 0;
   const err = (code, msg) => Object.assign(new Error(`docker -> ${code}: ${msg}`), { statusCode: code });
@@ -27,7 +28,7 @@ function fakeDocker({ health = () => 'healthy', images = [] } = {}) {
   function add(name, image, running = true) {
     const Id = `${(++seq).toString(16).padStart(12, '0')}deadbeef`;
     containers.set(name, {
-      Id, Name: `/${name}`, Image: `sha256:${image}`, _image: image, _running: running, _restarts: 0, _starts: 0,
+      Id, Name: `/${name}`, Image: imageId(image), _image: image, _running: running, _restarts: 0, _starts: 0,
       Config: { Image: image, Env: ['APP=1'], Hostname: Id.slice(0, 12) },
       HostConfig: { Binds: ['data:/data'] },
       NetworkSettings: { Networks: { net: { Aliases: [name, Id.slice(0, 12)] } } },
@@ -59,14 +60,21 @@ function fakeDocker({ health = () => 'healthy', images = [] } = {}) {
         return JSON.stringify({ status: 'ok' });
       }
       const ref = parts.slice(1, -1).join('/') || parts[1];
-      if (method === 'GET') return JSON.stringify({ Config: { Env: ['BAKED=1'] }, ref });
+      if (method === 'GET') {
+        const source = [...imageSet].find(image => image === ref || imageId(image) === ref)
+          ?? [...containers.values()].find(container => container.Image === ref)?._image;
+        if (!source) throw err(404, 'image missing');
+        return JSON.stringify({ Id: imageId(source), Config: { Env: ['BAKED=1'] }, ref });
+      }
       if (method === 'DELETE') { imageSet.delete(parts.slice(1).join('/')); return '[]'; }
     }
     if (parts[0] === 'containers') {
       if (parts[1] === 'create') {
         const name = q.get('name');
         if (containers.has(name)) throw err(409, 'name in use');
-        const Id = add(name, body.Image, false);
+        const source = [...imageSet].find(image => image === body.Image || imageId(image) === body.Image);
+        if (!source) throw err(404, 'image missing');
+        const Id = add(name, source, false);
         containers.get(name).Config = { ...body };
         return JSON.stringify({ Id });
       }
@@ -90,7 +98,7 @@ function fakeDocker({ health = () => 'healthy', images = [] } = {}) {
     throw err(404, `unhandled ${method} ${path}`);
   }
 
-  const api = { docker, add, containers, imageSet, log, failRename: null, imageOf: (n) => containers.get(n)?._image, running: (n) => !!containers.get(n)?._running };
+  const api = { docker, add, containers, imageSet, imageId, log, failRename: null, imageOf: (n) => containers.get(n)?._image, running: (n) => !!containers.get(n)?._running };
   return api;
 }
 

@@ -17,6 +17,11 @@ password. It handles pre-rename volumes and migrates the app schema as
 `nventra_owner`. The backend uses a generated `nventra_runtime` login from a
 read-only volume. Restore uses its own restricted login. Subsequent in-app
 updates run `db-setup` from the selected backend version before starting it.
+The updater pins setup and the backend to the same downloaded image. If an
+update fails, it reruns setup from the previously running image before
+restarting that backend. A `rollback_failed` status means the database
+still needs operator attention. If the previous setup failed, the backend
+stays stopped. Correct the cause and apply the matching Compose definition.
 
 If setup fails, inspect `docker compose logs db-setup` and verify the database,
 the original bootstrap credentials and migration state. Correct the problem

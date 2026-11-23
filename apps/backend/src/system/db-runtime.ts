@@ -83,6 +83,10 @@ export async function grantDataAccess(admin: PrismaClient, password: string) {
     await tx.$executeRawUnsafe(
       `REVOKE CREATE, TEMPORARY ON DATABASE ${quoteIdent(db)} FROM PUBLIC`,
     );
+    // Restore reconciles sequence counters in a transaction-local temp table.
+    await tx.$executeRawUnsafe(
+      `GRANT TEMPORARY ON DATABASE ${quoteIdent(db)} TO ${RESTORE_ROLE}`,
+    );
     await tx.$executeRawUnsafe(
       'REVOKE ALL ON public._prisma_migrations FROM PUBLIC',
     );

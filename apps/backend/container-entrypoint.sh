@@ -11,16 +11,11 @@ if [ -n "${NVENTRA_DATABASE_URL_FILE:-}" ]; then
   export DATABASE_URL
   node dist/src/system/db-runtime.cli.js check
 else
-  case "${DATABASE_URL:-}" in
-    postgresql://nventra:*@postgres:5432/nventra_pos*|postgresql://nventra:*@nventra-pos-postgres:5432/nventra_pos*|\
-    postgresql://nodedr:*@postgres:5432/nodedr_restaurant*|postgresql://nodedr:*@nventra-pos-postgres:5432/nodedr_restaurant*)
-      echo 'Stock database configuration detected. Apply the current Compose or CasaOS definition before starting this image.' >&2
-      exit 1
-      ;;
-  esac
   if [ "${1:-}" = serve ]; then
     node dist/src/system/db-identity-upgrade.cli.js
     node node_modules/prisma/build/index.js migrate deploy
+  elif [ -n "${DATABASE_URL:-}" ]; then
+    node dist/src/system/db-identity-upgrade.cli.js --check-stock-config
   fi
 fi
 

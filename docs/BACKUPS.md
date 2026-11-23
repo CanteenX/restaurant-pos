@@ -71,8 +71,8 @@ A restore is destructive and Owner-only. Backups are untrusted input, so:
 - **Limited role.** The database is restored as `nventra_restore` (NOSUPERUSER,
   NOCREATEROLE, NOCREATEDB, no predefined `pg_*` memberships, no database or
   schema CREATE, no schema/table/sequence/function ownership or TRIGGER rights;
-  only data privileges on the app tables
-  and USAGE/SELECT/UPDATE on sequences). For stock Docker installs, `db-setup`
+  only data privileges on the app tables, TEMP for transaction-local counter
+  reconciliation, and USAGE/SELECT/UPDATE on sequences). For stock Docker installs, `db-setup`
   provisions the role. Its password is derived from the runtime database
   password, so there is nothing to configure. The database dump uses the
   runtime login, with read access to all application data.
