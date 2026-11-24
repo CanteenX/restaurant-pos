@@ -68,26 +68,26 @@ of `install.sh`'s `openssl rand -hex` generation step.
 `docker-compose.yml` here pins exact image tags (CasaOS requires pinned,
 not `:latest`, tags). To publish a new version:
 
-1. Bump the version everywhere it's referenced — the two `image:` tags in
-   this file, `version:` and `update_at:` under `x-casaos:`, and
-   `release_notes.en_US`.
-2. Run the **Publish Docker images** workflow
-   (`.github/workflows/docker-publish.yml`) via `workflow_dispatch` with
-   that version, or just push to `master` — it also tags a build from the
-   latest git tag automatically. It builds both images for `linux/amd64`
+1. Run `node scripts/bump-casaos-version.cjs 1.1.0` from the repository root
+   (substitute the approved version). It updates all four image tags, the
+   manifest version and the current release-note version. Update the release
+   date and release-note text if needed.
+2. After release approval, the release tag triggers the **Publish Docker
+   images** workflow (`.github/workflows/docker-publish.yml`). It builds both
+   images for `linux/amd64`
    **and** `linux/arm64` (a lot of CasaOS/ZimaOS boxes are ARM SBCs) and
    pushes them to **GHCR**, authenticated with the automatic
    `secrets.GITHUB_TOKEN` — no manually-created registry credential needed,
    same as sibling project nodedr-pos.
 3. Confirm both new tags exist at
    `ghcr.io/canteenx/nventra-pos-backend` and
-   `ghcr.io/canteenx/nventra-pos-web` before updating this file —
-   CasaOS installs will fail outright if the pinned tag doesn't exist yet.
+   `ghcr.io/canteenx/nventra-pos-web` before distributing the updated
+   manifest — CasaOS installs fail if the pinned tag doesn't exist yet.
 4. **First publish only:** GHCR packages default to private even when
    pushed from a public repo — a CasaOS install on someone else's box would
    get an auth error pulling a private image. Check/set visibility to
    Public once under each package's own Settings on GitHub
-   (`github.com/Raktim94?tab=packages` → the package → Package settings →
+   (`github.com/orgs/CanteenX/packages` → the package → Package settings →
    Change visibility). Not needed again on later pushes to the same package.
 
 ## Submitting to the official CasaOS App Store
