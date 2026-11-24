@@ -2,6 +2,20 @@
 
 Release notes for changes that affect existing installs. Newest first.
 
+## Image names from 1.1.0
+
+The 1.0.x images remain published under `ghcr.io/canteenx/nodedr-restaurant-pos-backend`
+and `ghcr.io/canteenx/nodedr-restaurant-pos-web`. Version 1.1.0 uses the new
+`ghcr.io/canteenx/nventra-pos-backend` and `ghcr.io/canteenx/nventra-pos-web`
+packages. Apply the updated installation definition as described below; the old
+in-app updater cannot add `db-setup`. Do not remove existing volumes.
+
+After the release publishes, inspect both multi-architecture manifests with
+`docker buildx imagetools inspect ghcr.io/canteenx/nventra-pos-backend:1.1.0`
+and `docker buildx imagetools inspect ghcr.io/canteenx/nventra-pos-web:1.1.0`.
+After the owner makes both GHCR packages public, verify an anonymous pull of
+each versioned image. These new image names will not exist until publication.
+
 ## Separate database logins for stock Docker installs (#249)
 
 Apply the updated Compose project, CasaOS manifest or Debian package for this
