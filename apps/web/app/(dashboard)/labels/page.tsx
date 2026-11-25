@@ -48,19 +48,20 @@ function LabelsView() {
   );
   const isBatch = batch.length > 0;
   const [spec, setSpec] = useState<LabelSpec>({
-    title: "Sample item",
+    title: "",
     price: "",
     barcode: "",
     batch: "",
     expiry: "",
   });
+  const [customTitle, setCustomTitle] = useState(false);
   const [language, setLanguage] = useState<LabelLanguage>("ZPL");
   const [copies, setCopies] = useState(1);
   const [commands, setCommands] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const clean: LabelSpec = {
-    title: spec.title,
+    title: customTitle ? spec.title : t("labels.sampleItem"),
     price: spec.price || undefined,
     barcode: spec.barcode || undefined,
     batch: spec.batch || undefined,
@@ -122,8 +123,11 @@ function LabelsView() {
           <Label htmlFor="label-title">{t("labels.field.title")}</Label>
           <Input
             id="label-title"
-            value={spec.title}
-            onChange={set("title")}
+            value={clean.title}
+            onChange={(event) => {
+              setCustomTitle(true);
+              set("title")(event);
+            }}
             maxLength={40}
           />
           <Label htmlFor="label-price">{t("labels.field.price")}</Label>
@@ -178,13 +182,13 @@ function LabelsView() {
           <div className="flex gap-2 pt-2">
             <Button
               variant="outline"
-              disabled={busy || (!isBatch && !spec.title.trim())}
+              disabled={busy || (!isBatch && !clean.title.trim())}
               onClick={() => send("preview")}
             >
               {t("labels.showCommands")}
             </Button>
             <Button
-              disabled={busy || !branchId || (!isBatch && !spec.title.trim())}
+              disabled={busy || !branchId || (!isBatch && !clean.title.trim())}
               onClick={() => send()}
             >
               {t("labels.print")}

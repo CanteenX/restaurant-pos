@@ -2514,5 +2514,9 @@
   "orders.where.landmark": "Referencia: {place}",
   "orders.where.liveLocation": "El cliente compartió su ubicación en vivo.",
   "orders.where.openMaps": "Abrir en Google Maps",
-  "marketing.camp.channel.email": "Correo electrónico"
+  "marketing.camp.channel.email": "Correo electrónico",
+  "customers.newCustomer": "Nuevo cliente",
+  "labels.sampleItem": "Artículo de muestra",
+  "common.close": "Cerrar",
+  "toast.notifications": "Notificaciones"
 }
