@@ -164,7 +164,7 @@ export function BusinessBilling({ id, manage, attempts, onError, onReadError, on
   return <section aria-label="Invoices and payments">
     <h3>Invoices and payments</h3>
     {page?.items.length === 0 && <p>No invoices recorded.</p>}
-    {!!page?.items.length && <div className="table-scroll"><table>
+    {!!page?.items.length && <div className="table-scroll" role="region" tabIndex={0} aria-label="Invoices table"><table>
       <thead><tr><th scope="col">Invoice</th><th scope="col">Due date</th><th scope="col">Amount</th><th scope="col">Status</th></tr></thead>
       <tbody>{page.items.map((row) => <tr key={row.id}>
         <td><button type="button" aria-pressed={selectedId === row.id} onClick={() => setSelectedId(row.id)}>{row.reference}</button></td>

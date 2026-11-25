@@ -57,6 +57,9 @@ code { overflow-wrap: anywhere; }
 table { border-collapse: collapse; width: 100%; font-size: .88rem; text-align: left; }
 th, td { padding: .55rem .5rem; border-bottom: 1px solid var(--line); }
 .table-scroll { overflow-x: auto; margin-bottom: .5rem; }
+.table-scroll:focus-visible { outline: 2px solid #006fcc; outline-offset: 2px; }
+.table-scroll-hint { display: none; }
+@media (max-width: 600px) { .table-scroll-hint { display: block; } }
 .team { padding: 1.25rem; background: white; border: 1px solid var(--line); border-radius: .8rem; }
 .team > button { margin: 0 .5rem .75rem 0; }
 .team td { vertical-align: top; }
