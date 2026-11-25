@@ -2514,5 +2514,9 @@
   "orders.where.landmark": "लैंडमार्क: {place}",
   "orders.where.liveLocation": "ग्राहक ने अपनी लाइव लोकेशन साझा की है।",
   "orders.where.openMaps": "Google Maps में खोलें",
-  "marketing.camp.channel.email": "ईमेल"
+  "marketing.camp.channel.email": "ईमेल",
+  "customers.newCustomer": "नया ग्राहक",
+  "labels.sampleItem": "नमूना वस्तु",
+  "common.close": "बंद करें",
+  "toast.notifications": "सूचनाएं"
 }

@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { useApplyReferralCode, useCreateCustomer, type Customer } from "@/hooks/use-customers";
 import { ApiError } from "@/lib/api";
 import { isPlausibleReferralCode, normalizeReferralCode } from "@/lib/referrals";
+import { useI18n } from "@/lib/i18n/context";
 
 export function AddCustomerDialog({
   branchId,
@@ -24,6 +25,7 @@ export function AddCustomerDialog({
   branchId: string | null;
   onCreated?: (customer: Customer) => void;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -67,11 +69,11 @@ export function AddCustomerDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button size="sm">New customer</Button>} />
+      <DialogTrigger render={<Button size="sm">{t("customers.newCustomer")}</Button>} />
       <DialogContent className="sm:max-w-sm">
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>New customer</DialogTitle>
+            <DialogTitle>{t("customers.newCustomer")}</DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-2">
             <Label htmlFor="c-name">Name</Label>

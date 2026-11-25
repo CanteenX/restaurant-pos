@@ -52,6 +52,15 @@ for (const p of PAGES) {
         await page.goto(p.path);
         await page.waitForLoadState("networkidle");
         await expectHindi(page, p.name, size.width, p.devanagari, p.main);
+        if (p.name === "customers") {
+          await expect(page.getByRole("button", { name: "नया ग्राहक" })).toBeVisible();
+        }
+        if (p.name === "labels") {
+          await expect(page.locator("#label-title")).toHaveValue("नमूना वस्तु");
+        }
+        if (p.name === "login") {
+          await expect(page.getByRole("region", { name: /सूचनाएं/ })).toBeAttached();
+        }
         if (p.name === "login") {
           await expect(page.getByRole("button", { name: "साइन इन करें", exact: true })).toBeVisible();
           await expect(page.getByLabel("ईमेल या फ़ोन नंबर")).toBeVisible();

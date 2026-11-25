@@ -36,7 +36,7 @@ export function MobileBottomNav({
     .slice(0, PRIMARY_COUNT);
 
   const itemClass =
-    "relative flex flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium transition-colors";
+    "relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium transition-colors";
 
   return (
     <nav
@@ -58,7 +58,7 @@ export function MobileBottomNav({
             )}
           >
             <Icon className="h-5 w-5" strokeWidth={isActive ? 2.5 : 2} />
-            <span className="max-w-full truncate px-1">{t(item.labelKey)}</span>
+            <span className="max-w-full px-0.5 text-center leading-tight break-words">{t(item.labelKey)}</span>
             {badges.nav[item.href] && !isActive ? (
               <span className="absolute top-2 left-1/2 ml-2 h-2.5 w-2.5 rounded-full bg-amber-500 shadow-[0_0_8px_2px_rgba(245,158,11,0.7)]" />
             ) : null}
@@ -71,7 +71,7 @@ export function MobileBottomNav({
         className={cn(itemClass, "h-16 text-muted-foreground active:text-foreground")}
       >
         <MoreHorizontal className="h-5 w-5" />
-        <span className="max-w-full truncate px-1">{t("nav.more")}</span>
+        <span className="max-w-full px-0.5 text-center leading-tight break-words">{t("nav.more")}</span>
       </button>
     </nav>
   );
