@@ -63,27 +63,65 @@ alone does not isolate them. Confirm the recovery host has no containers or
 ports colliding with that definition. Do not use this procedure for an
 external database, CasaOS, Debian, or customised service/volume names without
 adapting and testing it. Use the preserved, verified v1.0.1 definition and
-images, not a mutable `latest` tag. Confirm its image IDs and original project
-configuration before proceeding. Run the following from that preserved project
-directory, with its required configuration already available. Substitute the
-secure backup path used above:
+images, not a mutable `latest` tag. Transfer and verify the preserved v1.0.1
+backend and web images and the matching PostgreSQL 16 image on that host. Use
+`docker image inspect IMAGE --format '{{.Id}}'` and compare each ID to the
+verified pre-upgrade record. Export the three resulting full `sha256:...` IDs as
+`RECOVERY_BACKEND_IMAGE_ID`, `RECOVERY_WEB_IMAGE_ID`, and
+`RECOVERY_POSTGRES_IMAGE_ID` in the shell. Do not use a tag or an unverified ID.
+In a separate recovery directory containing the preserved Compose definition,
+create a `recovery-images.yml` override (not an environment file):
+
+```yaml
+services:
+  postgres:
+    image: ${RECOVERY_POSTGRES_IMAGE_ID:?set verified PostgreSQL image ID}
+    pull_policy: never
+  backend:
+    image: ${RECOVERY_BACKEND_IMAGE_ID:?set verified backend image ID}
+    pull_policy: never
+  web:
+    image: ${RECOVERY_WEB_IMAGE_ID:?set verified web image ID}
+    pull_policy: never
+```
+
+Set `COMPOSE_FILE=docker-compose.yml:recovery-images.yml` in the POSIX shell
+(on Windows use the platform's Compose path separator). Check `docker compose
+config --images` resolves to the three verified IDs before starting; if it
+includes the unused updater, do not start that service. Do not print the full
+Compose configuration because it may include credentials. Use `--no-build
+--pull never` with every `up` command. Run from that recovery directory with its
+required configuration already available. Substitute the secure backup path:
 
 ```sh
-docker compose -p nventra-recovery up -d postgres
+docker compose -p nventra-recovery up -d --no-build --pull never postgres
 docker compose -p nventra-recovery exec -T postgres pg_isready -U nventra -d postgres
 docker compose -p nventra-recovery exec -T postgres psql -v ON_ERROR_STOP=1 -U nventra -d nventra_pos -c 'SELECT 1'
+# Inspect the mount and confirm its identity as described below before continuing.
+docker inspect --format '{{json .Mounts}}' nventra-pos-postgres
 # Only on the new recovery volume, replace its empty initial database.
 docker compose -p nventra-recovery exec -T postgres dropdb -U nventra --if-exists nventra_pos
 docker compose -p nventra-recovery exec -T postgres createdb -U nventra -O nventra nventra_pos
-docker compose -p nventra-recovery exec -T postgres pg_restore --exit-on-error --no-owner -U nventra -d nventra_pos < /secure/off-host-backup/pre-upgrade.dump
-docker compose -p nventra-recovery up -d backend
+docker compose -p nventra-recovery exec -T postgres pg_restore --exit-on-error --no-owner --no-privileges -U nventra -d nventra_pos < /secure/off-host-backup/pre-upgrade.dump
+docker compose -p nventra-recovery up -d --no-build --pull never backend
+# Inspect the uploads mount and confirm its identity before copying.
+docker inspect --format '{{json .Mounts}}' nventra-pos-backend
 docker compose -p nventra-recovery cp /secure/off-host-backup/uploads/. backend:/data/uploads/
-docker compose -p nventra-recovery up -d web
+docker compose -p nventra-recovery up -d --no-build --pull never web
 ```
 
-Before `dropdb`, confirm `nventra-recovery` really uses a newly created empty
-volume with `docker compose -p nventra-recovery ps` and Docker volume inspection;
-stop if it points to existing data. The drop applies only to that recovery
+The `--no-owner --no-privileges` options restore objects as the stock `nventra`
+superuser without importing grants for roles that may be absent. Custom grants
+must be reviewed and restored separately; this runbook is for stock installs.
+Before `dropdb`, inspect the running recovery PostgreSQL container's actual
+mounts with `docker inspect --format '{{json .Mounts}}' nventra-pos-postgres`.
+Confirm `/var/lib/postgresql/data` is a newly created recovery volume, not the
+original or an existing volume. Before copying uploads, inspect the backend's
+actual mounts with `docker inspect --format '{{json .Mounts}}' nventra-pos-backend`
+and confirm `/data/uploads` is a separate new recovery volume. Compare the
+source volume identities to those recorded for the original project; stop if
+either source matches or is unclear. A project name or `compose ps` alone is
+not proof of isolation. The drop applies only to that recovery
 database. Check every command for errors. Compare restored row counts and
 uploads checksums against the backup, then verify login, orders and served
 uploads on the isolated recovery instance before directing users to it. Preserve
