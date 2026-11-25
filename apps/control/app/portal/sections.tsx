@@ -69,7 +69,7 @@ export function Invoices({ onError }: { onError: Failure }) {
   const { data, more, loading } = useCollection<Invoice>('portal/invoices', onError);
   return <section className="detail" aria-label="Invoices"><h2>Invoices</h2>
     {data?.items.length === 0 && <p>No invoices.</p>}
-    {!!data?.items.length && <div className="table-scroll"><table>
+    {!!data?.items.length && <div className="table-scroll" role="region" tabIndex={0} aria-label="Invoices table"><table>
       <thead><tr><th scope="col">Reference</th><th scope="col">Due date</th><th scope="col">Invoice amount</th>
         <th scope="col">Balance</th><th scope="col">Payments</th></tr></thead>
       <tbody>{data.items.map((row) => <tr key={row.id}>

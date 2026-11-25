@@ -38,7 +38,7 @@ function Events({ cursor, next, back, onExpired }: {
   if (!page) return <p role="status">Loading audit events…</p>;
   const nextCursor = page.nextCursor;
   return <>
-    {page.items.length ? <div className="table-scroll"><table aria-label="Audit events">
+    {page.items.length ? <div className="table-scroll" role="region" tabIndex={0} aria-label="Audit events table"><table aria-label="Audit events">
       <thead><tr>{['Time','Action','Result','Actor','Subject'].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead>
       <tbody>{page.items.map(event => <tr key={event.sequence}>
         <td>{new Date(Number(event.occurredAtMs)).toLocaleString()}</td><td>{event.action}</td><td>{event.outcome}</td>

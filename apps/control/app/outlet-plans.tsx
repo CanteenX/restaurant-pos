@@ -92,7 +92,7 @@ export function OutletPlans({ outletId, verifiedAt, allowManage, onError, onSave
     <details><summary>Plan catalog</summary><ul>{catalog.map((plan) =>
       <li key={plan.code + ':' + plan.version}>{plan.label} · v{plan.version}</li>)}</ul></details>
     <h3>Plan history</h3>
-    {history.items.length ? <div className="table-scroll"><table>
+    {history.items.length ? <div className="table-scroll" role="region" tabIndex={0} aria-label="Plan history table"><table>
       <thead><tr><th scope="col">Change</th><th scope="col">Plan</th><th scope="col">Starts (UTC)</th><th scope="col">Ends (UTC)</th></tr></thead>
       <tbody>{history.items.map((term) => <tr key={term.id}><td>{operationLabels[term.operation]}</td>
         <td>{catalog.find((plan) => plan.code === term.planCode && plan.version === term.planVersion)?.label ?? term.planCode ?? '—'}</td>

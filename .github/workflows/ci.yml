@@ -118,6 +118,9 @@ jobs:
       - name: Release image drift guard
         run: node --test scripts/release-images.test.cjs
 
+      - name: Control table accessibility checks
+        run: node --test e2e/control-table-access.test.cjs
+
       - name: Managed database startup, recovery and PostgreSQL role checks
         if: steps.changes.outputs.db_runtime == 'true' || github.event_name == 'workflow_dispatch'
         run: |

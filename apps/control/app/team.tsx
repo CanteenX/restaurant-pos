@@ -81,7 +81,8 @@ export function Team({ session, rolesOnly = false, onExpired }: { session: Sessi
     {busy && <p role="status">Loading…</p>}
     <button disabled={busy} onClick={() => { const signal = requests.current; if (signal) { setBusy(true); void refresh(signal).catch(fail).finally(() => setBusy(false)); } }}>Refresh</button>
     {manage && <button disabled={busy} onClick={() => { setDraft(blank); setResult(''); }}>{rolesOnly ? 'Create role' : 'Invite staff'}</button>}
-    <div className="table-scroll"><table><thead><tr>{(rolesOnly ? ['Role', 'Description', 'Members', 'Actions'] :
+    <p className="table-scroll-hint">Scroll horizontally to see all columns</p>
+    <div className="table-scroll" role="region" tabIndex={0} aria-label={rolesOnly ? 'Roles table' : 'Team table'}><table><thead><tr>{(rolesOnly ? ['Role', 'Description', 'Members', 'Actions'] :
       ['Name', 'Email', 'Role', '2FA', 'Last sign-in', 'Status', 'Actions']).map((label) => <th key={label}>{label}</th>)}</tr></thead>
       <tbody>{rolesOnly ? roles.map((role) => <tr key={role.id}><td>{role.name}{role.isSystem && ' · Locked'}</td><td>{role.description}</td><td>{role._count.members}</td><td>
         {manage && !role.isSystem && <><button disabled={busy || !roleAllowed(role)} onClick={() => setDraft({ ...blank, ...role })}>Edit {role.name}</button>
@@ -99,7 +100,7 @@ export function Team({ session, rolesOnly = false, onExpired }: { session: Sessi
       <button disabled={busy} onClick={() => void write(confirm.path, {}, confirm.method)}>Confirm {confirm.label}</button>
       <button disabled={busy} onClick={() => setConfirm(undefined)}>Cancel</button></section>}
     {draft && <form onSubmit={save} aria-label={rolesOnly ? 'Role editor' : 'Staff access editor'}><fieldset disabled={busy}><h2>{rolesOnly ? 'Role details' : 'Staff access'}</h2>
-      {rolesOnly ? <>{!draft.id && <label>Role key<input value={draft.key} required pattern="[a-z][a-z0-9-]{1,47}" onChange={(e) => setDraft({ ...draft, key: e.target.value })} /></label>}
+      {rolesOnly ? <>{!draft.id && <label>Role key<input value={draft.key} required pattern="[a-z][a-z0-9\-]{1,47}" onChange={(e) => setDraft({ ...draft, key: e.target.value })} /></label>}
         <label>Role name<input value={draft.name} required maxLength={80} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>
         <label>Description<input value={draft.description} maxLength={300} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label></> : <>
         {!draft.id && <label>Staff email<input type="email" required value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} /></label>}

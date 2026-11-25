@@ -32,10 +32,12 @@ test('Admin creates a role, invites and enrolls a member, then edits their live 
   await page.getByRole('button', { name: 'Verify', exact: true }).click();
   expect((await verification).status()).toBe(200);
   await page.getByRole('button', { name: 'Roles', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Roles table' })).toHaveAttribute('tabindex', '0');
   await expect(page.getByRole('cell', { name: 'Admin · Locked', exact: true })).toBeVisible();
   await captureStaffScreen(page, '04-roles');
   await page.getByRole('button', { name: 'Create role', exact: true }).click();
   await page.getByLabel('Role key').fill('browser-custom');
+  expect(await page.getByLabel('Role key').evaluate((input: HTMLInputElement) => input.validity.patternMismatch)).toBe(false);
   await page.getByLabel('Role name').fill('Browser colleague');
   await page.getByLabel('Description', { exact: true }).fill('Synthetic acceptance fixture');
   await page.getByLabel('Read tickets', { exact: true }).check();
@@ -44,6 +46,7 @@ test('Admin creates a role, invites and enrolls a member, then edits their live 
   await page.getByRole('button', { name: 'Save role', exact: true }).click();
   await expect(page.getByRole('cell', { name: 'Browser colleague', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Team', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Team table' })).toHaveAttribute('tabindex', '0');
   await expect(page.getByRole('row').filter({ hasText: 'team-admin@example.test' })).toBeVisible();
   await captureStaffScreen(page, '03-team');
   await page.getByRole('button', { name: 'Invite staff', exact: true }).click();
