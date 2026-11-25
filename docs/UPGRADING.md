@@ -55,11 +55,12 @@ database and uploads for investigation. Restoring the pre-upgrade backup loses
 writes after the backup, including bills and payments. Reconcile them using
 business records. Never drop or overwrite the only copy of the current database.
 
-The following stock-clone recovery uses a **new, isolated Compose project name**
-and new database and uploads volumes. Rehearse it on a disposable host first.
-The preserved v1.0.1 definition has fixed container names: stop the original
-project before starting the recovery project, and check that its names and ports
-do not collide with any other installation. Do not use this procedure for an
+The following stock-clone recovery uses a **separate recovery host**, a new,
+isolated Compose project name, and new database and uploads volumes. Rehearse it
+on a disposable host first. The preserved v1.0.1 definition has fixed container
+names: stopped containers still reserve those names. A different project name
+alone does not isolate them. Confirm the recovery host has no containers or
+ports colliding with that definition. Do not use this procedure for an
 external database, CasaOS, Debian, or customised service/volume names without
 adapting and testing it. Use the preserved, verified v1.0.1 definition and
 images, not a mutable `latest` tag. Confirm its image IDs and original project
@@ -70,6 +71,7 @@ secure backup path used above:
 ```sh
 docker compose -p nventra-recovery up -d postgres
 docker compose -p nventra-recovery exec -T postgres pg_isready -U nventra -d postgres
+docker compose -p nventra-recovery exec -T postgres psql -v ON_ERROR_STOP=1 -U nventra -d nventra_pos -c 'SELECT 1'
 # Only on the new recovery volume, replace its empty initial database.
 docker compose -p nventra-recovery exec -T postgres dropdb -U nventra --if-exists nventra_pos
 docker compose -p nventra-recovery exec -T postgres createdb -U nventra -O nventra nventra_pos

@@ -17,6 +17,8 @@ test('upgrade guide documents pre-upgrade backup and rollback consequences', () 
   assert.match(guide, /pg_restore --exit-on-error --no-owner/);
   assert.match(guide, /docker compose cp .*uploads/);
   assert.match(guide, /isolated.*project name/i);
+  assert.match(guide, /separate recovery host/i);
+  assert.match(guide, /stopped containers.*reserve/i);
 });
 
 test('release checklist verifies tag identity without replacing local tags', () => {
