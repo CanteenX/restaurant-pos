@@ -44,6 +44,26 @@ docker compose exec -T postgres pg_dump -U nventra -d nventra_pos -Fc > /secure/
 docker compose cp backend:/data/uploads /secure/off-host-backup/uploads
 ```
 
+Before upgrading, record the actual images backing the running stock containers
+and export those images alongside the backup. Inspect the names first with
+`docker compose ps`; substitute the correct names for a customised project.
+The following stock names are fixed by the v1.0.1 Compose definition:
+
+```sh
+cd /secure/off-host-backup
+docker inspect --format '{{.Image}}' nventra-pos-postgres > postgres-image-id.txt
+docker inspect --format '{{.Image}}' nventra-pos-backend > backend-image-id.txt
+docker inspect --format '{{.Image}}' nventra-pos-web > web-image-id.txt
+docker image save -o recovery-images.tar "$(cat postgres-image-id.txt)" "$(cat backend-image-id.txt)" "$(cat web-image-id.txt)"
+sha256sum recovery-images.tar postgres-image-id.txt backend-image-id.txt web-image-id.txt > recovery-images.sha256
+```
+
+Confirm each ID is a full `sha256:` image ID and that `recovery-images.tar` is
+nonempty. Copy the image archive, ID files and checksum file to protected
+off-host storage together, independently retain their expected checksums, and
+test loading them on the separate recovery host. Image archives may include
+proprietary configuration or assets; protect them and do not export containers.
+
 Replace the example path with a protected destination and securely copy it
 off-host. Confirm the dump is nonempty and readable with `pg_restore --list`
 using a compatible PostgreSQL client; verify the uploads copy. Test both on a
@@ -63,10 +83,13 @@ alone does not isolate them. Confirm the recovery host has no containers or
 ports colliding with that definition. Do not use this procedure for an
 external database, CasaOS, Debian, or customised service/volume names without
 adapting and testing it. Use the preserved, verified v1.0.1 definition and
-images, not a mutable `latest` tag. Transfer and verify the preserved v1.0.1
-backend and web images and the matching PostgreSQL 16 image on that host. Use
-`docker image inspect IMAGE --format '{{.Id}}'` and compare each ID to the
-verified pre-upgrade record. Export the three resulting full `sha256:...` IDs as
+images, not a mutable `latest` tag. On that host, compare the transferred
+checksum file against the independently retained expected checksums, then run
+`sha256sum -c recovery-images.sha256` in the backup directory. Only after all
+four checks succeed, load the verified archive with `docker image load -i
+recovery-images.tar`. Compare `docker image inspect IMAGE --format '{{.Id}}'`
+for each loaded image to the corresponding verified ID file. Export the three
+resulting full `sha256:...` IDs as
 `RECOVERY_BACKEND_IMAGE_ID`, `RECOVERY_WEB_IMAGE_ID`, and
 `RECOVERY_POSTGRES_IMAGE_ID` in the shell. Do not use a tag or an unverified ID.
 In a separate recovery directory containing the preserved Compose definition,
