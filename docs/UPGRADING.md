@@ -9,12 +9,64 @@ and `ghcr.io/canteenx/nodedr-restaurant-pos-web`. Version 1.1.0 uses the new
 `ghcr.io/canteenx/nventra-pos-backend` and `ghcr.io/canteenx/nventra-pos-web`
 packages. Apply the updated installation definition as described below; the old
 in-app updater cannot add `db-setup`. Do not remove existing volumes.
+An existing v1.0.1 installation may nevertheless offer the new image in its
+in-app updater. Do not use the in-app updater for this transition. Apply the
+new installation definition first. The old updater's rollback was not tested
+end to end against a registry.
 
 After the release publishes, inspect both multi-architecture manifests with
 `docker buildx imagetools inspect ghcr.io/canteenx/nventra-pos-backend:1.1.0`
 and `docker buildx imagetools inspect ghcr.io/canteenx/nventra-pos-web:1.1.0`.
 After the owner makes both GHCR packages public, verify an anonymous pull of
 each versioned image. These new image names will not exist until publication.
+
+## Back up and roll back a v1.0.1 Docker install
+
+Schedule downtime and stop POS writes before the backup. Preserve the existing
+Compose definition, project name, volume names and configuration securely, along
+with a verified copy of the v1.0.1 application images. Do not print credentials.
+The v1.0.1 application supports S3-compatible backups via Settings > Backup;
+configure a reachable bucket, create a backup, and confirm completion and the
+stored database and uploads files. Test recovery on a separate disposable stack.
+Keep a separate off-host copy. The local scheduled backup described in
+[BACKUPS.md](BACKUPS.md) is a separate feature.
+
+For a stock Docker Compose clone, also take a PostgreSQL custom-format dump
+and copy the uploads while writes are stopped. The stock service, user and
+database names below may differ for an older or customised install. Run from
+the original Compose project directory, select a new private backup directory
+outside the project, and ensure sufficient disk space:
+
+```sh
+umask 077
+mkdir -p /secure/off-host-backup
+docker compose exec -T postgres pg_dump -U nventra -d nventra_pos -Fc > /secure/off-host-backup/pre-upgrade.dump
+docker compose cp backend:/data/uploads /secure/off-host-backup/uploads
+```
+
+Replace the example path with a protected destination and securely copy it
+off-host. Confirm the dump is nonempty and readable with `pg_restore --list`
+using a compatible PostgreSQL client; verify the uploads copy. Test both on a
+separate disposable restore before upgrading. Protect these files as customer
+data and preserve the original backup separately.
+
+If a rollback is required, stop traffic and take another copy of the current
+database and uploads for investigation. Restoring the pre-upgrade backup loses
+writes after the backup, including any bills or payments; reconcile them using
+business records. A database specialist should restore the trusted dump into
+an empty database and restore the matching uploads, then start the preserved
+v1.0.1 Compose definition against those recovered volumes and verify login,
+orders and uploads before reopening. Do not drop or overwrite the only copy of
+the current database. The independent QA drill restored a pre-upgrade dump to
+the old definition and verified its data; the precise recovery procedure must
+be rehearsed for the installation and storage layout.
+
+The old backend runs with the stock database superuser again. The roles
+`nventra_owner`, `nventra_runtime` and `nventra_restore` can remain in the
+database after rollback. Preserve them for a subsequent upgrade; do not delete
+roles or volumes as a cleanup step. CasaOS and Debian upgrade/rollback paths,
+external databases and a real registry-backed updater rollback were not
+covered by this Docker-clone drill.
 
 ## Separate database logins for stock Docker installs (#249)
 

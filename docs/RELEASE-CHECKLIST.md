@@ -8,6 +8,12 @@ Claude performs the release only after the owner explicitly says go. Use the own
 2. Complete disposable-stack browser, upgrade and rollback QA, including POS, Hindi, Control Center roles, portal and mobile widths. Resolve all release-blocking and major findings and assess the remaining issues.
 3. Review [release notes](RELEASE-NOTES-v1.1.0.md), [UPGRADING.md](UPGRADING.md), the image names, package provenance, and all four CasaOS image references. Verify existing customers have a tested backup. Drain older Control API instances before granting new permission keys.
 4. Confirm the proposed version and the single version-bump procedure in the image publication documentation. Do not publish an image before release approval.
+5. Compare the peeled local and remote v1.0.1 release tag before using it as
+   an upgrade baseline: `git rev-parse 'v1.0.1^{}'` and
+   `git ls-remote --tags origin 'refs/tags/v1.0.1*'`. For an annotated remote
+   tag, compare the `^{}` line; for a lightweight tag, compare its tag line.
+   Stop if either is missing or the commit IDs differ. Investigate and preserve
+   any local tag before an explicit correction; do not force-fetch all tags.
 
 ## After the owner says go
 

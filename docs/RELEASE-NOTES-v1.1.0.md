@@ -14,6 +14,8 @@ This is a release proposal since v1.0.1. The owner must approve the version and 
 
 Take and verify a backup first. Apply the new Compose, CasaOS or Debian definition before starting the new version. The old in-app updater cannot add the required `db-setup` service. Follow [UPGRADING.md](UPGRADING.md) for the installation-specific procedure, recovery and the limited database roles. The older 1.0.x images use the previous package names; consult that guide when upgrading or rolling back.
 
+Do not use the v1.0.1 in-app updater for this transition even if it offers the new image. CasaOS and Debian upgrade/rollback paths were not tested in the independent Docker-clone QA drill. The registry-backed updater rollback was not tested end to end.
+
 For a Control Center rolling deployment, drain older Control API instances before new permission keys are added to grants. Old instances may reject keys they do not recognise.
 
 ## Known limitations

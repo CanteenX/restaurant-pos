@@ -116,7 +116,7 @@ jobs:
         run: pnpm -r --if-present test
 
       - name: Release image drift guard
-        run: node --test scripts/release-images.test.cjs
+        run: node --test scripts/release-images.test.cjs scripts/upgrade-docs.test.cjs
 
       - name: Managed database startup, recovery and PostgreSQL role checks
         if: steps.changes.outputs.db_runtime == 'true' || github.event_name == 'workflow_dispatch'
