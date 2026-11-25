@@ -13,6 +13,10 @@ test('upgrade guide documents pre-upgrade backup and rollback consequences', () 
   assert.match(guide, /nventra_owner.*nventra_runtime.*nventra_restore/s);
   assert.match(guide, /superuser/i);
   assert.match(guide, /do not use.*in-app updater/i);
+  assert.match(guide, /createdb -U nventra -O nventra nventra_pos/);
+  assert.match(guide, /pg_restore --exit-on-error --no-owner/);
+  assert.match(guide, /docker compose cp .*uploads/);
+  assert.match(guide, /isolated.*project name/i);
 });
 
 test('release checklist verifies tag identity without replacing local tags', () => {

@@ -52,14 +52,42 @@ data and preserve the original backup separately.
 
 If a rollback is required, stop traffic and take another copy of the current
 database and uploads for investigation. Restoring the pre-upgrade backup loses
-writes after the backup, including any bills or payments; reconcile them using
-business records. A database specialist should restore the trusted dump into
-an empty database and restore the matching uploads, then start the preserved
-v1.0.1 Compose definition against those recovered volumes and verify login,
-orders and uploads before reopening. Do not drop or overwrite the only copy of
-the current database. The independent QA drill restored a pre-upgrade dump to
-the old definition and verified its data; the precise recovery procedure must
-be rehearsed for the installation and storage layout.
+writes after the backup, including bills and payments. Reconcile them using
+business records. Never drop or overwrite the only copy of the current database.
+
+The following stock-clone recovery uses a **new, isolated Compose project name**
+and new database and uploads volumes. Rehearse it on a disposable host first.
+The preserved v1.0.1 definition has fixed container names: stop the original
+project before starting the recovery project, and check that its names and ports
+do not collide with any other installation. Do not use this procedure for an
+external database, CasaOS, Debian, or customised service/volume names without
+adapting and testing it. Use the preserved, verified v1.0.1 definition and
+images, not a mutable `latest` tag. Confirm its image IDs and original project
+configuration before proceeding. Run the following from that preserved project
+directory, with its required configuration already available. Substitute the
+secure backup path used above:
+
+```sh
+docker compose -p nventra-recovery up -d postgres
+docker compose -p nventra-recovery exec -T postgres pg_isready -U nventra -d postgres
+# Only on the new recovery volume, replace its empty initial database.
+docker compose -p nventra-recovery exec -T postgres dropdb -U nventra --if-exists nventra_pos
+docker compose -p nventra-recovery exec -T postgres createdb -U nventra -O nventra nventra_pos
+docker compose -p nventra-recovery exec -T postgres pg_restore --exit-on-error --no-owner -U nventra -d nventra_pos < /secure/off-host-backup/pre-upgrade.dump
+docker compose -p nventra-recovery up -d backend
+docker compose -p nventra-recovery cp /secure/off-host-backup/uploads/. backend:/data/uploads/
+docker compose -p nventra-recovery up -d web
+```
+
+Before `dropdb`, confirm `nventra-recovery` really uses a newly created empty
+volume with `docker compose -p nventra-recovery ps` and Docker volume inspection;
+stop if it points to existing data. The drop applies only to that recovery
+database. Check every command for errors. Compare restored row counts and
+uploads checksums against the backup, then verify login, orders and served
+uploads on the isolated recovery instance before directing users to it. Preserve
+both old and upgraded volumes until recovery and reconciliation are complete.
+The independent QA drill restored the pre-upgrade dump to the old definition
+and verified its data; adapt the exact recovery project and routing to the site.
 
 The old backend runs with the stock database superuser again. The roles
 `nventra_owner`, `nventra_runtime` and `nventra_restore` can remain in the
