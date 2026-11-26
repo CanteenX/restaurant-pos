@@ -9,8 +9,8 @@ name: CI
 #   - PRs only (no extra run on push to staging), docs-only PRs skipped
 #   - one runner, pnpm store cached, superseded runs cancelled
 #   - backend e2e (Postgres) only when backend/types/prisma files change
-# Browser QA (docker compose + Playwright) runs inside the Claude cloud agent
-# VMs, which cost no Actions minutes; e2e.yml runs it here once a night only.
+#   - Control browser QA only when Control or shared inputs change
+# POS browser QA stays in the separate scheduled e2e.yml workflow.
 
 on:
   pull_request:
@@ -19,7 +19,7 @@ on:
     paths-ignore:
       - "**/*.md"
       - "docs/**"
-      - "casaos/**"
+      - "casaos/*.png"
       - "mobile/store/**"
       - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
@@ -36,7 +36,7 @@ jobs:
   gate:
     name: ci-gate
     if: github.event.pull_request.draft != true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Keep Playwright 1.56.1 on a supported runner.
     timeout-minutes: 20
     services:
       postgres:
@@ -61,10 +61,36 @@ jobs:
         uses: dorny/paths-filter@v3
         with:
           filters: |
+            db_runtime:
+              - "docker-compose.yml"
+              - "casaos/docker-compose.yml"
+              - "packaging/deb/docker-compose.yml"
+              - "updater/**"
+              - "apps/backend/Dockerfile"
+              - "apps/backend/container-entrypoint.sh"
+              - "apps/backend/src/system/db-*.ts"
+              - "apps/backend/src/backup/{pg-exec,restore-role}.ts"
+              - "apps/backend/src/sync/{capture-install,sync.service}.ts"
+              - "apps/backend/prisma/**"
+              - "scripts/test-db-runtime*"
+              - ".github/workflows/ci.yml"
             backend:
               - "apps/backend/**"
               - "packages/types/**"
               - "pnpm-lock.yaml"
+            control:
+              - "apps/control/**"
+              - "apps/control-api/**"
+              - "packages/types/**"
+              - "pnpm-lock.yaml"
+              - "e2e/control/**"
+              - "e2e/control-qa.sh"
+              - "e2e/control-seed.test.cjs"
+              - "e2e/playwright.control.config.ts"
+              - "e2e/package.json"
+              - "e2e/package-lock.json"
+              - "pnpm-workspace.yaml"
+              - ".github/workflows/ci.yml"
 
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
@@ -89,7 +115,26 @@ jobs:
       - name: Unit tests
         run: pnpm -r --if-present test
 
+      - name: Release image drift guard
+        run: node --test scripts/release-images.test.cjs scripts/upgrade-docs.test.cjs
+
+      - name: Control table accessibility checks
+        run: node --test e2e/control-table-access.test.cjs
+
+      - name: Managed database startup, recovery and PostgreSQL role checks
+        if: steps.changes.outputs.db_runtime == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          pnpm --filter "./apps/backend" build
+          node --test updater/server.test.js scripts/test-db-runtime-startup.cjs
+          bash scripts/test-db-runtime-role.sh
+
       - name: Backend e2e (only when backend changed)
         if: steps.changes.outputs.backend == 'true'
         working-directory: apps/backend
         run: pnpm exec prisma migrate deploy && pnpm test:e2e
+
+      - name: Control Playwright (only when Control changed)
+        if: steps.changes.outputs.control == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          CONTROL_QA_INSTALL_CHROMIUM: "1"
+        run: bash e2e/control-qa.sh

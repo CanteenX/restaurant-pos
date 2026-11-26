@@ -13,8 +13,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useBranch } from "@/hooks/use-branch";
 import { useCustomers, useDeleteCustomer, type Customer } from "@/hooks/use-customers";
 import { ApiError } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 
 export default function CustomersPage() {
+  const { t } = useI18n();
   const { branchId } = useBranch();
   const [search, setSearch] = useState("");
   const { data: customers, isLoading } = useCustomers(branchId, search || undefined);
@@ -24,11 +26,11 @@ export default function CustomersPage() {
   const onDelete = (e: React.MouseEvent, customer: Customer) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!confirm(`Delete ${customer.name ?? "this customer"}? This cannot be undone.`)) return;
+    if (!confirm(t("customers.deleteConfirm", { name: customer.name ?? t("customers.thisCustomer") }))) return;
     deleteCustomer.mutate(customer.id, {
-      onSuccess: () => toast.success(`${customer.name ?? "Customer"} deleted`),
+      onSuccess: () => toast.success(t("customers.deleted", { name: customer.name ?? t("customers.customer") })),
       onError: (err) =>
-        toast.error(err instanceof ApiError ? err.message : "Could not delete customer"),
+        toast.error(err instanceof ApiError ? err.message : t("customers.deleteFailed")),
     });
   };
 
@@ -36,14 +38,14 @@ export default function CustomersPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[32px] font-semibold tracking-tight text-foreground">Customers</h1>
-          <p className="text-sm text-muted-foreground">Profiles, loyalty, and order history</p>
+          <h1 className="text-[32px] font-semibold tracking-tight text-foreground">{t("customers.title")}</h1>
+          <p className="text-sm text-muted-foreground">{t("customers.subtitle")}</p>
         </div>
         <AddCustomerDialog branchId={branchId} />
       </div>
 
       <Input
-        placeholder="Search by name, phone, or email…"
+        placeholder={t("customers.searchPlaceholder")}
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         className="max-w-sm"
@@ -65,16 +67,16 @@ export default function CustomersPage() {
             >
               <div className="flex flex-col">
                 <span className="text-sm font-medium text-foreground">
-                  {c.name ?? "Unnamed customer"}
+                  {c.name ?? t("customers.unnamed")}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  {[c.phone, c.email].filter(Boolean).join(" · ") || "No contact info"}
+                  {[c.phone, c.email].filter(Boolean).join(" · ") || t("customers.noContact")}
                 </span>
               </div>
               <div className="flex items-center gap-4 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1">
                   <Star className="h-3.5 w-3.5" />
-                  {c.loyaltyPoints} pts
+                  {t("pos.customerPts", { count: c.loyaltyPoints })}
                 </span>
                 {Number(c.walletBalance) > 0 && (
                   <span className="flex items-center gap-1">
@@ -86,7 +88,7 @@ export default function CustomersPage() {
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8 text-muted-foreground hover:text-primary"
-                    title="Edit customer"
+                    title={t("customers.edit")}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -99,7 +101,7 @@ export default function CustomersPage() {
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                    title="Delete customer"
+                    title={t("customers.delete")}
                     onClick={(e) => onDelete(e, c)}
                   >
                     <Trash2 className="h-4 w-4" />
@@ -110,9 +112,9 @@ export default function CustomersPage() {
           ))
         ) : (
           <div className="flex flex-col items-center gap-2 py-16 text-center">
-            <p className="text-sm font-medium text-foreground">No customers yet</p>
+            <p className="text-sm font-medium text-foreground">{t("customers.empty.title")}</p>
             <p className="text-sm text-muted-foreground">
-              Add a profile to start tracking loyalty and order history.
+              {t("customers.empty.hint")}
             </p>
           </div>
         )}

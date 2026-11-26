@@ -29,6 +29,33 @@ export const CURRENT_IDENTITY: DbIdentity = {
   user: 'nventra',
   database: 'nventra_pos',
 };
+// Legacy updater versions copy the old image command, including its identity
+// CLI and direct Nest startup. Both must reject the old managed credentials.
+export function refuseLegacyStockRuntime(value: string | undefined): void {
+  if (!value) return;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('Invalid database connection configuration');
+  }
+  const stockHosts = [
+    'postgres',
+    'nventra-pos-postgres',
+    'nodedr-restaurant-pos-postgres',
+  ];
+  if (
+    stockHosts.includes(url.hostname) &&
+    [CURRENT_IDENTITY, LEGACY_IDENTITY].some(
+      ({ user, database }) =>
+        url.username === user && url.pathname === `/${database}`,
+    )
+  ) {
+    throw new Error(
+      'Stock database configuration detected. Apply the current Compose or CasaOS definition before starting this image.',
+    );
+  }
+}
 export const UPGRADE_ROLE = 'nventra_identity_upgrade';
 /**
  * docker-compose.yml's POSTGRES_PASSWORD default changed with the rename, so

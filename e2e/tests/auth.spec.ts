@@ -4,6 +4,18 @@ import { LOGGED_OUT, login, openDashboard } from "./helpers";
 test.describe("auth (logged out)", () => {
   test.use({ storageState: LOGGED_OUT });
 
+  test("password visibility toggle has a visible keyboard focus indicator", async ({ page }) => {
+    await page.goto("/login");
+    const toggle = page.getByRole("button", { name: "Show password" });
+    await page.locator('input[type="password"]').focus();
+    await page.keyboard.press("Tab");
+    await expect(toggle).toBeFocused();
+    const shadow = await toggle.evaluate((element) => getComputedStyle(element).boxShadow);
+    expect(shadow).not.toBe("none");
+    await page.keyboard.press("Space");
+    await expect(page.getByRole("button", { name: "Hide password" })).toBeFocused();
+  });
+
   test("wrong password shows an error and stays on /login", async ({ page }) => {
     await login(page, "owner@demo.local", "definitely-wrong-1");
     await expect(page.getByText("Invalid login ID or password")).toBeVisible();

@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -8,12 +8,25 @@ export const RESTORE_ROLE = 'nventra_restore';
 /**
  * Deterministic password for the restore role, derived from the app's own
  * DB password so no extra secret has to be stored or configured. It
- * changes when the DB password rotates; the role is re-synced at startup.
+ * changes when the DB password rotates; managed database setup syncs the role.
  */
 export function deriveRestorePassword(dbPassword: string): string {
   return createHmac('sha256', dbPassword)
     .update('nventra-restore-role-v1')
     .digest('hex');
+}
+
+/** PostgreSQL receives only a salted verifier, never a reusable plaintext secret. */
+export function restorePasswordVerifier(password: string): string {
+  // Derived passwords are ASCII hex, so SASLprep does not change their bytes.
+  const salt = randomBytes(16);
+  const salted = pbkdf2Sync(password, salt, 4096, 32, 'sha256');
+  const client = createHmac('sha256', salted).update('Client Key').digest();
+  const stored = createHash('sha256').update(client).digest('base64');
+  const server = createHmac('sha256', salted)
+    .update('Server Key')
+    .digest('base64');
+  return `SCRAM-SHA-256$4096:${salt.toString('base64')}$${stored}:${server}`;
 }
 
 /** DATABASE_RESTORE_URL if set, else the limited role on the same database. */
@@ -35,8 +48,8 @@ export function restoreConnectionUrl(): string | undefined {
 /**
  * Makes sure the restore role exists with only data privileges on the app
  * schema (DML + TRUNCATE on tables, USAGE/SELECT/UPDATE on sequences, no
- * CREATE, no pg_* server roles). Runs at startup when the app is connected
- * as a superuser (the shipped docker-compose default); idempotent.
+ * CREATE, no pg_* server roles) for legacy or operator-managed deployments.
+ * The stock database setup provisions the role before the backend starts.
  */
 @Injectable()
 export class RestoreRoleService implements OnApplicationBootstrap {
@@ -50,7 +63,11 @@ export class RestoreRoleService implements OnApplicationBootstrap {
 
   async ensure(): Promise<void> {
     // An operator-managed restore role is theirs to provision.
-    if (process.env.DATABASE_RESTORE_URL) return;
+    if (
+      process.env.NVENTRA_DATABASE_URL_FILE ||
+      process.env.DATABASE_RESTORE_URL
+    )
+      return;
     try {
       const rows = await this.prisma.$queryRawUnsafe<{ rolsuper: boolean }[]>(
         'SELECT rolsuper FROM pg_roles WHERE rolname = current_user',
@@ -65,7 +82,7 @@ export class RestoreRoleService implements OnApplicationBootstrap {
         new URL(process.env.DATABASE_URL ?? '').password,
       );
       if (!dbPassword) return;
-      const pw = deriveRestorePassword(dbPassword); // hex: safe in a literal
+      const pw = restorePasswordVerifier(deriveRestorePassword(dbPassword)); // base64: safe literal
       const role = RESTORE_ROLE;
       const run = (q: string) => this.prisma.$executeRawUnsafe(q);
       await run(

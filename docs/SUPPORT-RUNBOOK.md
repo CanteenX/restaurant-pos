@@ -88,7 +88,7 @@ their password, someone with **shell access to the server** runs:
 
 ```sh
 # Docker install (from the folder with docker-compose.yml)
-docker compose exec backend node dist/src/system/reset-owner-password.cli.js --email owner@example.com
+docker compose exec backend ./container-entrypoint.sh node dist/src/system/reset-owner-password.cli.js --email owner@example.com
 
 # From a source checkout (DATABASE_URL set)
 pnpm --filter ./apps/backend run reset-owner-password -- --email owner@example.com

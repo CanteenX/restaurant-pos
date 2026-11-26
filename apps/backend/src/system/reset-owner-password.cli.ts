@@ -1,5 +1,5 @@
 // Owner password recovery, run on the server (docs/SUPPORT-RUNBOOK.md, section 4):
-//   docker compose exec backend node dist/src/system/reset-owner-password.cli.js --email owner@example.com
+//   docker compose exec backend ./container-entrypoint.sh node dist/src/system/reset-owner-password.cli.js --email owner@example.com
 //   pnpm --filter ./apps/backend run reset-owner-password -- --email owner@example.com   (from source)
 // Generates a new password, prints it once, and signs the owner out everywhere.
 import { Logger } from '@nestjs/common';

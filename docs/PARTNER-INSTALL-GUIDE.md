@@ -75,7 +75,7 @@ cp .env.example .env          # set JWT_SECRET, POSTGRES_PASSWORD and UPDATER_TO
 docker compose up -d --build
 ```
 
-Use `docker exec nventra-pos-backend npx ts-node prisma/seed.ts` only if you
+Use `docker compose exec backend ./container-entrypoint.sh node dist/prisma/seed.js` only if you
 want the demo data.
 
 ## 4. Configuration (`.env`)

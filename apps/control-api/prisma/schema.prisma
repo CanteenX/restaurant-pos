@@ -1,0 +1,368 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/control-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("CONTROL_DATABASE_URL")
+  schemas  = ["control"]
+}
+
+model AuditEvent {
+  sequence      BigInt   @id
+  occurredAtMs  BigInt   @map("occurred_at_ms")
+  actorType     String   @map("actor_type")
+  actorId       String   @map("actor_id") @db.Uuid
+  businessId    String?  @map("business_id") @db.Uuid
+  action        String
+  subjectType   String   @map("subject_type")
+  subjectId     String?  @map("subject_id") @db.Uuid
+  requestId     String   @map("request_id") @db.Uuid
+  outcome       String
+  changedFields String[] @default([]) @map("changed_fields")
+  previousHash  String   @map("previous_hash")
+  eventHash     String   @map("event_hash")
+
+  @@map("audit_event")
+  @@schema("control")
+}
+
+model Staff {
+  hostedAccessEvents HostedAccessEvent[]
+  billingInvoices BillingInvoice[]
+  billingPayments BillingPayment[]
+  id                 String    @id @db.Uuid
+  email              String    @unique
+    name               String?   @db.VarChar(120)
+    lastSignInAt       DateTime? @db.Timestamptz @map("last_sign_in_at")
+  grants             String[]  @default([])
+  roleId             String?   @db.Uuid @map("role_id")
+  role               StaffRole? @relation("StaffRoleMembers", fields: [roleId], references: [id], onDelete: Restrict)
+  extraGrants        String[]  @default([]) @map("extra_grants")
+  removedGrants      String[]  @default([]) @map("removed_grants")
+  credentialVersion  BigInt    @default(0) @map("credential_version")
+  passwordHash       String    @map("password_hash")
+  enabled            Boolean   @default(true)
+  encryptedSeed      String?   @map("encrypted_seed")
+  lastStep           Int?      @map("last_step")
+  recoveryDigests    String[]  @default([]) @map("recovery_digests")
+  challengeDigest    String?   @unique @map("challenge_digest")
+  challengeExpiresAt DateTime? @db.Timestamptz @map("challenge_expires_at")
+  pendingSeed        String?   @map("pending_seed")
+  sessions           StaffSession[]
+  enrollmentProof    StaffEnrollmentProof?
+  ownedTickets       Ticket[]
+  authoredNotes      TicketMessage[]
+  @@map("staff")
+  @@schema("control")
+}
+
+model StaffSession {
+  digest     String   @id
+  staffId    String   @db.Uuid @map("staff_id")
+  staff      Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  verifiedAt DateTime @db.Timestamptz @map("verified_at")
+  expiresAt  DateTime @db.Timestamptz @map("expires_at")
+  @@index([expiresAt], map: "staff_session_expiry")
+  @@index([staffId], map: "staff_session_staff")
+  @@map("staff_session")
+  @@schema("control")
+}
+
+model AuthLimit {
+  bucket    String   @id
+  attempts  Int
+  expiresAt DateTime @db.Timestamptz @map("expires_at")
+  @@index([expiresAt], map: "auth_limit_expiry")
+  @@map("auth_limit")
+  @@schema("control")
+}
+
+model StaffEnrollmentProof {
+  staffId   String   @id @db.Uuid @map("staff_id")
+  staff     Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  digest    Bytes
+  expiresAt DateTime @db.Timestamptz @map("expires_at")
+  @@map("staff_enrollment_proof")
+  @@schema("control")
+}
+
+model Business {
+  portalAccounts PortalAccount[]
+  hostedAccessEvents HostedAccessEvent[]
+  billingInvoices BillingInvoice[]
+  id          String   @id @db.Uuid
+  legalName   String   @map("legal_name") @db.VarChar(160)
+  displayName String   @map("display_name") @db.VarChar(160)
+  archived    Boolean  @default(false)
+  outlets     Outlet[]
+  tickets     Ticket[]
+  @@map("business")
+  @@schema("control")
+}
+
+model HostedAccessEvent {
+  businessId String   @map("business_id") @db.Uuid
+  requestKey String   @map("request_key") @db.Uuid
+  actorId    String   @map("actor_id") @db.Uuid
+  status     String   @db.VarChar(9)
+  reason     String   @db.VarChar(240)
+  revision   Int
+  changedAt  DateTime @default(dbgenerated("clock_timestamp()")) @map("changed_at") @db.Timestamptz(3)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  actor      Staff    @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  @@id([businessId, requestKey])
+  @@unique([businessId, revision])
+  @@map("hosted_access_event")
+  @@schema("control")
+}
+
+model PortalAccount {
+  id                  String    @id @db.Uuid
+  businessId          String    @map("business_id") @db.Uuid
+  email               String    @unique @db.VarChar(254)
+  status              String    @db.VarChar(7)
+  passwordHash        String?   @map("password_hash")
+  activationDigest    String?   @unique @map("activation_digest")
+  activationExpiresAt DateTime? @map("activation_expires_at") @db.Timestamptz(3)
+  business            Business  @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  sessions            PortalSession[]
+  @@index([businessId,id], map: "portal_account_business")
+  @@map("portal_account")
+  @@schema("control")
+}
+
+model PortalSession {
+  digest    String   @id
+  accountId String   @map("account_id") @db.Uuid
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  account   PortalAccount @relation(fields: [accountId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  @@index([accountId], map: "portal_session_account")
+  @@index([expiresAt], map: "portal_session_expiry")
+  @@map("portal_session")
+  @@schema("control")
+}
+
+model PortalAuthLimit {
+  bucket    String   @id
+  attempts  Int
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  @@index([expiresAt], map: "portal_limit_expiry")
+  @@map("portal_auth_limit")
+  @@schema("control")
+}
+
+model Outlet {
+  id          String   @id @db.Uuid
+  businessId  String   @map("business_id") @db.Uuid
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  displayName String   @map("display_name") @db.VarChar(160)
+  timeZone    String   @map("time_zone") @db.VarChar(64)
+  archived    Boolean  @default(false)
+  serviceTerms OutletServiceTerm[]
+  @@unique([businessId, id])
+  tickets     Ticket[]
+  @@map("outlet")
+  @@schema("control")
+}
+
+model ServicePlanVersion {
+  code    String @db.VarChar(32)
+  version Int
+  label   String @db.VarChar(80)
+  terms   OutletServiceTerm[]
+  @@id([code, version])
+  @@map("service_plan_version")
+  @@schema("control")
+}
+
+model OutletServiceTerm {
+  id          String   @id @db.Uuid
+  businessId  String   @map("business_id") @db.Uuid
+  outletId    String   @map("outlet_id") @db.Uuid
+  outlet      Outlet   @relation(fields: [businessId, outletId], references: [businessId, id], onDelete: Restrict, onUpdate: NoAction)
+  revision    Int
+  requestKey  String   @map("request_key") @db.Uuid
+  operation   String   @db.VarChar(6)
+  planCode    String?  @map("plan_code") @db.VarChar(32)
+  planVersion Int?     @map("plan_version")
+  plan        ServicePlanVersion? @relation(fields: [planCode, planVersion], references: [code, version], onDelete: Restrict, onUpdate: NoAction)
+  startsAt    DateTime? @map("starts_at") @db.Timestamptz(3)
+  endsAt      DateTime? @map("ends_at") @db.Timestamptz(3)
+  recordedAt  DateTime  @default(now()) @map("recorded_at") @db.Timestamptz(3)
+  @@unique([outletId, revision])
+  @@unique([outletId, requestKey])
+  @@map("outlet_service_term")
+  @@schema("control")
+}
+
+model Ticket {
+  id         String          @id @db.Uuid
+  subject    String          @db.VarChar(240)
+  businessId String?         @map("business_id") @db.Uuid
+  business   Business?       @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  outletId   String?         @map("outlet_id") @db.Uuid
+  outlet     Outlet?         @relation(fields: [businessId, outletId], references: [businessId, id], onDelete: Restrict, onUpdate: NoAction)
+  ownerId    String?         @map("owner_id") @db.Uuid
+  owner      Staff?          @relation(fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  status     String          @default("open") @db.VarChar(8)
+  priority   String          @default("normal") @db.VarChar(6)
+  createdAt  DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime        @default(now()) @map("updated_at") @db.Timestamptz(3)
+  messages   TicketMessage[]
+  @@unique([id, businessId], map: "ticket_portal_scope_key")
+  @@index([status, id])
+  @@map("ticket")
+  @@schema("control")
+}
+
+model TicketMessage {
+  id         String   @id @db.Uuid
+  ticketId   String   @map("ticket_id") @db.Uuid
+  ticket     Ticket   @relation(fields: [ticketId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  sequence   Int
+  requestKey String?   @map("request_key") @db.Uuid
+  authorId   String?   @map("author_id") @db.Uuid
+  author     Staff?    @relation(fields: [authorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  text       String   @db.Text
+  direction  String   @default(dbgenerated("'internal'::character varying")) @db.VarChar(8)
+  visibility String   @default(dbgenerated("'staff'::character varying")) @db.VarChar(6)
+  createdAt  DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  replyOutbox TicketReplyOutbox?
+  receipt    InboundReceipt?
+  @@unique([id, direction])
+  @@unique([ticketId, sequence])
+  @@unique([ticketId, requestKey])
+  @@map("ticket_message")
+  @@schema("control")
+}
+
+model MailboxCursor {
+  mailbox     String   @id @db.VarChar(254)
+  uidValidity BigInt?  @map("uid_validity")
+  throughUid  BigInt   @default(0) @map("through_uid")
+  leaseToken  String?  @map("lease_token") @db.Uuid
+  leaseUntil  DateTime? @map("lease_until") @db.Timestamptz(6)
+  receipts    InboundReceipt[]
+  @@map("mailbox_cursor")
+  @@schema("control")
+}
+
+model InboundReceipt {
+  mailbox    String @db.VarChar(254)
+  cursor     MailboxCursor @relation(fields: [mailbox], references: [mailbox], onDelete: NoAction, onUpdate: NoAction)
+  providerId String @map("provider_id") @db.VarChar(255)
+  outcome    String @db.VarChar(10)
+  reason     String @db.VarChar(64)
+  omittedAttachments Int @default(0) @map("omitted_attachments") @db.SmallInt
+  messageRowId String? @map("message_row_id") @db.Uuid
+  messageDirection String @default("inbound") @map("message_direction") @db.VarChar(8)
+  message    TicketMessage? @relation(fields: [messageRowId, messageDirection], references: [id, direction], onDelete: NoAction, onUpdate: NoAction)
+  rfcMessageId String? @map("rfc_message_id") @db.VarChar(254)
+  claimedSender String? @map("claimed_sender") @db.VarChar(254)
+  verifiedSender String? @map("verified_sender") @db.VarChar(254)
+  deliveries MailboxDelivery[]
+  @@id([mailbox,providerId])
+  @@unique([messageRowId, messageDirection])
+  @@index([mailbox,verifiedSender,rfcMessageId], map: "receipt_thread_idx")
+  @@map("inbound_receipt")
+  @@schema("control")
+}
+
+model MailboxDelivery {
+  mailbox String @db.VarChar(254)
+  uidValidity BigInt @map("uid_validity")
+  uid BigInt
+  providerId String @map("provider_id") @db.VarChar(255)
+  receipt InboundReceipt @relation(fields: [mailbox,providerId], references: [mailbox,providerId], onDelete: NoAction, onUpdate: NoAction)
+  @@id([mailbox,uidValidity,uid])
+  @@map("mailbox_delivery")
+  @@schema("control")
+}
+
+model TicketReplyOutbox {
+  messageRowId String @id @map("message_row_id") @db.Uuid
+  messageDirection String @default("outbound") @map("message_direction") @db.VarChar(8)
+  message TicketMessage @relation(fields: [messageRowId,messageDirection], references: [id,direction], onDelete: NoAction, onUpdate: NoAction)
+  messageId String @unique @map("message_id") @db.VarChar(254)
+  inReplyTo String? @map("in_reply_to") @db.VarChar(254)
+  recipient String @db.VarChar(254)
+  subject String @db.VarChar(250)
+  renderedText String @map("rendered_text")
+  renderedHtml String @map("rendered_html")
+  acknowledgedUnverified Boolean @map("acknowledged_unverified")
+  state String @default("queued") @db.VarChar(8)
+  attempts Int @default(0)
+  availableAt DateTime @default(dbgenerated("clock_timestamp()")) @map("available_at") @db.Timestamptz(6)
+  leaseToken String? @map("lease_token") @db.Uuid
+  leaseUntil DateTime? @map("lease_until") @db.Timestamptz(6)
+  @@unique([messageRowId,messageDirection])
+  @@index([state,availableAt,messageRowId], map: "outbox_available_idx")
+  @@index([state,leaseUntil], map: "outbox_lease_idx")
+  @@map("ticket_reply_outbox")
+  @@schema("control")
+}
+
+model OutboxDailyQuota {
+  day DateTime @id @db.Date
+  attempts Int
+  @@map("outbox_daily_quota")
+  @@schema("control")
+}
+
+model BillingInvoice {
+  id String @id @db.Uuid
+  businessId String @map("business_id") @db.Uuid
+  business Business @relation(fields:[businessId],references:[id],onUpdate:NoAction,onDelete:NoAction)
+  requestKey String @map("request_key") @db.Uuid
+  createdBy String @map("created_by") @db.Uuid
+  actor Staff @relation(fields:[createdBy],references:[id],onUpdate:NoAction,onDelete:NoAction)
+  reference String @db.VarChar(120)
+  description String @db.VarChar(1000)
+  amountPaise BigInt @map("amount_paise")
+  dueOn DateTime @map("due_on") @db.Date
+  createdAt DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  payments BillingPayment[]
+  @@unique([businessId,id])
+  @@unique([businessId,requestKey])
+  @@index([dueOn,id],map:"billing_invoice_due_idx")
+  @@map("billing_invoice")
+  @@schema("control")
+}
+
+model BillingPayment {
+  id String @id @db.Uuid
+  businessId String @map("business_id") @db.Uuid
+  invoiceId String @map("invoice_id") @db.Uuid
+  invoice BillingInvoice @relation(fields:[businessId,invoiceId],references:[businessId,id],onUpdate:NoAction,onDelete:NoAction)
+  requestKey String @map("request_key") @db.Uuid
+  createdBy String @map("created_by") @db.Uuid
+  actor Staff @relation(fields:[createdBy],references:[id],onUpdate:NoAction,onDelete:NoAction)
+  reference String @db.VarChar(120)
+  method String @db.VarChar(13)
+  amountPaise BigInt @map("amount_paise")
+  ordinal Int @default(dbgenerated("0"))
+  createdAt DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  @@unique([invoiceId,requestKey])
+  @@unique([invoiceId,method,reference])
+  @@unique([invoiceId,ordinal])
+  @@map("billing_payment")
+  @@schema("control")
+}
+
+/// Staff roles are data: the seeded rows are created by the migration and edited through the role API.
+model StaffRole {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key         String   @unique
+  name        String
+  description String   @default("")
+  grants      String[] @default([])
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @db.Timestamptz @map("created_at")
+  updatedAt   DateTime @default(now()) @db.Timestamptz @map("updated_at")
+  updatedBy   String?  @db.Uuid @map("updated_by")
+  members     Staff[]  @relation("StaffRoleMembers")
+  @@map("staff_role")
+  @@schema("control")
+}

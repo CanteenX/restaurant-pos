@@ -18,21 +18,30 @@ export async function runPg(
   cmd: PgBinary,
   args: string[],
   url: string | undefined,
+  outputBudget = MAX_BUFFER,
 ): Promise<string> {
   const env = { ...process.env, ...pgEnvFromUrl(url) };
   try {
     const { stdout } = await execFileAsync(cmd, args, {
       env,
-      maxBuffer: MAX_BUFFER,
+      maxBuffer: Math.min(MAX_BUFFER, outputBudget),
     });
     return String(stdout);
   } catch (err) {
     const msg = redactSecrets(describeExecError(cmd, err), knownDbSecrets(url));
-    throw new Error(
+    const failure = new Error(
       msg.length > MAX_ERROR_CHARS
         ? `${msg.slice(0, MAX_ERROR_CHARS)}...`
         : msg,
     );
+    if (
+      (err as { code?: unknown })?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+    ) {
+      throw Object.assign(failure, {
+        code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+      });
+    }
+    throw failure;
   }
 }
 

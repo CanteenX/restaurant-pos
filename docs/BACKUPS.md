@@ -71,11 +71,11 @@ A restore is destructive and Owner-only. Backups are untrusted input, so:
 - **Limited role.** The database is restored as `nventra_restore` (NOSUPERUSER,
   NOCREATEROLE, NOCREATEDB, no predefined `pg_*` memberships, no database or
   schema CREATE, no schema/table/sequence/function ownership or TRIGGER rights;
-  only data privileges on the app tables
-  and USAGE/SELECT/UPDATE on sequences). The backend creates and re-syncs this
-  role at startup and before every restore when it is connected as a superuser
-  (the shipped Docker default). Its password is derived from the database
-  password, so there is nothing to configure.
+  only data privileges on the app tables, TEMP for transaction-local counter
+  reconciliation, and USAGE/SELECT/UPDATE on sequences). For stock Docker installs, `db-setup`
+  provisions the role. Its password is derived from the runtime database
+  password, so there is nothing to configure. The database dump uses the
+  runtime login, with read access to all application data.
 - **`DATABASE_RESTORE_URL`** (optional) points restores at a role you manage.
   The restore is refused unless that role is limited as above, including any
   roles it is a member of.
@@ -90,8 +90,9 @@ A restore is destructive and Owner-only. Backups are untrusted input, so:
   files, verifies table and column names against the live schema, and generates
   its own file-based `\copy` commands. Dump SQL and psql commands never reach
   the psql command parser. Hindi, rupee signs and other UTF-8 data retain their
-  original bytes. Extraction rejects lines over 8 MiB and total data over 1 GiB;
-  scratch files are removed after success or failure.
+  original bytes. Extraction enforces configurable line and output budgets;
+  see Restore resource limits below. Scratch files are removed after success
+  or failure.
 - **Sequence counters only move forward.** PostgreSQL sequence changes do not
   roll back. Every live, table-owned sequence is reconciled to the greatest of
   its existing value, the vetted backup value and the largest restored column
@@ -108,3 +109,22 @@ A restore is destructive and Owner-only. Backups are untrusted input, so:
   cap) and extracted into a scratch directory before anything is changed; the
   old uploads are kept aside until the swap succeeds.
 - The backup must come from the same schema version as the running app.
+
+
+### Restore resource limits
+
+Database COPY extraction checks the compressed custom-format dump before loading:
+`NVENTRA_RESTORE_MAX_ARCHIVE_BYTES` defaults to 4 GiB. The default decompressed
+budget is 128 times the dump size, with a 1 GiB floor and 16 GiB ceiling.
+`NVENTRA_RESTORE_MAX_OUTPUT_BYTES` overrides that budget for trusted backups with
+unusually high compression. `NVENTRA_RESTORE_MAX_LINE_BYTES` defaults to the smaller
+of 64 MiB and the output budget. All three settings accept positive safe integer
+byte counts; invalid settings refuse the restore. Errors name the applicable
+setting. Output budgets apply across tables and are enforced while streaming;
+archive size alone never proves the expanded data is safe. Provision scratch disk
+space for the expanded data. Upload tarball limits remain separate.
+
+The data transaction uses a 10 second lock timeout and a 15 minute timeout per
+statement. Timeout failures roll back table changes; PostgreSQL sequence counters
+may retain forward gaps. Automatically provisioned restore credentials are sent to
+PostgreSQL as salted SCRAM-SHA-256 verifiers rather than plaintext passwords.

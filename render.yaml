@@ -1,0 +1,35 @@
+# Render Blueprint: Nventra POS CLIENT DEMO backend (free tier).
+# The web screens (apps/web) run on Vercel and proxy /api and /socket.io here
+# via BACKEND_URL, so browsers only ever see the Vercel origin.
+# Database: Neon free Postgres. Paste its DIRECT (non-pooled) connection
+# string into DATABASE_URL in the Render dashboard. Never commit it.
+# See docs/DEPLOY-DEMO.md.
+services:
+  - type: web
+    name: nventra-pos-demo-api
+    runtime: docker
+    plan: free
+    region: singapore
+    repo: https://github.com/CanteenX/restaurant-pos
+    branch: master
+    autoDeploy: true
+    dockerContext: .
+    dockerfilePath: ./apps/backend/Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false # Neon connection string, entered by the owner in the dashboard
+      - key: JWT_SECRET
+        generateValue: true
+      - key: UPDATER_TOKEN
+        generateValue: true # no updater runs on Render; the backend just requires a value
+      - key: CORS_ORIGIN
+        sync: false # the Vercel admin URL, e.g. https://nventra-pos-demo.vercel.app
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: TRUST_PROXY
+        value: "1"
+      - key: UPLOADS_DIR
+        value: /tmp/uploads # ephemeral on the free tier: fine for a demo
+      - key: NODE_ENV
+        value: production

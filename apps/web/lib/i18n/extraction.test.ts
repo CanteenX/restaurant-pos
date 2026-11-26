@@ -42,10 +42,18 @@ const EXTRACTED_PATHS = [
   "components/dashboard",
   "app/(dashboard)/operations",
   "components/operations",
+  "app/login",
   "app/forgot-password",
   "app/reset-password",
   "app/accept-invite",
   "components/auth",
+  "app/(dashboard)/orders",
+  "app/(dashboard)/marketing",
+  "app/(dashboard)/delivery",
+  "app/(dashboard)/labels",
+  "app/(dashboard)/attendance",
+  "app/(dashboard)/my-deliveries",
+  "components/imports",
 ];
 
 for (const path of EXTRACTED_PATHS) {

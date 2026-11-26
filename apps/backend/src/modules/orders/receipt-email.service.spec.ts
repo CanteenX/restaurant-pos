@@ -91,9 +91,7 @@ function setup(
     receiptEmail: {
       findUnique: jest.fn().mockResolvedValue(row),
       create: jest.fn().mockResolvedValue(row),
-      updateMany: jest
-        .fn()
-        .mockResolvedValue({ count: opts.claimCount ?? 1 }),
+      updateMany: jest.fn().mockResolvedValue({ count: opts.claimCount ?? 1 }),
       update: jest.fn().mockResolvedValue(row),
       deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
@@ -150,7 +148,7 @@ describe('ReceiptEmailService.sendAfterPayment', () => {
     expect(mail.text).toContain('Paneer Tikka');
     expect(mail.text).toContain('₹990.00');
     expect(mail.html).toContain('GSTIN: 29ABCDE1234F1Z5');
-    expect(prisma.receiptEmail.update).toHaveBeenCalledWith(
+    expect(prisma.receiptEmail.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: 'SENT' }),
       }),
@@ -196,7 +194,7 @@ describe('ReceiptEmailService.sendAfterPayment', () => {
     const { service, send, prisma } = setup({ template: 'off' });
     await service.sendAfterPayment('o1');
     expect(send).not.toHaveBeenCalled();
-    expect(prisma.receiptEmail.update).toHaveBeenCalledWith(
+    expect(prisma.receiptEmail.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: 'SKIPPED' }),
       }),
@@ -212,7 +210,7 @@ describe('ReceiptEmailService.sendAfterPayment', () => {
     const logged = JSON.stringify(warn.mock.calls);
     expect(logged).toContain('SmtpError');
     expect(logged).not.toContain('asha@example.com');
-    expect(prisma.receiptEmail.update).toHaveBeenCalledWith(
+    expect(prisma.receiptEmail.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           status: 'FAILED',
@@ -354,6 +352,103 @@ describe('ReceiptEmailService claim and stuck sends', () => {
   });
 });
 
+describe('ReceiptEmailService claim ownership', () => {
+  it.each(['success', 'failure'] as const)(
+    'fences a late %s after a stale reclaim',
+    async (outcome) => {
+      const { service, prisma, send, audit } = setup();
+      let finish!: () => void;
+      let reject!: (error: Error) => void;
+      const pending = new Promise<void>((resolve, fail) => {
+        finish = resolve;
+        reject = fail;
+      });
+      send.mockImplementationOnce(() => pending);
+      const first = service.sendAfterPayment('o1');
+      // Wait until the first claimant is inside SMTP.
+      while (send.mock.calls.length === 0) await Promise.resolve();
+      const firstClaim = prisma.receiptEmail.updateMany.mock.calls[0][0];
+      expect(firstClaim.data.claimToken).toEqual(expect.any(String));
+      prisma.receiptEmail.findUnique.mockResolvedValue({
+        orderId: 'o1',
+        toEmail: 'a@b.co',
+        status: 'SENDING',
+        updatedAt: new Date(0),
+      });
+      await service.resend('r1', 'o1', 'u1');
+      const secondClaim = prisma.receiptEmail.updateMany.mock.calls.find(
+        (call: any[]) =>
+          call[0].data.status === 'SENDING' && call[0] !== firstClaim,
+      )[0];
+      expect(secondClaim.data.claimToken).not.toBe(firstClaim.data.claimToken);
+      prisma.receiptEmail.updateMany.mockResolvedValue({ count: 0 });
+      if (outcome === 'success') finish();
+      else reject(new Error('late failure'));
+      await first;
+      const terminal = prisma.receiptEmail.updateMany.mock.calls.at(-1)[0];
+      expect(terminal.where).toEqual({
+        orderId: 'o1',
+        status: 'SENDING',
+        claimToken: firstClaim.data.claimToken,
+      });
+      expect(terminal.data.status).toBe(
+        outcome === 'success' ? 'SENT' : 'FAILED',
+      );
+      expect(prisma.receiptEmail.update).not.toHaveBeenCalled();
+      expect(audit.record).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('claims before marking a disabled template skipped', async () => {
+    const { service, prisma } = setup({ template: 'off', claimCount: 0 });
+    await service.sendAfterPayment('o1');
+    expect(prisma.receiptEmail.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.receiptEmail.update).not.toHaveBeenCalled();
+  });
+
+  it('fences SKIPPED with the acquired token', async () => {
+    const { service, prisma } = setup({ template: 'off' });
+    await service.sendAfterPayment('o1');
+    const token =
+      prisma.receiptEmail.updateMany.mock.calls[0][0].data.claimToken;
+    expect(token).toEqual(expect.any(String));
+    expect(prisma.receiptEmail.updateMany.mock.calls[1][0]).toEqual({
+      where: { orderId: 'o1', status: 'SENDING', claimToken: token },
+      data: {
+        status: 'SKIPPED',
+        lastError: 'template turned off',
+        claimToken: null,
+      },
+    });
+  });
+
+  it('does not report or audit a resend whose finalization lost ownership', async () => {
+    const { service, prisma, audit } = setup();
+    prisma.receiptEmail.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+    await expect(service.resend('r1', 'o1', 'u1')).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('fences template rendering failures before SMTP is called', async () => {
+    const { service, prisma, templates, send } = setup();
+    templates.forBranch.mockResolvedValue(() => {
+      throw new TypeError('synthetic render failure');
+    });
+    await service.sendAfterPayment('o1');
+    const token =
+      prisma.receiptEmail.updateMany.mock.calls[0][0].data.claimToken;
+    expect(prisma.receiptEmail.updateMany.mock.calls[1][0]).toEqual({
+      where: { orderId: 'o1', status: 'SENDING', claimToken: token },
+      data: { status: 'FAILED', lastError: 'TypeError', claimToken: null },
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
 describe('ReceiptEmailService.capture', () => {
   const dto = (o: object = {}) => ({
     receiptEmail: 'asha@example.com',
@@ -397,9 +492,7 @@ describe('ReceiptEmailService.capture', () => {
 
   it('withdrawing consent clears the pending record and the saved address', async () => {
     const { service, prisma } = setup();
-    await service.capture(
-      input({ dto: dto({ receiptEmailConsent: false }) }),
-    );
+    await service.capture(input({ dto: dto({ receiptEmailConsent: false }) }));
     expect(prisma.receiptEmail.deleteMany).toHaveBeenCalled();
     expect(prisma.customer.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -410,9 +503,7 @@ describe('ReceiptEmailService.capture', () => {
 
   it('records a withdrawal even when digital receipts are switched off', async () => {
     const { service, prisma } = setup({ enabled: false });
-    await service.capture(
-      input({ dto: dto({ receiptEmailConsent: false }) }),
-    );
+    await service.capture(input({ dto: dto({ receiptEmailConsent: false }) }));
     expect(prisma.customer.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: { receiptEmail: null, receiptConsentAt: null },

@@ -14,6 +14,7 @@ import { labelsFromIngredients, labelsFromMenuItems } from "@/lib/label-batch";
 import { api, ApiError } from "@/lib/api";
 import { DOTS_PER_MM, previewLayout } from "@/lib/label-preview";
 import { toast } from "@/lib/toast";
+import { useI18n } from "@/lib/i18n/context";
 
 // The browser preview is drawn at this width; label-layout.ts on the server honours widthMm.
 const WIDTH_MM = 50;
@@ -28,6 +29,7 @@ export default function LabelsPage() {
 }
 
 function LabelsView() {
+  const { t, plural } = useI18n();
   const { branchId } = useBranch();
   // Batch mode: /labels?source=inventory|menu prints one label per active item.
   const source = useSearchParams().get("source");
@@ -46,19 +48,20 @@ function LabelsView() {
   );
   const isBatch = batch.length > 0;
   const [spec, setSpec] = useState<LabelSpec>({
-    title: "Sample item",
+    title: "",
     price: "",
     barcode: "",
     batch: "",
     expiry: "",
   });
+  const [customTitle, setCustomTitle] = useState(false);
   const [language, setLanguage] = useState<LabelLanguage>("ZPL");
   const [copies, setCopies] = useState(1);
   const [commands, setCommands] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const clean: LabelSpec = {
-    title: spec.title,
+    title: customTitle ? spec.title : t("labels.sampleItem"),
     price: spec.price || undefined,
     barcode: spec.barcode || undefined,
     batch: spec.batch || undefined,
@@ -86,7 +89,7 @@ function LabelsView() {
       setCommands(res.commands ?? null);
     } catch (err) {
       toast.error(
-        err instanceof ApiError ? err.message : "Could not print label",
+        err instanceof ApiError ? err.message : t("labels.error"),
       );
     } finally {
       setBusy(false);
@@ -97,10 +100,10 @@ function LabelsView() {
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-[32px] font-semibold tracking-tight text-foreground">
-          Labels
+          {t("labels.title")}
         </h1>
         <p className="text-sm text-muted-foreground">
-          Shelf, packaging and expiry labels (ZPL / TSPL)
+          {t("labels.subtitle")}
         </p>
       </div>
       <div className="grid gap-6 md:grid-cols-2">
@@ -110,61 +113,62 @@ function LabelsView() {
               data-testid="label-batch-note"
               className="text-sm text-muted-foreground"
             >
-              Batch from {source}: {Math.min(batch.length, 200)} label
-              {batch.length === 1 ? "" : "s"}
-              {isBatch
-                ? ""
-                : " (no active items, printing a single custom label)"}
-              {batch.length > 200 ? " (first 200)" : ""}. Prices come from the
-              server menu data. The preview shows the first label.
+              {t("labels.batch.note", {
+                head: plural(`labels.batch.${source}`, Math.min(batch.length, 200)),
+                noActive: isBatch ? "" : t("labels.batch.noActive"),
+                first200: batch.length > 200 ? t("labels.batch.first200") : "",
+              })}
             </p>
           ) : null}
-          <Label htmlFor="label-title">Title</Label>
+          <Label htmlFor="label-title">{t("labels.field.title")}</Label>
           <Input
             id="label-title"
-            value={spec.title}
-            onChange={set("title")}
+            value={clean.title}
+            onChange={(event) => {
+              setCustomTitle(true);
+              set("title")(event);
+            }}
             maxLength={40}
           />
-          <Label htmlFor="label-price">Price</Label>
+          <Label htmlFor="label-price">{t("labels.field.price")}</Label>
           <Input
             id="label-price"
             value={spec.price ?? ""}
             onChange={set("price")}
             maxLength={20}
           />
-          <Label htmlFor="label-barcode">Barcode</Label>
+          <Label htmlFor="label-barcode">{t("labels.field.barcode")}</Label>
           <Input
             id="label-barcode"
             value={spec.barcode ?? ""}
             onChange={set("barcode")}
             maxLength={32}
           />
-          <Label htmlFor="label-batch">Batch</Label>
+          <Label htmlFor="label-batch">{t("labels.field.batch")}</Label>
           <Input
             id="label-batch"
             value={spec.batch ?? ""}
             onChange={set("batch")}
             maxLength={20}
           />
-          <Label htmlFor="label-expiry">Expiry</Label>
+          <Label htmlFor="label-expiry">{t("labels.field.expiry")}</Label>
           <Input
             id="label-expiry"
             type="date"
             value={spec.expiry ?? ""}
             onChange={set("expiry")}
           />
-          <Label htmlFor="label-language">Printer language</Label>
+          <Label htmlFor="label-language">{t("labels.field.language")}</Label>
           <select
             id="label-language"
             className="h-9 rounded-md border border-border bg-background px-2 text-sm"
             value={language}
             onChange={(e) => setLanguage(e.target.value as LabelLanguage)}
           >
-            <option value="ZPL">ZPL (Zebra)</option>
-            <option value="TSPL">TSPL (TSC)</option>
+            <option value="ZPL">{"ZPL (Zebra)"}</option>
+            <option value="TSPL">{"TSPL (TSC)"}</option>
           </select>
-          <Label htmlFor="label-copies">Copies</Label>
+          <Label htmlFor="label-copies">{t("labels.field.copies")}</Label>
           <Input
             id="label-copies"
             type="number"
@@ -178,16 +182,16 @@ function LabelsView() {
           <div className="flex gap-2 pt-2">
             <Button
               variant="outline"
-              disabled={busy || (!isBatch && !spec.title.trim())}
+              disabled={busy || (!isBatch && !clean.title.trim())}
               onClick={() => send("preview")}
             >
-              Show commands
+              {t("labels.showCommands")}
             </Button>
             <Button
-              disabled={busy || !branchId || (!isBatch && !spec.title.trim())}
+              disabled={busy || !branchId || (!isBatch && !clean.title.trim())}
               onClick={() => send()}
             >
-              Print label
+              {t("labels.print")}
             </Button>
           </div>
         </Card>

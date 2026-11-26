@@ -21,23 +21,26 @@ import {
 } from "@/hooks/use-orders";
 import { formatCurrency } from "@/lib/format";
 import { openEntity } from "@/lib/entity-events";
+import { useI18n, type TranslationKey } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 
-const TABS: { key: OrderTab; label: string }[] = [
-  { key: "pending", label: "New (to accept)" },
-  { key: "active", label: "In progress" },
-  { key: "history", label: "History" },
+type Translate = ReturnType<typeof useI18n>["t"];
+
+const TABS: { key: OrderTab; labelKey: TranslationKey }[] = [
+  { key: "pending", labelKey: "orders.tab.pending" },
+  { key: "active", labelKey: "orders.tab.active" },
+  { key: "history", labelKey: "orders.tab.history" },
 ];
 
 // One chip = one filter. Online/Offline filter by channel, the rest by how
 // the order is fulfilled.
-const FILTERS: { key: string; label: string; channel?: OrderChannel; type?: string }[] = [
-  { key: "all", label: "All" },
-  { key: "online", label: "Online", channel: "ONLINE" },
-  { key: "offline", label: "Offline", channel: "STAFF" },
-  { key: "takeaway", label: "Takeaway", type: "TAKEAWAY" },
-  { key: "delivery", label: "Delivery", type: "DELIVERY" },
-  { key: "dinein", label: "Dine-in", type: "DINE_IN" },
+const FILTERS: { key: string; labelKey: TranslationKey; channel?: OrderChannel; type?: string }[] = [
+  { key: "all", labelKey: "orders.filter.all" },
+  { key: "online", labelKey: "orders.filter.online", channel: "ONLINE" },
+  { key: "offline", labelKey: "orders.filter.offline", channel: "STAFF" },
+  { key: "takeaway", labelKey: "orders.filter.takeaway", type: "TAKEAWAY" },
+  { key: "delivery", labelKey: "orders.filter.delivery", type: "DELIVERY" },
+  { key: "dinein", labelKey: "orders.filter.dineIn", type: "DINE_IN" },
 ];
 
 const chip = (on: boolean) =>
@@ -48,22 +51,25 @@ const chip = (on: boolean) =>
       : "border-border text-muted-foreground hover:bg-secondary",
   );
 
-function timeAgo(iso: string) {
+function timeAgo(iso: string, t: Translate) {
   const m = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
-  if (m < 1) return "just now";
-  if (m < 60) return `${m}m ago`;
+  if (m < 1) return t("orders.ago.justNow");
+  if (m < 60) return t("orders.ago.minutes", { count: m });
   const h = Math.round(m / 60);
-  return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+  return h < 24
+    ? t("orders.ago.hours", { count: h })
+    : t("orders.ago.days", { count: Math.round(h / 24) });
 }
 
 function OrdersView() {
+  const { t } = useI18n();
   const { branchId } = useBranch();
   // Deep links from the dashboard (?tab=history&filter=online) pick the
   // starting view; after that the chips and tabs drive it as before.
   const params = useSearchParams();
   const [tab, setTab] = useState<OrderTab>(() => {
-    const t = params.get("tab");
-    return TABS.some((x) => x.key === t) ? (t as OrderTab) : "pending";
+    const q = params.get("tab");
+    return TABS.some((x) => x.key === q) ? (q as OrderTab) : "pending";
   });
   const [filterKey, setFilterKey] = useState(() => {
     const f = params.get("filter");
@@ -98,22 +104,22 @@ function OrdersView() {
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <h1 className="text-[32px] font-semibold tracking-tight text-foreground">Orders</h1>
+        <h1 className="text-[32px] font-semibold tracking-tight text-foreground">{t("orders.title")}</h1>
         <p className="text-sm text-muted-foreground">
-          Accept new online orders and manage everything in progress
+          {t("orders.subtitle")}
         </p>
       </div>
 
       <ScanOrderInput branchId={branchId} />
 
       <div className="flex flex-wrap gap-2">
-        {TABS.map((t) => (
-          <button key={t.key} type="button" onClick={() => {
-              setTab(t.key);
+        {TABS.map((tb) => (
+          <button key={tb.key} type="button" onClick={() => {
+              setTab(tb.key);
               setSelected(new Set());
-            }} className={chip(tab === t.key)}>
-            {t.label}
-            {t.key === "pending" && pendingCount > 0 && (
+            }} className={chip(tab === tb.key)}>
+            {t(tb.labelKey)}
+            {tb.key === "pending" && pendingCount > 0 && (
               <span className="ml-2 rounded-full bg-destructive px-1.5 text-xs text-white">
                 {pendingCount}
               </span>
@@ -130,15 +136,15 @@ function OrdersView() {
             onClick={() => setFilterKey(f.key)}
             className={cn(chip(filterKey === f.key), "py-1 text-xs")}
           >
-            {f.label}
+            {t(f.labelKey)}
           </button>
         ))}
       </div>
 
       {selectable && finished.length > 0 && (
         <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-          <Checkbox checked={allSelected} onCheckedChange={toggleAll} aria-label="Select all transactions" />
-          Select all {finished.length}
+          <Checkbox checked={allSelected} onCheckedChange={toggleAll} aria-label={t("orders.selectAllAria")} />
+          {t("orders.selectAll", { count: finished.length })}
         </label>
       )}
 
@@ -162,10 +168,10 @@ function OrdersView() {
         ) : (
           <div className="flex flex-col items-center gap-1 py-16 text-center">
             <p className="text-sm font-medium text-foreground">
-              {tab === "pending" ? "No orders waiting for you" : "No orders here"}
+              {tab === "pending" ? t("orders.empty.pending") : t("orders.empty.other")}
             </p>
             <p className="text-sm text-muted-foreground">
-              New online orders appear here with a sound alert.
+              {t("orders.empty.hint")}
             </p>
           </div>
         )}
@@ -186,7 +192,7 @@ function OrdersView() {
           )}
         >
           <span className="text-sm font-medium tabular-nums text-foreground" aria-live="polite">
-            {visibleSelected.length} selected
+            {t("orders.selectedCount", { count: visibleSelected.length })}
           </span>
           <Button
             type="button"
@@ -195,7 +201,7 @@ function OrdersView() {
             tabIndex={visibleSelected.length > 0 ? 0 : -1}
             onClick={() => setSelected(new Set())}
           >
-            <X className="h-4 w-4" aria-hidden /> Clear
+            <X className="h-4 w-4" aria-hidden /> {t("orders.clear")}
           </Button>
           <Button
             type="button"
@@ -204,7 +210,7 @@ function OrdersView() {
             tabIndex={visibleSelected.length > 0 ? 0 : -1}
             onClick={() => setConfirmOpen(true)}
           >
-            <Trash2 className="h-4 w-4" aria-hidden /> Delete
+            <Trash2 className="h-4 w-4" aria-hidden /> {t("common.delete")}
           </Button>
         </div>
       </div>
@@ -231,7 +237,8 @@ function OrderRow({
   selected: boolean;
   onToggle: () => void;
 }) {
-  const name = order.guestName ?? order.customer?.name ?? "Walk-in guest";
+  const { t } = useI18n();
+  const name = order.guestName ?? order.customer?.name ?? t("orders.walkIn");
   const summary = order.items.map((i) => `${i.quantity}× ${i.nameSnapshot}`).join(", ");
   const rejected = order.acceptance === "REJECTED";
   return (
@@ -246,7 +253,7 @@ function OrderRow({
           <Checkbox
             checked={selected}
             onCheckedChange={onToggle}
-            aria-label={`Select transaction #${order.orderNumber}`}
+            aria-label={t("orders.selectTransaction", { number: order.orderNumber })}
           />
         </div>
       )}
@@ -262,18 +269,18 @@ function OrderRow({
           <ChannelBadge channel={order.channel} />
           <TypeBadge type={order.type} />
           {order.acceptance === "PENDING" && (
-            <Badge className="font-normal">Needs action</Badge>
+            <Badge className="font-normal">{t("orders.needsAction")}</Badge>
           )}
-          {rejected && <Badge variant="secondary" className="font-normal">Rejected</Badge>}
+          {rejected && <Badge variant="secondary" className="font-normal">{t("orders.rejected")}</Badge>}
           {!rejected && order.status === "CANCELLED" && (
-            <Badge variant="secondary" className="font-normal">Cancelled</Badge>
+            <Badge variant="secondary" className="font-normal">{t("orders.cancelled")}</Badge>
           )}
         </div>
         <span className="truncate text-xs text-muted-foreground">{summary}</span>
         {order.type === "DELIVERY" && order.deliveryAddress && (
           <span className="truncate text-xs text-muted-foreground">
             📍 {order.deliveryAddress}
-            {order.deliveryLat != null ? " · location shared" : ""}
+            {order.deliveryLat != null ? ` · ${t("orders.locationShared")}` : ""}
           </span>
         )}
       </div>
@@ -282,7 +289,7 @@ function OrderRow({
           {formatCurrency(order.totalAmount)}
         </span>
         <span className="flex items-center gap-1 text-xs text-muted-foreground">
-          <Clock className="h-3 w-3" /> {timeAgo(order.createdAt)}
+          <Clock className="h-3 w-3" /> {timeAgo(order.createdAt, t)}
         </span>
       </div>
     </button>

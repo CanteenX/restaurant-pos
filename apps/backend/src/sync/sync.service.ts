@@ -14,7 +14,7 @@ import {
   pullScope,
   tooLargeToPush,
 } from './apply-rules';
-import { captureSql } from './capture-sql';
+import { installCapture } from './capture-install';
 import {
   clockSkewError,
   compact,
@@ -63,6 +63,8 @@ const PUSH_PAGE = 200;
 const PUSH_MAX_BYTES = 64_000;
 const TICK_MS = 30_000;
 const MAX_CONFLICTS_KEPT = 50;
+const ADOPT_LEDGER_ERROR =
+  'This PC already has VERI*FACTU invoice records, which cannot be replaced. Use "merge" instead.';
 const SCOPE = pullScope();
 const withoutRestore = (c: ApplyResult['conflicts'][number]) => ({
   seq: c.seq,
@@ -99,7 +101,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit() {
-    await this.installCapture();
+    if (!process.env.NVENTRA_DATABASE_URL_FILE) await this.installCapture();
     const envKey = process.env.SYNC_API_KEY?.trim();
     if (envKey) {
       // This process is the central server other devices sync with.
@@ -131,18 +133,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
    * every captured change. Serialised so two processes can't race the DDL.
    */
   async installCapture() {
-    const schema = await this.schemaVersion();
-    await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(
-        `SELECT pg_advisory_xact_lock(hashtext('sync_capture'))`,
-      );
-      for (const sql of captureSql()) await tx.$executeRawUnsafe(sql);
-      await tx.$queryRawUnsafe('SELECT sync_install_triggers()');
-      await tx.$executeRawUnsafe(
-        `UPDATE sync_state SET "schemaVersion" = $1 WHERE id = 1`,
-        schema,
-      );
-    });
+    await installCapture(this.prisma);
     this.applier.resetMeta();
   }
 
@@ -500,7 +491,8 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       // Re-enabling against the same HQ: prove it with its key (#209 audit).
       keyForServer(s, serverUrl),
     );
-    const meta = await this.syncedTables();
+    const managed = Boolean(process.env.NVENTRA_DATABASE_URL_FILE);
+    const meta = mode === 'adopt' && !managed ? await this.syncedTables() : [];
     await this.prisma.$transaction(
       async (tx) => {
         await tx.$executeRawUnsafe(
@@ -514,7 +506,12 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         );
         await tx.$executeRawUnsafe('DELETE FROM sync_changes');
         await tx.$executeRawUnsafe('DELETE FROM sync_versions');
-        if (mode === 'adopt') {
+        if (mode === 'adopt' && managed) {
+          const [result] = await tx.$queryRaw<{ reset: boolean }[]>`
+            SELECT public.sync_reset_for_adopt() AS reset`;
+          if (!result.reset) throw new Error(ADOPT_LEDGER_ERROR);
+        }
+        if (mode === 'adopt' && !managed) {
           await tx.$queryRawUnsafe(
             `SELECT set_config('app.sync_origin', '__skip', true)`,
           );
@@ -524,9 +521,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
             `SELECT count(*) AS n FROM verifactu_records`,
           );
           if (Number(chain[0].n) > 0) {
-            throw new Error(
-              'This PC already has VERI*FACTU invoice records, which cannot be replaced. Use "merge" instead.',
-            );
+            throw new Error(ADOPT_LEDGER_ERROR);
           }
           await tx.$executeRawUnsafe(
             `ALTER TABLE verifactu_records DISABLE TRIGGER USER`,

@@ -107,6 +107,134 @@ function install(health) {
   return { fd, up };
 }
 
+function installWithSetup(result) {
+  const { fd } = install((image, name) => {
+    if (name === 'app-db-setup-update') {
+      if (image === `${B}:1.0.0`) return 'completed';
+      assert.equal(image, `${B}:1.0.1`);
+      return result;
+    }
+    return 'healthy';
+  });
+  fd.add('app-db-setup', `${B}:1.0.0`, false);
+  fd.containers.get('app-db-setup').Config.Cmd = ['setup'];
+  const up = createUpdater({ docker: fd.docker, targets: ['app-backend', 'app-web'], dbSetup: 'app-db-setup', ...fast });
+  return { fd, up };
+}
+
+test('managed update runs the target image setup between stopping and replacing the backend', async () => {
+  const { fd, up } = installWithSetup('completed');
+  await up.run('1.0.1');
+  assert.equal(up.status.state, 'done', up.status.error);
+  const stop = fd.log.indexOf('POST /containers/app-backend/stop');
+  const setup = fd.log.indexOf('POST /containers/create?name=app-db-setup-update');
+  const start = fd.log.indexOf('POST /containers/create?name=app-backend');
+  assert.ok(stop < setup && setup < start, fd.log.join('\n'));
+  assert.ok(!fd.containers.has('app-db-setup-update'));
+  assert.equal(fd.imageOf('app-db-setup'), `${B}:1.0.0`);
+});
+
+for (const problem of ['missing', 'running', 'occupied job name']) {
+  test(`managed setup preflight leaves the healthy backend serving with ${problem}`, async () => {
+    const { fd, up } = installWithSetup('completed');
+    if (problem === 'missing') fd.containers.delete('app-db-setup');
+    if (problem === 'running') fd.containers.get('app-db-setup')._running = true;
+    if (problem === 'occupied job name') fd.add('app-db-setup-update', `${B}:1.0.0`, false);
+    await up.run('1.0.1');
+    assert.ok(!fd.log.includes('POST /containers/app-backend/stop'));
+    assert.ok(fd.running('app-backend'));
+    assert.equal(up.status.state, 'error');
+    assert.match(up.status.error, /database setup failed/);
+    assert.ok(!fd.log.includes('POST /containers/create?name=app-db-setup-update'));
+  });
+}
+
+test('a setup create failure restores service without running the previous setup', async () => {
+  const { fd } = installWithSetup('completed');
+  let attempts = 0;
+  const docker = (...args) => {
+    if (args[0] === 'POST' && args[1] === '/containers/create?name=app-db-setup-update') {
+      attempts++;
+      throw new Error('create rejected');
+    }
+    return fd.docker(...args);
+  };
+  const up = createUpdater({ docker, targets: ['app-backend'], dbSetup: 'app-db-setup', ...fast });
+  await up.run('1.0.1');
+  assert.equal(attempts, 1);
+  assert.ok(fd.running('app-backend'));
+  assert.equal(up.status.state, 'rolled_back');
+});
+
+test('managed update restores the previous backend if the setup job fails', async () => {
+  const { fd, up } = installWithSetup('exits');
+  await up.run('1.0.1');
+  assert.equal(up.status.state, 'rolled_back', up.status.error ?? 'update did not roll back');
+  assert.match(up.status.error, /database setup failed/);
+  assert.equal(fd.imageOf('app-backend'), `${B}:1.0.0`);
+  assert.ok(fd.running('app-backend'));
+  assert.equal(fd.log.filter(entry => entry === 'POST /containers/create?name=app-db-setup-update').length, 2);
+  assert.ok(!fd.log.includes('POST /containers/create?name=app-backend'));
+  assert.ok(!fd.containers.has('app-db-setup-update'));
+});
+
+test('managed rollback restores the previous capture definitions before starting the previous backend', async () => {
+  const setupImages = [];
+  const { fd } = install((image, name) => {
+    if (name === 'app-db-setup-update') return 'completed';
+    return image === `${W}:1.0.1` ? 'unhealthy' : 'healthy';
+  });
+  fd.add('app-db-setup', `${B}:1.0.0`, false);
+  fd.containers.get('app-db-setup').Config.Cmd = ['setup'];
+  const docker = (method, path, body, headers) => {
+    if (path === '/containers/create?name=app-db-setup-update') setupImages.push(body.Image);
+    return fd.docker(method, path, body, headers);
+  };
+  const up = createUpdater({ docker, targets: ['app-backend', 'app-web'], dbSetup: 'app-db-setup', ...fast });
+  await up.run('1.0.1');
+  assert.equal(up.status.state, 'rolled_back', up.status.error);
+  assert.deepEqual(setupImages, [fd.imageId(`${B}:1.0.1`), fd.imageId(`${B}:1.0.0`)]);
+  assert.ok(fd.log.lastIndexOf('POST /containers/create?name=app-db-setup-update') <
+    fd.log.indexOf('POST /containers/app-backend/start'));
+});
+
+test('failed previous setup leaves the previous backend stopped for recovery', async () => {
+  const { fd } = install((_, name) => name === 'app-db-setup-update' ? 'exits' : 'healthy');
+  fd.add('app-db-setup', `${B}:1.0.0`, false);
+  fd.containers.get('app-db-setup').Config.Cmd = ['setup'];
+  const up = createUpdater({ docker: fd.docker, targets: ['app-backend'], dbSetup: 'app-db-setup', ...fast });
+  await up.run('1.0.1');
+  assert.equal(up.status.state, 'rollback_failed');
+  assert.equal(fd.running('app-backend'), false);
+  assert.equal(up.status.rolledBackTo, null);
+});
+
+test('consecutive managed updates use matching immutable setup and backend images and restore the actual prior image', async () => {
+  const { fd } = install((image, name) => {
+    if (name === 'app-db-setup-update') return 'completed';
+    return image === `${W}:1.0.2` ? 'unhealthy' : 'healthy';
+  });
+  fd.add('app-db-setup', `${B}:1.0.0`, false);
+  fd.containers.get('app-db-setup').Config.Cmd = ['setup'];
+  const setup = [], backend = [];
+  const docker = (m, path, body, headers) => {
+    if (path === '/containers/create?name=app-db-setup-update') setup.push(body.Image);
+    if (path === '/containers/create?name=app-backend') backend.push(body.Image);
+    return fd.docker(m, path, body, headers);
+  };
+  const up = createUpdater({docker, targets: ['app-backend','app-web'], dbSetup: 'app-db-setup', ...fast});
+  await up.run('1.0.1');
+  assert.equal(up.status.state, 'done', up.status.error);
+  for (const repo of [B, W]) fd.imageSet.add(`${repo}:1.0.2`);
+  await up.run('1.0.2');
+  assert.equal(up.status.state, 'rolled_back', up.status.error);
+  assert.equal(up.status.rolledBackTo, '1.0.1');
+  const n = fd.imageId(`${B}:1.0.1`), next = fd.imageId(`${B}:1.0.2`);
+  assert.deepEqual(setup, [n, next, n]);
+  assert.deepEqual(backend, [n, next]);
+  assert.equal(fd.containers.get('app-backend').Image, n);
+});
+
 test('healthy N+1 replaces both containers and cleans up the old ones', async () => {
   const { fd, up } = install(() => 'healthy');
   await up.run('1.0.1');

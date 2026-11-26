@@ -22,8 +22,31 @@ services:
     networks:
       - nodedr-restaurant-pos
 
+  db-setup:
+    image: ghcr.io/canteenx/nventra-pos-backend:1.1.0
+    container_name: nventra-pos-db-setup
+    command: ["setup"]
+    environment:
+      NVENTRA_DB_HOST: nventra-pos-postgres
+      POSTGRES_PASSWORD: "please-change-this-password"
+      NVENTRA_DATABASE_URL_FILE: /run/nventra-db/runtime-url
+    volumes:
+      - type: bind
+        source: /DATA/AppData/$AppID/db-runtime-auth
+        target: /run/nventra-db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - nodedr-restaurant-pos
+    x-casaos:
+      envs:
+        - container: POSTGRES_PASSWORD
+          description:
+            en_US: Must match the bootstrap password in the postgres service.
+
   backend:
-    image: ghcr.io/canteenx/nventra-pos-backend:1.20.0
+    image: ghcr.io/canteenx/nventra-pos-backend:1.1.0
     container_name: nventra-pos-backend
     # Lets the updater (updater/server.js) tell a good update from a broken
     # one: a new version that never reports healthy is rolled back. The long
@@ -37,7 +60,7 @@ services:
     hostname: nventra-pos-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgresql://nventra:please-change-this-password@nventra-pos-postgres:5432/nventra_pos"
+      NVENTRA_DATABASE_URL_FILE: /run/nventra-db/runtime-url
       # No JWT_SECRET here on purpose — the app generates a real random one
       # itself on first boot and persists it to the /data/state volume
       # below (see apps/backend/src/main.ts's resolveJwtSecret()). A
@@ -65,21 +88,22 @@ services:
       UPDATER_TOKEN: "change-me-to-a-long-random-updater-token"
     volumes:
       - type: bind
+        source: /DATA/AppData/$AppID/db-runtime-auth
+        target: /run/nventra-db
+        read_only: true
+      - type: bind
         source: /DATA/AppData/$AppID/uploads
         target: /data/uploads
       - type: bind
         source: /DATA/AppData/$AppID/state
         target: /data/state
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-setup:
+        condition: service_completed_successfully
     networks:
       - nodedr-restaurant-pos
     x-casaos:
       envs:
-        - container: DATABASE_URL
-          description:
-            en_US: Must match the Postgres password below if you change it. Leave as default unless you know why you're changing it.
         - container: CORS_ORIGIN
           description:
             en_US: Origin allowed to call the API (CORS). Leave as the default for local/LAN use — only change for a VPS behind real HTTPS.
@@ -101,7 +125,7 @@ services:
             en_US: Auto-generated login security key. Created automatically on first launch — leave it alone.
 
   web:
-    image: ghcr.io/canteenx/nventra-pos-web:1.20.0
+    image: ghcr.io/canteenx/nventra-pos-web:1.1.0
     container_name: nventra-pos-web
     # Next binds to $HOSTNAME (the container's own address), not 127.0.0.1.
     healthcheck:
@@ -128,19 +152,19 @@ services:
           protocol: tcp
 
   # In-app "Update now" (Settings > Updates): pulls the newer Nventra POS
-  # images above and recreates those two containers (nothing else). Needs the
-  # Docker socket to do that; data in /DATA/AppData is untouched. The updater
-  # image is generic (it only manages the containers named below), so the
-  # one published for NodeDR POS is reused.
+  # images above. It runs database setup before replacing the API. This
+  # separate container runs the updater command and holds the Docker socket.
   updater:
-    image: ghcr.io/canteenx/nventra-pos-updater:latest
+    image: ghcr.io/canteenx/nventra-pos-backend:1.1.0
     container_name: nventra-pos-updater
+    command: ["node", "/repo/updater/server.js"]
     hostname: nventra-pos-updater
     restart: unless-stopped
     environment:
       # Must match the backend's UPDATER_TOKEN; see the note there.
       UPDATER_TOKEN: "change-me-to-a-long-random-updater-token"
       TARGET_CONTAINERS: "nventra-pos-backend,nventra-pos-web"
+      DB_SETUP_CONTAINER: nventra-pos-db-setup
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
@@ -197,10 +221,10 @@ x-casaos:
         Login security is handled automatically — no setup needed there.
 
         **Before anything beyond a quick local trial**, change the
-        placeholder Postgres password: it must be changed identically in
-        both the `postgres` service's `POSTGRES_PASSWORD` and the
-        `backend` service's `DATABASE_URL`. Leaving the default is not
-        safe for a real installation.
+        placeholder Postgres password. Set the same `POSTGRES_PASSWORD`
+        in `postgres` and `db-setup` for a fresh installation. For an
+        existing installation, use its original database password and
+        keep its existing AppData paths.
 
         To use the in-app **Update now** button, also set `UPDATER_TOKEN`
         to the same long random value (e.g. `openssl rand -hex 32`) in
@@ -217,14 +241,12 @@ x-casaos:
   index: /
   scheme: http
   port_map: "1995"
-  version: "1.20.0"
-  update_at: "2026-11-03"
+  version: "1.1.0"
+  update_at: "2026-11-24"
   release_notes:
     en_US: |-
-      1.20.0: departments and per-person access. Group staff into departments, and allow or
-      block single permissions for one person (with an optional end date) without making a new
-      role. Paste a supplier invoice's text to fill in the invoice form. The dashboard is
-      tidier on phones. A database change is applied automatically on update; back up first.
+      1.1.0: adds Hindi coverage, safer email and restore handling, and restricted
+      database logins. Back up first and apply the new CasaOS definition to upgrade.
 
       1.19.0: start with no server. The phone app can keep an account, menu and sales on its
       own and connect to a restaurant server later.

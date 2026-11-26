@@ -4,6 +4,7 @@ import {
   buildLoadScript,
   CopyDataExtractor,
   parseSetval,
+  restoreLimits,
 } from './restore-load';
 
 const COLS = new Set(['id', 'name', 'createdAt']);
@@ -12,8 +13,9 @@ async function extract(
   chunks: Buffer[],
   table = 'Order',
   cols: ReadonlySet<string> = COLS,
+  limits?: ReturnType<typeof restoreLimits>,
 ): Promise<{ data: Buffer; columns: string[] }> {
-  const ex = new CopyDataExtractor(table, cols);
+  const ex = new CopyDataExtractor(table, cols, limits);
   const out: Buffer[] = [];
   ex.on('data', (d: Buffer) => out.push(d));
   await new Promise<void>((resolve, reject) => {
@@ -176,6 +178,9 @@ describe('buildLoadScript', () => {
         'SET search_path = pg_catalog, public;',
       ].join('\n'),
     );
+    expect(s).toContain("SET LOCAL lock_timeout = '10000ms';");
+    expect(s).toContain("SET LOCAL statement_timeout = '900000ms';");
+    expect(s.indexOf('lock_timeout')).toBeLessThan(s.indexOf('LOCK TABLE'));
     expect(s).toContain('DELETE FROM public."Order";');
     expect(s).toContain(
       '\\copy public."User" ("id", "name") FROM \'/tmp/w/User.copy\'',
@@ -195,5 +200,85 @@ describe('buildLoadScript', () => {
         sequences: new Map(),
       }),
     ).toThrow(/path/i);
+  });
+});
+
+describe('restore size policy', () => {
+  it('sizes decompression budget from compressed archive size, bounded by a ceiling', () => {
+    expect(restoreLimits(16 * 1024 * 1024, {}).outputBytes).toBe(2 * 1024 ** 3);
+    expect(restoreLimits(1024 ** 3, {}).outputBytes).toBe(16 * 1024 ** 3);
+  });
+  it('uses explicit limits for highly compressible legitimate data', () => {
+    expect(
+      restoreLimits(100, {
+        NVENTRA_RESTORE_MAX_OUTPUT_BYTES: '4096',
+        NVENTRA_RESTORE_MAX_LINE_BYTES: '512',
+      }),
+    ).toEqual({ outputBytes: 4096, lineBytes: 512 });
+  });
+  it.each(['0', '-1', 'NaN', '1.5', '9007199254740992'])(
+    'refuses invalid configured ceilings %s',
+    (value) => {
+      expect(() =>
+        restoreLimits(100, { NVENTRA_RESTORE_MAX_OUTPUT_BYTES: value }),
+      ).toThrow(/NVENTRA_RESTORE_MAX_OUTPUT_BYTES/);
+    },
+  );
+  it('refuses excessive compressed archives before extraction', () => {
+    expect(() =>
+      restoreLimits(4097, { NVENTRA_RESTORE_MAX_ARCHIVE_BYTES: '4096' }),
+    ).toThrow(/NVENTRA_RESTORE_MAX_ARCHIVE_BYTES/);
+  });
+});
+
+describe('configured COPY stream budgets (supplemental)', () => {
+  it('accepts a legitimate row above the old 8 MiB limit', async () => {
+    const row = 'x'.repeat(8 * 1024 ** 2 + 1);
+    const data = await extract(
+      [Buffer.from(`${header()}${row}\n\\.\n`)],
+      'Order',
+      COLS,
+      restoreLimits(100),
+    );
+    expect(data.data.length).toBe(row.length + 1);
+  });
+  it('accepts a row exactly at the configured line boundary', async () => {
+    const result = await extract(
+      [Buffer.from(`${header()}${'x'.repeat(64)}\n\\.\n`)],
+      'Order',
+      COLS,
+      { lineBytes: 64, outputBytes: 1024 },
+    );
+    expect(result.data.length).toBe(65);
+  });
+  it('rejects split and complete lines above a configured boundary', async () => {
+    for (const chunks of [
+      [Buffer.alloc(65, 65)],
+      [Buffer.alloc(65, 65), Buffer.from('\n')],
+    ]) {
+      await expect(
+        extract(chunks, 'Order', COLS, { lineBytes: 64, outputBytes: 1000 }),
+      ).rejects.toThrow(/NVENTRA_RESTORE_MAX_LINE_BYTES/);
+    }
+  });
+});
+
+describe('COPY incremental allocation', () => {
+  it('copies fragmented rows in linear total bytes', async () => {
+    const row = Buffer.from(`${header()}${'x'.repeat(128 * 1024)}\n\\.\n`);
+    const real = Buffer.concat.bind(Buffer) as typeof Buffer.concat;
+    let copied = 0;
+    const spy = jest
+      .spyOn(Buffer, 'concat')
+      .mockImplementation((parts, length) => {
+        copied += length ?? parts.reduce((sum, part) => sum + part.length, 0);
+        return real(parts, length);
+      });
+    try {
+      await extract(split(row, 1024));
+      expect(copied <= row.length * 4).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

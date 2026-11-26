@@ -1,0 +1,79 @@
+:root {
+  color-scheme: light;
+  --ink: #202d2a;
+  --muted: #526860;
+  --line: #d7e2db;
+  --canvas: #f4f7f3;
+  --accent: #205b44;
+  font-family: system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--canvas); color: var(--ink); }
+.masthead {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 1rem max(1rem, calc((100% - 82rem) / 2)); background: #fff; border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: .75rem; font-weight: 700; }
+.brand b { display: grid; place-items: center; width: 2.45rem; aspect-ratio: 1; border-radius: .7rem; background: var(--accent); color: white; }
+.brand small { display: block; font-weight: 500; }
+main { max-width: 84rem; margin: auto; padding: clamp(1rem, 3vw, 2.25rem); }
+h1, h2, h3 { margin: 0 0 .75rem; letter-spacing: -.02em; }
+h1 { font-size: clamp(1.55rem, 3.5vw, 2.25rem); }
+h2 { font-size: 1.12rem; }
+h3 { font-size: 1rem; }
+p, ul { margin: 0 0 .9rem; line-height: 1.5; }
+small, .detail > p { color: var(--muted); }
+.signin, .directory, .detail {
+  min-width: 0; padding: 1.15rem; border: 1px solid var(--line); border-radius: .8rem; background: white;
+}
+.signin { max-width: 31rem; margin: clamp(1rem, 6vh, 4rem) auto; padding: clamp(1rem, 4vw, 2rem); }
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2.45fr); gap: 1rem; align-items: start; }
+.detail { grid-column: -2 / -1; }
+.directory ul { display: grid; gap: .35rem; list-style: none; padding: 0; }
+.directory li button { display: flex; width: 100%; justify-content: space-between; gap: .4rem; text-align: left; overflow-wrap: anywhere; }
+.directory li button[aria-pressed="true"] { border-color: var(--accent); background: #e7f1e9; font-weight: 650; }
+form { margin: .9rem 0 1.2rem; }
+fieldset { display: grid; gap: .72rem; padding: 0; border: 0; margin: 0; min-width: 0; }
+legend { margin-bottom: .5rem; padding: 0; font-weight: 650; }
+label { display: grid; gap: .3rem; min-width: 0; font-size: .9rem; font-weight: 620; }
+input, select, button {
+  font: inherit; color: inherit; min-height: 2.58rem; padding: .45rem .66rem; border: 1px solid #acc1b5;
+  border-radius: .42rem; background: #fff;
+}
+button { cursor: pointer; width: fit-content; font-weight: 580; }
+button:hover:enabled { background: #edf5ef; }
+button:disabled { opacity: .55; cursor: default; }
+button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+button.primary:hover:enabled { background: #164633; }
+:focus-visible { outline: 2px solid #16764e; outline-offset: 2px; }
+.actions, .dates { display: flex; gap: .55rem; flex-wrap: wrap; }
+.dates label { flex: 1 1 9.5rem; }
+aside, [role="alert"] { padding: .75rem .9rem; border-radius: .45rem; background: #e7f1e9; }
+aside p { margin: 0; }
+aside, details { margin-bottom: 1rem; }
+[role="alert"] { background: #fff1e5; color: #773311; }
+code { overflow-wrap: anywhere; }
+.codes { columns: 2; }
+table { border-collapse: collapse; width: 100%; font-size: .88rem; text-align: left; }
+th, td { padding: .55rem .5rem; border-bottom: 1px solid var(--line); }
+.table-scroll { overflow-x: auto; margin-bottom: .5rem; }
+.table-scroll:focus-visible { outline: 2px solid #006fcc; outline-offset: 2px; }
+.table-scroll-hint { display: none; }
+@media (max-width: 600px) { .table-scroll-hint { display: block; } }
+.team { padding: 1.25rem; background: white; border: 1px solid var(--line); border-radius: .8rem; }
+.team > button { margin: 0 .5rem .75rem 0; }
+.team td { vertical-align: top; }
+.team td button { margin: .15rem; }
+.team [role="status"] { overflow-wrap: anywhere; }
+.permission-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 1rem; margin: 1rem 0; }
+.permission-groups fieldset { padding: .75rem; border: 1px solid var(--line); border-radius: .5rem; }
+.permission-groups label { display: flex; align-items: center; gap: .6rem; }
+.permission-groups input { min-height: 1.1rem; width: 1.1rem; }
+@media (max-width: 900px) {
+  .workspace { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .detail { grid-column: 1 / -1; }
+}
+@media (max-width: 540px) {
+  .workspace { grid-template-columns: minmax(0, 1fr); }
+  .codes { columns: 1; }
+}

@@ -46,10 +46,12 @@ CITATION.cff                  # cites the upstream project as a reference
 
 # --- Upgrade path for installs created before the rename (#143) ---
 apps/backend/src/system/db-identity-upgrade.ts       # renames the legacy Postgres role/db of existing volumes
+scripts/test-db-runtime-startup.cjs                  # covers both shipped pre-rename container identities
 apps/backend/src/system/db-identity-upgrade.cli.ts   # logs which legacy identity was renamed
 apps/backend/src/system/db-identity-upgrade.spec.ts  # unit tests for the legacy rename
 apps/backend/test/db-identity-upgrade.e2e-spec.ts    # e2e: legacy role/db renamed with data intact
 scripts/test-db-identity-upgrade.sh                  # drill: starts a stack with the legacy identity
+scripts/test-db-runtime-role.sh                     # checks legacy volumes survive the runtime role upgrade
 docs/UPGRADING.md                                    # tells admins which legacy names get renamed
 apps/backend/src/auth/session.ts                     # clears the legacy session cookie (#147)
 apps/backend/src/auth/session.spec.ts                # clears the legacy session cookie (#147)

@@ -1,14 +1,14 @@
 "use client";
 
-import { zodResolver } from "@hookform/resolvers/zod";
 import { loginSchema, type LoginDto } from "@nventra/types";
 import { motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, type FieldErrors, type Resolver } from "react-hook-form";
 import { AlertCircle } from "lucide-react";
 import { Logo } from "@/components/layout/logo";
+import { LanguageSwitcher } from "@/components/layout/language-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -16,7 +16,32 @@ import { Label } from "@/components/ui/label";
 import { useLogin } from "@/hooks/use-auth";
 import { ApiError } from "@/lib/api";
 import { usePasswordResetEnabled } from "@/hooks/use-password-reset";
-import { useI18n } from "@/lib/i18n/context";
+import { useI18n, type TranslationKey } from "@/lib/i18n/context";
+
+const validateLogin: Resolver<LoginDto> = (input) => {
+  const parsed = loginSchema.safeParse(input);
+  if (parsed.success) return { values: parsed.data, errors: {} };
+
+  const errors: FieldErrors<LoginDto> = {};
+  for (const issue of parsed.error.issues) {
+    const field = issue.path[0];
+    if (field === "email" || field === "password" || field === "totp") {
+      errors[field] = { type: issue.code };
+    }
+  }
+  return { values: {}, errors };
+};
+
+function loginError(error: unknown): TranslationKey {
+  if (!(error instanceof ApiError)) return "auth.login.connectionError";
+  if (error.status === 429) return "auth.common.tooManyTries";
+  switch (error.message) {
+    case "Invalid login ID or password": return "auth.login.invalidCredentials";
+    case "Invalid verification code": return "auth.login.invalidCode";
+    case "Too many incorrect codes. Try again in 15 minutes.": return "auth.login.tooManyCodes";
+    default: return "auth.common.serverError";
+  }
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -27,13 +52,13 @@ export default function LoginPage() {
   // Set once the server says this account uses two-factor authentication.
   const [needsCode, setNeedsCode] = useState(false);
   // Shown inline under the form (a toast vanishes before it can be read).
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<TranslationKey | null>(null);
   const prefersReducedMotion = useReducedMotion();
   const {
     register,
     handleSubmit,
     formState: { errors },
-  } = useForm<LoginDto>({ resolver: zodResolver(loginSchema) });
+  } = useForm<LoginDto>({ resolver: validateLogin });
 
   const onSubmit = (dto: LoginDto) => {
     setError(null);
@@ -49,13 +74,7 @@ export default function LoginPage() {
           setNeedsCode(true);
           return;
         }
-        if (err instanceof ApiError && err.status >= 500) {
-          setError("The server is having a problem right now. Please try again in a minute.");
-        } else if (err instanceof ApiError) {
-          setError(err.message);
-        } else {
-          setError("Can't reach the server. Check your internet connection and try again.");
-        }
+        setError(loginError(err));
       },
     });
   };
@@ -70,21 +89,24 @@ export default function LoginPage() {
         initial={prefersReducedMotion ? false : { opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-        className="w-full max-w-sm"
+        className="w-full max-w-sm py-6"
       >
+        <div className="mb-4 flex justify-end">
+          <LanguageSwitcher />
+        </div>
         <div className="mb-10 flex flex-col items-center gap-2 text-center">
           <Link href="/">
             <Logo size={44} />
           </Link>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            Nventra POS
+            {t("auth.login.brand")}
           </h1>
-          <p className="text-sm text-muted-foreground">Sign in to manage your restaurant</p>
+          <p className="text-sm text-muted-foreground">{t("auth.login.subtitle")}</p>
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="email">Email or phone number</Label>
+            <Label htmlFor="email">{t("auth.login.identifier")}</Label>
             <Input
               id="email"
               type="text"
@@ -96,27 +118,26 @@ export default function LoginPage() {
               enterKeyHint="next"
               autoFocus
               className="h-11"
-              placeholder="you@restaurant.com or phone number"
+              placeholder={t("auth.login.identifierHint")}
               {...register("email")}
             />
             {errors.email && (
-              <p className="text-xs text-destructive">{errors.email.message}</p>
+              <p className="text-xs text-destructive">{t("auth.login.identifierInvalid")}</p>
             )}
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="password">Password</Label>
+            <Label htmlFor="password">{t("auth.login.password")}</Label>
             <PasswordInput
               id="password"
-              
               autoComplete="current-password"
               enterKeyHint="go"
               className="h-11"
-              placeholder="Your password"
+              placeholder={t("auth.login.passwordHint")}
               {...register("password")}
             />
             {errors.password && (
-              <p className="text-xs text-destructive">{errors.password.message}</p>
+              <p className="text-xs text-destructive">{t("auth.login.passwordInvalid")}</p>
             )}
             {resetEnabled && (
               <Link
@@ -130,19 +151,19 @@ export default function LoginPage() {
 
           {needsCode && (
             <div className="flex flex-col gap-2">
-              <Label htmlFor="totp">Verification code</Label>
+              <Label htmlFor="totp">{t("auth.login.verificationCode")}</Label>
               <Input
                 id="totp"
                 inputMode="text"
                 autoComplete="one-time-code"
                 autoFocus
-                placeholder="6-digit code or recovery code"
+                placeholder={t("auth.login.verificationHint")}
                 {...register("totp")}
               />
               <p className="text-xs text-muted-foreground">
-                Open your authenticator app, or use one of your recovery codes.
+                {t("auth.login.verificationHelp")}
               </p>
-              {errors.totp && <p className="text-xs text-destructive">{errors.totp.message}</p>}
+              {errors.totp && <p className="text-xs text-destructive">{t("auth.login.verificationInvalid")}</p>}
             </div>
           )}
 
@@ -152,25 +173,25 @@ export default function LoginPage() {
               className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive"
             >
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>{error}</span>
+              <span>{t(error)}</span>
             </div>
           )}
 
           <Button type="submit" className="mt-2 h-12 text-base" disabled={login.isPending}>
-            {login.isPending ? "Signing in…" : "Sign in"}
+            {t(login.isPending ? "auth.login.signingIn" : "auth.common.signIn")}
           </Button>
         </form>
 
         <p className="mt-6 text-center text-sm">
           <Link href="/switch-user" className="font-medium text-primary hover:underline">
-            Switch user with PIN
+            {t("auth.login.switchPin")}
           </Link>
         </p>
 
         <p className="mt-6 text-center text-xs text-muted-foreground">
-          New restaurant?{" "}
+          {t("auth.login.newRestaurant")}{" "}
           <Link href="/signup" className="font-medium text-foreground hover:underline">
-            Create an account
+            {t("auth.login.createAccount")}
           </Link>
         </p>
       </motion.div>

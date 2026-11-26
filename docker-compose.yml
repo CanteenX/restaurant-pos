@@ -1,3 +1,11 @@
+x-backend-image: &backend-image
+  build:
+    context: .
+    dockerfile: apps/backend/Dockerfile
+    args:
+      APP_VERSION: "${APP_VERSION:-dev}"
+  image: ghcr.io/canteenx/nventra-pos-backend:${APP_VERSION:-dev}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -7,7 +15,7 @@ services:
       POSTGRES_USER: nventra
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nventra_dev_pw}
       POSTGRES_DB: nventra_pos
-    # Not published to the host — only the backend needs it, over the
+    # Not published to the host — setup and the backend connect over the
     # internal Docker network. Uncomment `ports` below for local psql access.
     expose:
       - "5432"
@@ -21,16 +29,22 @@ services:
       timeout: 5s
       retries: 10
 
+  db-setup:
+    <<: *backend-image
+    container_name: nventra-pos-db-setup
+    command: ["setup"]
+    environment:
+      NVENTRA_DB_HOST: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nventra_dev_pw}
+      NVENTRA_DATABASE_URL_FILE: /run/nventra-db/runtime-url
+    volumes:
+      - db_runtime_auth:/run/nventra-db
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   backend:
-    build:
-      context: .
-      dockerfile: apps/backend/Dockerfile
-      args:
-        APP_VERSION: "${APP_VERSION:-dev}"
-    # Same name CI publishes. `up --build` tags the local build with it, and
-    # the in-app "Update now" button (see the `updater` service below) pulls
-    # the published image of a newer version under it.
-    image: ghcr.io/canteenx/nventra-pos-backend:${APP_VERSION:-dev}
+    <<: *backend-image
     container_name: nventra-pos-backend
     # Lets the updater (updater/server.js) tell a good update from a broken
     # one: a new version that never reports healthy is rolled back. The long
@@ -43,7 +57,7 @@ services:
       start_period: 120s
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgresql://nventra:${POSTGRES_PASSWORD:-nventra_dev_pw}@postgres:5432/nventra_pos"
+      NVENTRA_DATABASE_URL_FILE: /run/nventra-db/runtime-url
       JWT_SECRET: ${JWT_SECRET:?set a real JWT_SECRET in .env for anything beyond local dev}
       SESSION_IDLE_MINUTES: "${SESSION_IDLE_MINUTES:-60}"
       SESSION_IDLE_SIGNOUT: "${SESSION_IDLE_SIGNOUT:-true}"
@@ -105,14 +119,15 @@ services:
       # LOCAL_BACKUP_INTERVAL_HOURS: "24"
       # LOCAL_BACKUP_RETAIN_COUNT: "7"
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-setup:
+        condition: service_completed_successfully
     # Not published to the host — reachable only via the web service's
     # server-side /api proxy, same reasoning as nodedr-pos (keeps the API
     # off the LAN, shrinks attack surface).
     expose:
       - "4000"
     volumes:
+      - db_runtime_auth:/run/nventra-db:ro
       - uploads_data:/data/uploads
       # Local backups: mount the host drive/share (read-write) at the
       # LOCAL_BACKUP_ROOT path above.
@@ -174,8 +189,8 @@ services:
   # NOTHING on its own — no polling, no auto-update. When an admin presses
   # Settings > Updates > "Update now", the backend tells it which published
   # version to move to; it pulls that exact version of the backend and web
-  # images and recreates those two containers with the same settings (data
-  # volumes untouched, rolled back if it fails). It needs the Docker socket,
+  # images, runs database setup and recreates those two containers with the
+  # same settings (data volumes are preserved). It needs the Docker socket,
   # which is why it is its own container on the internal network (no
   # published port) instead of privilege handed to the app backend.
   updater:
@@ -187,10 +202,12 @@ services:
     environment:
       UPDATER_TOKEN: "${UPDATER_TOKEN:?set UPDATER_TOKEN in .env (./install.sh generates one)}"
       TARGET_CONTAINERS: "nventra-pos-backend,nventra-pos-web"
+      DB_SETUP_CONTAINER: nventra-pos-db-setup
       GHCR_TOKEN: "${GHCR_TOKEN:-}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   pg_data:
+  db_runtime_auth:
   uploads_data:
