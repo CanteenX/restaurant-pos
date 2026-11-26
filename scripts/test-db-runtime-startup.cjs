@@ -13,6 +13,7 @@ for (const host of ['postgres', 'nventra-pos-postgres', 'nodedr-restaurant-pos-p
       for (const [cmd, args] of [
         [process.execPath, ['dist/src/system/db-identity-upgrade.cli.js']],
         [shell, ['./container-entrypoint.sh', 'true']],
+        [shell, ['./container-entrypoint.sh', 'serve']],
       ]) {
         const result = spawnSync(cmd, args, {
           cwd: 'apps/backend',
@@ -21,6 +22,7 @@ for (const host of ['postgres', 'nventra-pos-postgres', 'nodedr-restaurant-pos-p
         });
         assert.equal(result.status, 1);
         assert.match(result.stdout + result.stderr, /Apply the current Compose or CasaOS definition/);
+        assert.doesNotMatch(result.stdout + result.stderr, /Prisma schema loaded|migrations found|Applying migration/);
         assert.ok(!(result.stdout + result.stderr).includes(url.href));
       }
     });
