@@ -13,11 +13,7 @@ package names. Version 1.1.0 uses the new
 packages. Apply the updated installation definition as described below; the old
 in-app updater cannot add `db-setup`. Do not remove existing volumes.
 The v1.0.1 in-app updater can offer the new image after publication.
-Do not use the in-app updater for this transition. A local-registry QA run observed that the old updater
-rolled back to a healthy v1.0.1 application, but at least one newer database
-migration ran before the refusal. The exact migration and permission counts are
-being reverified against the released v1.0.1 build. Apply the new Compose definition with `./install.sh`
-instead. The QA run used locally built images, not the published GHCR images.
+Do not use the v1.0.1 in-app updater for this transition. In a local-registry QA run on a stock v1.0.1 install, pressing Update now to 1.1.0 failed safe: the new backend refused to start with the stock database configuration before applying any migration, the updater rolled back to the working v1.0.1, and no database or upload data changed. Use the Compose/install.sh procedure. (Verified with locally built images, not GHCR; a non-stock DATABASE_URL was not tested.)
 
 After the release publishes, inspect both multi-architecture manifests with
 `docker buildx imagetools inspect ghcr.io/canteenx/nventra-pos-backend:1.1.0`
@@ -111,6 +107,7 @@ three tags resolve locally before continuing. Export
 `RECOVERY_BACKEND_IMAGE_ID=nventra-recovery/backend:backup`,
 `RECOVERY_WEB_IMAGE_ID=nventra-recovery/web:backup`, and
 `RECOVERY_POSTGRES_IMAGE_ID=nventra-recovery/postgres:backup` in the shell.
+Despite the variable names, these values are verified local tags, not image IDs.
 Do not pull or replace those verified local tags.
 For example, after checksum verification and loading, set them explicitly:
 
@@ -165,7 +162,7 @@ rendered service names and published ports without printing environment values.
 
 Run `export COMPOSE_FILE=docker-compose.yml:recovery-images.yml` and export the
 three RECOVERY variables in the POSIX shell
-(on Windows use the platform's Compose path separator). Check `docker compose
+(on Windows use the platform's Compose path separator; this was not tested). Check `docker compose
 config --images` resolves to the three verified recovery tags before starting; if it
 includes the unused updater, do not start that service. Do not print the full
 Compose configuration because it may include credentials. Use `--no-build

@@ -14,11 +14,7 @@ Claude performs the release only after the owner explicitly says go. Use the own
    tag, compare the `^{}` line; for a lightweight tag, compare its tag line.
    Stop if either is missing or the commit IDs differ. Preserve and investigate
    conflicting local tags before the owner-approved release step below.
-6. Warn v1.0.1 operators that the old in-app updater can offer 1.1.0 after
-   publication but cannot add `db-setup`. Local-registry QA observed rollback
-   to a healthy old app after at least one new migration had already run; exact
-   permission and role_permissions row counts await verification. Direct them
-   to the Compose/install.sh upgrade procedure instead.
+6. Do not use the v1.0.1 in-app updater for this transition. In a local-registry QA run on a stock v1.0.1 install, pressing Update now to 1.1.0 failed safe: the new backend refused to start with the stock database configuration before applying any migration, the updater rolled back to the working v1.0.1, and no database or upload data changed. Use the Compose/install.sh procedure. (Verified with locally built images, not GHCR; a non-stock DATABASE_URL was not tested.)
 
 ## After the owner says go
 

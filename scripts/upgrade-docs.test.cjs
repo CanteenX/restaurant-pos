@@ -26,17 +26,28 @@ test('upgrade guide documents pre-upgrade backup and rollback consequences', () 
   assert.match(guide, /docker image load/);
   assert.match(guide, /sha256sum -c/);
   assert.match(guide, /export COMPOSE_FILE=docker-compose\.yml:recovery-images\.yml/);
-  assert.match(guide, /migration.*(?:before|first)/is);
+  assert.match(guide, /before applying any migration/);
   assert.match(guide, /published.*nodedr-restaurant-pos/is);
 });
 
 test('release documentation explains old updater and future image publication', () => {
   const notes = read('RELEASE-NOTES-v1.1.0.md');
   const checklist = read('RELEASE-CHECKLIST.md');
-  assert.match(notes, /migration.*(?:before|first)/is);
+  assert.match(notes, /before applying any migration/);
+  assert.match(checklist, /before applying any migration/);
   assert.match(notes, /images.*(?:tag|publish)/is);
   assert.match(checklist, /git fetch --tags --force/);
-  assert.match(checklist, /old in-app updater/is);
+  assert.match(checklist, /v1\.0\.1 in-app updater/is);
+});
+
+test('release documents accurately describe the verified stock updater rollback', () => {
+  for (const name of ['UPGRADING.md', 'RELEASE-NOTES-v1.1.0.md', 'RELEASE-CHECKLIST.md']) {
+    const doc = read(name);
+    assert.match(doc, /no database or upload data changed/);
+    assert.match(doc, /non-stock DATABASE_URL was not tested/);
+    assert.doesNotMatch(doc, /at least one (?:newer? )?(?:database )?migration/i);
+  }
+  assert.match(read('UPGRADING.md'), /Windows.*(?:not tested|untested)/i);
 });
 
 test('release checklist verifies tag identity and documents refresh', () => {

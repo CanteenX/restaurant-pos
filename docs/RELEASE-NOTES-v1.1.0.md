@@ -14,7 +14,9 @@ This is a release proposal since v1.0.1. The owner must approve the version and 
 
 Take and verify a backup first. Apply the new Compose, CasaOS or Debian definition before starting the new version. The old in-app updater cannot add the required `db-setup` service. Follow [UPGRADING.md](UPGRADING.md) for the installation-specific procedure, recovery and the limited database roles. The v1.0.1 Compose and updater already referenced `nventra-pos-*`, while the published 1.0.x images used `nodedr-restaurant-pos-*` package names.
 
-Do not use the v1.0.1 in-app updater for this transition even if it offers the new image. In local-registry QA it rolled back to a healthy v1.0.1 app after applying at least one newer migration. Exact migration and permission counts await verification against the released v1.0.1 build. CasaOS and Debian upgrade/rollback paths were not tested in the independent Docker-clone QA drill. The 1.1.0 images do not exist until the release tag is pushed and the publication workflow completes.
+Do not use the v1.0.1 in-app updater for this transition. In a local-registry QA run on a stock v1.0.1 install, pressing Update now to 1.1.0 failed safe: the new backend refused to start with the stock database configuration before applying any migration, the updater rolled back to the working v1.0.1, and no database or upload data changed. Use the Compose/install.sh procedure. (Verified with locally built images, not GHCR; a non-stock DATABASE_URL was not tested.)
+
+CasaOS and Debian upgrade/rollback paths were not tested in the independent Docker-clone QA drill. The 1.1.0 images do not exist until the release tag is pushed and the publication workflow completes.
 
 For a Control Center rolling deployment, drain older Control API instances before new permission keys are added to grants. Old instances may reject keys they do not recognise.
 
