@@ -116,7 +116,7 @@ jobs:
         run: pnpm -r --if-present test
 
       - name: Release image drift guard
-        run: node --test scripts/release-images.test.cjs
+        run: node --test scripts/release-images.test.cjs scripts/upgrade-docs.test.cjs
 
       - name: Control table accessibility checks
         run: node --test e2e/control-table-access.test.cjs

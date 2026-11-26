@@ -90,8 +90,9 @@ A restore is destructive and Owner-only. Backups are untrusted input, so:
   files, verifies table and column names against the live schema, and generates
   its own file-based `\copy` commands. Dump SQL and psql commands never reach
   the psql command parser. Hindi, rupee signs and other UTF-8 data retain their
-  original bytes. Extraction rejects lines over 8 MiB and total data over 1 GiB;
-  scratch files are removed after success or failure.
+  original bytes. Extraction enforces configurable line and output budgets;
+  see Restore resource limits below. Scratch files are removed after success
+  or failure.
 - **Sequence counters only move forward.** PostgreSQL sequence changes do not
   roll back. Every live, table-owned sequence is reconciled to the greatest of
   its existing value, the vetted backup value and the largest restored column

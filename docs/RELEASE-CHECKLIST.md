@@ -8,10 +8,17 @@ Claude performs the release only after the owner explicitly says go. Use the own
 2. Complete disposable-stack browser, upgrade and rollback QA, including POS, Hindi, Control Center roles, portal and mobile widths. Resolve all release-blocking and major findings and assess the remaining issues.
 3. Review [release notes](RELEASE-NOTES-v1.1.0.md), [UPGRADING.md](UPGRADING.md), the image names, package provenance, and all four CasaOS image references. Verify existing customers have a tested backup. Drain older Control API instances before granting new permission keys.
 4. Confirm the proposed version and the single version-bump procedure in the image publication documentation. Do not publish an image before release approval.
+5. Compare the peeled local and remote v1.0.1 release tag before using it as
+   an upgrade baseline: `git rev-parse 'v1.0.1^{}'` and
+   `git ls-remote --tags origin 'refs/tags/v1.0.1' 'refs/tags/v1.0.1^{}'`. For an annotated remote
+   tag, compare the `^{}` line; for a lightweight tag, compare its tag line.
+   Stop if either is missing or the commit IDs differ. Preserve and investigate
+   conflicting local tags before the owner-approved release step below.
+6. Do not use the v1.0.1 in-app updater for this transition. In a local-registry QA run on a stock v1.0.1 install, pressing Update now to 1.1.0 failed safe: the new backend refused to start with the stock database configuration before applying any migration, the updater rolled back to the working v1.0.1, and no database or upload data changed. Use the Compose/install.sh procedure. (Verified with locally built images, not GHCR; a non-stock DATABASE_URL was not tested.)
 
 ## After the owner says go
 
-1. Open the release PR from `staging` to `master`. Merge it with a **merge commit** whose message contains `staging`, as required by master-guard. Record the merge SHA.
+1. In the main checkout, preserve any conflicting local tags and run `git fetch --tags --force`. Verify the local and remote v1.0.1 tag identities as above. Then open the release PR from `staging` to `master`. Merge it with a **merge commit** whose message contains `staging`, as required by master-guard. Record the merge SHA.
 2. Create and push tag `v1.1.0` on that master commit. The tag triggers `docker-publish`. Wait for the workflow to finish and inspect the backend and web manifests for both `linux/amd64` and `linux/arm64` (four image/architecture combinations):
 
    ```sh
