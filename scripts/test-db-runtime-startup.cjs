@@ -1,8 +1,13 @@
 // Run from the repository root after building the backend.
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
-const { readFileSync } = require('node:fs');
+const { readFileSync, mkdtempSync, writeFileSync, rmSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
 const test = require('node:test');
+
+// Shell execution tracing records invocations even when commands emit no output.
+const migrationTrace = /^\+ (?:node node_modules\/prisma\/build\/index\.js migrate deploy|: MIGRATION_INVOKED)\s*$/m;
 
 for (const host of ['postgres', 'nventra-pos-postgres', 'nodedr-restaurant-pos-postgres']) {
   for (const [user, db] of [['nventra','nventra_pos'], ['nodedr','nodedr_restaurant']]) {
@@ -13,21 +18,44 @@ for (const host of ['postgres', 'nventra-pos-postgres', 'nodedr-restaurant-pos-p
       for (const [cmd, args] of [
         [process.execPath, ['dist/src/system/db-identity-upgrade.cli.js']],
         [shell, ['./container-entrypoint.sh', 'true']],
-        [shell, ['./container-entrypoint.sh', 'serve']],
+        [shell, ['-x', './container-entrypoint.sh', 'serve']],
       ]) {
         const result = spawnSync(cmd, args, {
           cwd: 'apps/backend',
-          env: { ...process.env, DATABASE_URL: url.href, NVENTRA_DATABASE_URL_FILE: '' },
+          env: { ...process.env, DATABASE_URL: url.href, NVENTRA_DATABASE_URL_FILE: '', PS4: '+ ' },
           encoding: 'utf8', timeout: 12000,
         });
         assert.equal(result.status, 1);
         assert.match(result.stdout + result.stderr, /Apply the current Compose or CasaOS definition/);
         assert.doesNotMatch(result.stdout + result.stderr, /Prisma schema loaded|migrations found|Applying migration/);
+        assert.doesNotMatch(result.stderr, migrationTrace, 'migration must not be invoked');
         assert.ok(!(result.stdout + result.stderr).includes(url.href));
       }
     });
   }
 }
+
+test('execution trace detects a migration moved before the stock guard', () => {
+  const source = readFileSync('apps/backend/container-entrypoint.sh', 'utf8');
+  const guard = '    node dist/src/system/db-identity-upgrade.cli.js';
+  assert.ok(source.includes(guard), 'stock guard invocation exists');
+  const temp = mkdtempSync(join(tmpdir(), 'nventra-startup-trace-'));
+  try {
+    const mutant = join(temp, 'entrypoint-mutant.sh');
+    writeFileSync(mutant, source.replace(guard, `    : MIGRATION_INVOKED\n${guard}`));
+    const shell = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : 'sh';
+    const result = spawnSync(shell, ['-x', mutant, 'serve'], {
+      cwd: 'apps/backend',
+      env: { ...process.env, DATABASE_URL: 'postgresql://nventra@postgres:5432/nventra_pos', NVENTRA_DATABASE_URL_FILE: '', PS4: '+ ' },
+      encoding: 'utf8', timeout: 12000,
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, migrationTrace, 'detector must catch a silent pre-guard migration');
+    assert.throws(() => assert.doesNotMatch(result.stderr, migrationTrace));
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
 
 test('CasaOS runs the updater copied into the backend image at its absolute path', () => {
   const compose = readFileSync('casaos/docker-compose.yml', 'utf8');
