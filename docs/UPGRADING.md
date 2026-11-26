@@ -4,15 +4,20 @@ Release notes for changes that affect existing installs. Newest first.
 
 ## Image names from 1.1.0
 
-The 1.0.x images remain published under `ghcr.io/canteenx/nodedr-restaurant-pos-backend`
-and `ghcr.io/canteenx/nodedr-restaurant-pos-web`. Version 1.1.0 uses the new
+The v1.0.0 and v1.0.1 tag builds published images under
+`ghcr.io/canteenx/nodedr-restaurant-pos-backend` and
+`ghcr.io/canteenx/nodedr-restaurant-pos-web`. The v1.0.1 Compose definition
+and updater default already reference `nventra-pos-*`, despite those published
+package names. Version 1.1.0 uses the new
 `ghcr.io/canteenx/nventra-pos-backend` and `ghcr.io/canteenx/nventra-pos-web`
 packages. Apply the updated installation definition as described below; the old
 in-app updater cannot add `db-setup`. Do not remove existing volumes.
-An existing v1.0.1 installation may nevertheless offer the new image in its
-in-app updater. Do not use the in-app updater for this transition. Apply the
-new installation definition first. The old updater's rollback was not tested
-end to end against a registry.
+The v1.0.1 in-app updater can offer the new image after publication.
+Do not use the in-app updater for this transition. A local-registry QA run observed that the old updater
+rolled back to a healthy v1.0.1 application, but at least one newer database
+migration ran before the refusal. The exact migration and permission counts are
+being reverified against the released v1.0.1 build. Apply the new Compose definition with `./install.sh`
+instead. The QA run used locally built images, not the published GHCR images.
 
 After the release publishes, inspect both multi-architecture manifests with
 `docker buildx imagetools inspect ghcr.io/canteenx/nventra-pos-backend:1.1.0`
@@ -23,7 +28,8 @@ each versioned image. These new image names will not exist until publication.
 ## Back up and roll back a v1.0.1 Docker install
 
 Schedule downtime and stop POS writes before the backup. Preserve the existing
-Compose definition, project name, volume names and configuration securely, along
+Compose definition, project name, volume names and configuration securely, including
+the original `.env` file, along
 with a verified copy of the v1.0.1 application images. Do not print credentials.
 The v1.0.1 application supports S3-compatible backups via Settings > Backup;
 configure a reachable bucket, create a backup, and confirm completion and the
@@ -40,6 +46,7 @@ outside the project, and ensure sufficient disk space:
 ```sh
 umask 077
 mkdir -p /secure/off-host-backup
+test ! -e /secure/off-host-backup/uploads
 docker compose exec -T postgres pg_dump -U nventra -d nventra_pos -Fc > /secure/off-host-backup/pre-upgrade.dump
 docker compose cp backend:/data/uploads /secure/off-host-backup/uploads
 ```
@@ -54,12 +61,18 @@ cd /secure/off-host-backup
 docker inspect --format '{{.Image}}' nventra-pos-postgres > postgres-image-id.txt
 docker inspect --format '{{.Image}}' nventra-pos-backend > backend-image-id.txt
 docker inspect --format '{{.Image}}' nventra-pos-web > web-image-id.txt
-docker image save -o recovery-images.tar "$(cat postgres-image-id.txt)" "$(cat backend-image-id.txt)" "$(cat web-image-id.txt)"
-sha256sum recovery-images.tar postgres-image-id.txt backend-image-id.txt web-image-id.txt > recovery-images.sha256
+docker image inspect "$(cat postgres-image-id.txt)" --format '{{json .RepoTags}}' > postgres-repotags.txt
+docker image inspect "$(cat backend-image-id.txt)" --format '{{json .RepoTags}}' > backend-repotags.txt
+docker image inspect "$(cat web-image-id.txt)" --format '{{json .RepoTags}}' > web-repotags.txt
+docker image tag "$(cat postgres-image-id.txt)" nventra-recovery/postgres:backup
+docker image tag "$(cat backend-image-id.txt)" nventra-recovery/backend:backup
+docker image tag "$(cat web-image-id.txt)" nventra-recovery/web:backup
+docker image save -o recovery-images.tar nventra-recovery/postgres:backup nventra-recovery/backend:backup nventra-recovery/web:backup
+sha256sum recovery-images.tar postgres-image-id.txt backend-image-id.txt web-image-id.txt postgres-repotags.txt backend-repotags.txt web-repotags.txt > recovery-images.sha256
 ```
 
 Confirm each ID is a full `sha256:` image ID and that `recovery-images.tar` is
-nonempty. Copy the image archive, ID files and checksum file to protected
+nonempty. Copy the image archive, ID and RepoTags files and checksum file to protected
 off-host storage together, independently retain their expected checksums, and
 test loading them on the separate recovery host. Image archives may include
 proprietary configuration or assets; protect them and do not export containers.
@@ -76,7 +89,11 @@ writes after the backup, including bills and payments. Reconcile them using
 business records. Never drop or overwrite the only copy of the current database.
 
 The following stock-clone recovery uses a **separate recovery host**, a new,
-isolated Compose project name, and new database and uploads volumes. Rehearse it
+isolated Compose project name, and new database and uploads volumes. For same-host
+recovery, stop the upgraded stack and use a separate project with explicitly
+renamed containers and nonconflicting ports in a tested Compose override; preserve
+the upgraded volumes and verify all actual mounts before destructive commands.
+This same-host variant has not been tested in the independent dry run. Rehearse it
 on a disposable host first. The preserved v1.0.1 definition has fixed container
 names: stopped containers still reserve those names. A different project name
 alone does not isolate them. Confirm the recovery host has no containers or
@@ -86,12 +103,24 @@ adapting and testing it. Use the preserved, verified v1.0.1 definition and
 images, not a mutable `latest` tag. On that host, compare the transferred
 checksum file against the independently retained expected checksums, then run
 `sha256sum -c recovery-images.sha256` in the backup directory. Only after all
-four checks succeed, load the verified archive with `docker image load -i
-recovery-images.tar`. Compare `docker image inspect IMAGE --format '{{.Id}}'`
-for each loaded image to the corresponding verified ID file. Export the three
-resulting full `sha256:...` IDs as
-`RECOVERY_BACKEND_IMAGE_ID`, `RECOVERY_WEB_IMAGE_ID`, and
-`RECOVERY_POSTGRES_IMAGE_ID` in the shell. Do not use a tag or an unverified ID.
+checks succeed, load the verified archive with `docker image load -i
+recovery-images.tar`. Image IDs can change across Docker image store types after
+save/load; compare the IDs on the same store type, but on a different store use
+the checksum-verified archive and its explicit recovery tags below. Confirm all
+three tags resolve locally before continuing. Export
+`RECOVERY_BACKEND_IMAGE_ID=nventra-recovery/backend:backup`,
+`RECOVERY_WEB_IMAGE_ID=nventra-recovery/web:backup`, and
+`RECOVERY_POSTGRES_IMAGE_ID=nventra-recovery/postgres:backup` in the shell.
+Do not pull or replace those verified local tags.
+For example, after checksum verification and loading, set them explicitly:
+
+```sh
+export RECOVERY_POSTGRES_IMAGE_ID=nventra-recovery/postgres:backup
+export RECOVERY_BACKEND_IMAGE_ID=nventra-recovery/backend:backup
+export RECOVERY_WEB_IMAGE_ID=nventra-recovery/web:backup
+docker image inspect "$RECOVERY_POSTGRES_IMAGE_ID" "$RECOVERY_BACKEND_IMAGE_ID" "$RECOVERY_WEB_IMAGE_ID" --format '{{.Id}}' >/dev/null
+```
+
 In a separate recovery directory containing the preserved Compose definition,
 create a `recovery-images.yml` override (not an environment file):
 
@@ -108,30 +137,76 @@ services:
     pull_policy: never
 ```
 
-Set `COMPOSE_FILE=docker-compose.yml:recovery-images.yml` in the POSIX shell
+For the untested same-host variant, add the following overrides to that file,
+after confirming Compose supports `!override` (Compose 2.24.4 or later) and
+that these names and port are free. Merge these settings into the existing
+`postgres`, `backend`, and `web` service mappings; do not add duplicate service
+keys. Select another unused loopback port if 21995 is occupied. Keep the
+original project and its volumes intact. Do not start the updater service.
+
+```yaml
+services:
+  postgres:
+    container_name: nventra-recovery-postgres
+  backend:
+    container_name: nventra-recovery-backend
+  web:
+    container_name: nventra-recovery-web
+    ports: !override
+      - "127.0.0.1:21995:3000"
+```
+
+On the same host, replace `nventra-pos-postgres` and `nventra-pos-backend` in
+the inspection commands below with `nventra-recovery-postgres` and
+`nventra-recovery-backend` respectively. Record the original mounts before
+stopping the original stack, then verify the recovery mounts do not match.
+Check `docker compose -p nventra-recovery config --images` and inspect the
+rendered service names and published ports without printing environment values.
+
+Run `export COMPOSE_FILE=docker-compose.yml:recovery-images.yml` and export the
+three RECOVERY variables in the POSIX shell
 (on Windows use the platform's Compose path separator). Check `docker compose
-config --images` resolves to the three verified IDs before starting; if it
+config --images` resolves to the three verified recovery tags before starting; if it
 includes the unused updater, do not start that service. Do not print the full
 Compose configuration because it may include credentials. Use `--no-build
 --pull never` with every `up` command. Run from that recovery directory with its
 required configuration already available. Substitute the secure backup path:
 
 ```sh
-docker compose -p nventra-recovery up -d --no-build --pull never postgres
+( set -e
+docker compose -p nventra-recovery up -d --wait --no-build --pull never postgres
 docker compose -p nventra-recovery exec -T postgres pg_isready -U nventra -d postgres
 docker compose -p nventra-recovery exec -T postgres psql -v ON_ERROR_STOP=1 -U nventra -d nventra_pos -c 'SELECT 1'
-# Inspect the mount and confirm its identity as described below before continuing.
 docker inspect --format '{{json .Mounts}}' nventra-pos-postgres
-# Only on the new recovery volume, replace its empty initial database.
+)
+```
+
+Stop and inspect the PostgreSQL mount against the original volume record as
+described below. Continue only when it is a new recovery volume. The next block
+replaces its database. Do not run it if the mount is unclear.
+
+```sh
+( set -e
 docker compose -p nventra-recovery exec -T postgres dropdb -U nventra --if-exists nventra_pos
 docker compose -p nventra-recovery exec -T postgres createdb -U nventra -O nventra nventra_pos
 docker compose -p nventra-recovery exec -T postgres pg_restore --exit-on-error --no-owner --no-privileges -U nventra -d nventra_pos < /secure/off-host-backup/pre-upgrade.dump
 docker compose -p nventra-recovery up -d --no-build --pull never backend
-# Inspect the uploads mount and confirm its identity before copying.
 docker inspect --format '{{json .Mounts}}' nventra-pos-backend
+)
+```
+
+Stop and verify that the uploads mount is a new recovery volume. Only then copy
+the matching backup and start the web service:
+
+```sh
+( set -e
 docker compose -p nventra-recovery cp /secure/off-host-backup/uploads/. backend:/data/uploads/
 docker compose -p nventra-recovery up -d --no-build --pull never web
+)
 ```
+
+Stop if any command fails; do not start the backend before the database restore
+succeeds. Inspect and verify the mounts between the blocks before proceeding.
 
 The `--no-owner --no-privileges` options restore objects as the stock `nventra`
 superuser without importing grants for roles that may be absent. Custom grants
@@ -156,8 +231,8 @@ The old backend runs with the stock database superuser again. The roles
 `nventra_owner`, `nventra_runtime` and `nventra_restore` can remain in the
 database after rollback. Preserve them for a subsequent upgrade; do not delete
 roles or volumes as a cleanup step. CasaOS and Debian upgrade/rollback paths,
-external databases and a real registry-backed updater rollback were not
-covered by this Docker-clone drill.
+external databases and a GHCR-backed updater rollback were not covered by this
+Docker-clone drill. Updater rollback was verified against a local registry, not GHCR.
 
 ## Separate database logins for stock Docker installs (#249)
 
@@ -168,6 +243,8 @@ and `./install.sh`. For CasaOS, stop the backend and apply the new store
 definition with the same AppData paths and existing Postgres password. For an
 existing Debian installation, upgrade the package. Keep your existing database
 and uploads volumes and take a backup before upgrading.
+The installer builds local images and may repoint mutable `ghcr.io/canteenx/nventra-pos-updater:latest`
+and `:dev` tags. Preserve the verified pre-upgrade images before running it.
 
 The one-shot `db-setup` service keeps the existing PostgreSQL bootstrap
 password. It handles pre-rename volumes and migrates the app schema as

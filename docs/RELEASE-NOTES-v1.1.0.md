@@ -12,9 +12,9 @@ This is a release proposal since v1.0.1. The owner must approve the version and 
 
 ## Upgrade from v1.0.1
 
-Take and verify a backup first. Apply the new Compose, CasaOS or Debian definition before starting the new version. The old in-app updater cannot add the required `db-setup` service. Follow [UPGRADING.md](UPGRADING.md) for the installation-specific procedure, recovery and the limited database roles. The older 1.0.x images use the previous package names; consult that guide when upgrading or rolling back.
+Take and verify a backup first. Apply the new Compose, CasaOS or Debian definition before starting the new version. The old in-app updater cannot add the required `db-setup` service. Follow [UPGRADING.md](UPGRADING.md) for the installation-specific procedure, recovery and the limited database roles. The v1.0.1 Compose and updater already referenced `nventra-pos-*`, while the published 1.0.x images used `nodedr-restaurant-pos-*` package names.
 
-Do not use the v1.0.1 in-app updater for this transition even if it offers the new image. CasaOS and Debian upgrade/rollback paths were not tested in the independent Docker-clone QA drill. The registry-backed updater rollback was not tested end to end.
+Do not use the v1.0.1 in-app updater for this transition even if it offers the new image. In local-registry QA it rolled back to a healthy v1.0.1 app after applying at least one newer migration. Exact migration and permission counts await verification against the released v1.0.1 build. CasaOS and Debian upgrade/rollback paths were not tested in the independent Docker-clone QA drill. The 1.1.0 images do not exist until the release tag is pushed and the publication workflow completes.
 
 For a Control Center rolling deployment, drain older Control API instances before new permission keys are added to grants. Old instances may reject keys they do not recognise.
 
@@ -24,6 +24,7 @@ For a Control Center rolling deployment, drain older Control API instances befor
 - Open review follow-ups #348–#352 cover staff role lifecycle and provisioning, portal database boundaries, rejected-ticket audit and portal UI. Assess their current release impact during QA.
 - The earliest #359 RED transcripts were not retained. Subsequent corrective RED evidence and independent reruns are recorded in the PR and shared work log; Claude's upgrade QA should verify its independent rerun before release.
 - Wide tables in the Control Center staff area need horizontal scrolling at phone widths. See the role browser QA report and release QA findings.
+- A restored backup record can show PENDING (#370). CasaOS retains legacy metadata and identifiers (#371); changing identifiers may affect existing paths.
 
 ## Version proposal
 

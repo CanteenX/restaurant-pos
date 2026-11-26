@@ -25,13 +25,25 @@ test('upgrade guide documents pre-upgrade backup and rollback consequences', () 
   assert.match(guide, /docker image save/);
   assert.match(guide, /docker image load/);
   assert.match(guide, /sha256sum -c/);
+  assert.match(guide, /export COMPOSE_FILE=docker-compose\.yml:recovery-images\.yml/);
+  assert.match(guide, /migration.*(?:before|first)/is);
+  assert.match(guide, /published.*nodedr-restaurant-pos/is);
 });
 
-test('release checklist verifies tag identity without replacing local tags', () => {
+test('release documentation explains old updater and future image publication', () => {
+  const notes = read('RELEASE-NOTES-v1.1.0.md');
+  const checklist = read('RELEASE-CHECKLIST.md');
+  assert.match(notes, /migration.*(?:before|first)/is);
+  assert.match(notes, /images.*(?:tag|publish)/is);
+  assert.match(checklist, /git fetch --tags --force/);
+  assert.match(checklist, /old in-app updater/is);
+});
+
+test('release checklist verifies tag identity and documents refresh', () => {
   const checklist = read('RELEASE-CHECKLIST.md');
   assert.match(checklist, /git ls-remote --tags origin/);
   assert.match(checklist, /git rev-parse/);
-  assert.doesNotMatch(checklist, /git fetch --tags --force/);
+  assert.match(checklist, /git fetch --tags --force/);
 });
 
 test('backup and release notes reflect observed limits and untested upgrade paths', () => {
@@ -41,4 +53,21 @@ test('backup and release notes reflect observed limits and untested upgrade path
   assert.match(backups, /64 MiB/);
   assert.match(notes, /CasaOS.*Debian.*not tested/i);
   assert.match(notes, /do not use.*in-app updater/i);
+});
+
+test('recovery guidance prevents partial restores and preserves transferable images', () => {
+  const guide = read('UPGRADING.md');
+  const checklist = read('RELEASE-CHECKLIST.md');
+  const notes = read('RELEASE-NOTES-v1.1.0.md');
+  assert.match(guide, /set -e/);
+  assert.match(guide, /--wait.*postgres/);
+  assert.match(guide, /do not start (?:the )?backend.*restore/sim);
+  assert.match(guide, /same.host/is);
+  assert.match(guide, /RepoTags/);
+  assert.match(guide, /store types?/i);
+  assert.match(guide, /\.env/);
+  assert.doesNotMatch(guide, /migrations increased from 69 to 70/);
+  assert.doesNotMatch(notes, /69 to 70/);
+  assert.doesNotMatch(checklist, /refs\/tags\/v1\.0\.1\*/);
+  assert.match(guide, /local registry.*not GHCR/is);
 });

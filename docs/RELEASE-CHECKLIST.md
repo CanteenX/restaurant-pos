@@ -10,14 +10,19 @@ Claude performs the release only after the owner explicitly says go. Use the own
 4. Confirm the proposed version and the single version-bump procedure in the image publication documentation. Do not publish an image before release approval.
 5. Compare the peeled local and remote v1.0.1 release tag before using it as
    an upgrade baseline: `git rev-parse 'v1.0.1^{}'` and
-   `git ls-remote --tags origin 'refs/tags/v1.0.1*'`. For an annotated remote
+   `git ls-remote --tags origin 'refs/tags/v1.0.1' 'refs/tags/v1.0.1^{}'`. For an annotated remote
    tag, compare the `^{}` line; for a lightweight tag, compare its tag line.
-   Stop if either is missing or the commit IDs differ. Investigate and preserve
-   any local tag before an explicit correction; do not force-fetch all tags.
+   Stop if either is missing or the commit IDs differ. Preserve and investigate
+   conflicting local tags before the owner-approved release step below.
+6. Warn v1.0.1 operators that the old in-app updater can offer 1.1.0 after
+   publication but cannot add `db-setup`. Local-registry QA observed rollback
+   to a healthy old app after at least one new migration had already run; exact
+   permission and role_permissions row counts await verification. Direct them
+   to the Compose/install.sh upgrade procedure instead.
 
 ## After the owner says go
 
-1. Open the release PR from `staging` to `master`. Merge it with a **merge commit** whose message contains `staging`, as required by master-guard. Record the merge SHA.
+1. In the main checkout, preserve any conflicting local tags and run `git fetch --tags --force`. Verify the local and remote v1.0.1 tag identities as above. Then open the release PR from `staging` to `master`. Merge it with a **merge commit** whose message contains `staging`, as required by master-guard. Record the merge SHA.
 2. Create and push tag `v1.1.0` on that master commit. The tag triggers `docker-publish`. Wait for the workflow to finish and inspect the backend and web manifests for both `linux/amd64` and `linux/arm64` (four image/architecture combinations):
 
    ```sh
