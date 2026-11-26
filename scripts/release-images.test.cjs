@@ -5,6 +5,19 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
+test('CasaOS metadata preserves install identity and avoids misleading upstream release history', () => {
+  const manifest = fs.readFileSync('casaos/docker-compose.yml', 'utf8');
+  assert.match(manifest, /^name: nodedr-restaurant-pos$/m);
+  assert.match(manifest, /^  id: com\.nodedr\.orderrestro$/m);
+  assert.match(manifest, /\/DATA\/AppData\/nodedr-restaurant-pos\//);
+  const notes = manifest.split('  release_notes:')[1].split('  website:')[0];
+  const version = manifest.match(/^  version: "(\d+\.\d+\.\d+)"/m)?.[1];
+  assert.ok(version, 'CasaOS manifest version must be a semantic version');
+  const versionHeading = new RegExp(`^\\s+${version.replaceAll('.', '\\.')}:(?=\\s)`, 'gm');
+  assert.doesNotMatch(notes, /1\.19\.0:|1\.17\.0:|1\.15\.1:|OrderRestro/);
+  assert.equal((notes.match(versionHeading) || []).length, 1);
+});
+
 test('release image references and CasaOS version agree', () => {
   const publish = fs.readFileSync('.github/workflows/docker-publish.yml', 'utf8');
   const compose = fs.readFileSync('casaos/docker-compose.yml', 'utf8');
