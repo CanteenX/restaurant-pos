@@ -1,5 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
-import { permissionSatisfied } from '@nventra/types';
+import { PERMISSION_IMPLIES, permissionSatisfied } from '@nventra/types';
 import type { PrismaClient } from '@prisma/client';
 import { permissionInclude } from '../auth/effective-permissions';
 
@@ -134,7 +134,16 @@ export async function loadCeilingActor(
 }
 
 function missingKeys(actor: CeilingActor, keys: Iterable<string>): string[] {
-  return [...new Set(keys)].filter(
+  const required = new Set(keys);
+  // Granting or managing a parent also confers every implied permission.
+  for (const key of required) {
+    for (const implied of PERMISSION_IMPLIES[
+      key as keyof typeof PERMISSION_IMPLIES
+    ] ?? []) {
+      required.add(implied);
+    }
+  }
+  return [...required].filter(
     (k) => !permissionSatisfied(actor.permissions, k),
   );
 }
@@ -219,7 +228,7 @@ export function assertCanResetCredentials(
   assertCanManage(actor, target);
   const targetKeys = [...ceilingKeys(target)];
   const above = actor.permissions.some(
-    (k) => !permissionSatisfied(targetKeys, k),
+    (k) => !k.startsWith('!') && !permissionSatisfied(targetKeys, k),
   );
   if (!above) throw new ForbiddenException(RESET_DENIED);
 }

@@ -241,10 +241,32 @@ describe('Privilege ceiling (e2e)', () => {
       .post(`/api/v1/menu/categories?branchId=${branchId}`)
       .send({})
       .expect(400);
-    await actor
+    const deniedGrant = await actor
       .put(`/api/v1/users/${userId.waiter}/permission-overrides`)
       .send({ overrides: [{ permissionKey: 'menu.view', effect: 'GRANT' }] })
       .expect(400);
+    expect((deniedGrant.body as { message: string }).message).toMatch(
+      /do not hold it yourself/,
+    );
+    const peer = await prisma.user.create({
+      data: {
+        restaurantId,
+        roleId: role.id,
+        name: 'menu-peer',
+        email: email('menu-peer'),
+        passwordHash: await bcrypt.hash(password, 4),
+        branches: { create: [{ branchId }] },
+      },
+    });
+    const peerActor = await login('menu-peer');
+    await actor
+      .patch(`/api/v1/users/${peer.id}`)
+      .send({ password: 'Replacement123!' })
+      .expect(403);
+    await peerActor
+      .patch(`/api/v1/users/${member.id}`)
+      .send({ password: 'Replacement123!' })
+      .expect(403);
     await prisma.userPermissionOverride.deleteMany({
       where: { userId: member.id },
     });
