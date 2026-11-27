@@ -137,6 +137,7 @@ function missingKeys(actor: CeilingActor, keys: Iterable<string>): string[] {
   const required = new Set(keys);
   // Granting or managing a parent also confers every implied permission.
   for (const key of required) {
+    if (!Object.hasOwn(PERMISSION_IMPLIES, key)) continue;
     for (const implied of PERMISSION_IMPLIES[
       key as keyof typeof PERMISSION_IMPLIES
     ] ?? []) {

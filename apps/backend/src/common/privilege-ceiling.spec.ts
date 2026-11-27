@@ -81,6 +81,21 @@ describe('ceilingKeys', () => {
 });
 
 describe('canGrant / assertCanGrant', () => {
+  it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])(
+    'rejects inherited property key %s with a forbidden error',
+    (key) => {
+      const roleManager: CeilingActor = {
+        id: 'role-manager',
+        roleName: 'MANAGER',
+        permissions: ['roles.manage'],
+      };
+      expect(canGrant(roleManager, [key])).toBe(false);
+      expect(() => assertCanGrant(roleManager, [key])).toThrow(
+        ForbiddenException,
+      );
+    },
+  );
+
   it('allows only keys the actor holds (directly or by implication)', () => {
     expect(canGrant(fullMgr, ['orders.create'])).toBe(true);
     expect(canGrant(fullMgr, ['menu.view'])).toBe(true); // implied by menu.manage
