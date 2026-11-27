@@ -499,7 +499,7 @@ export class OrdersController {
   @Get('print/diagnostics')
   async printDiagnostics(
     @CurrentUser() user: SessionUser,
-    @Query('branchId', RequiredBranchIdPipe) branchId?: string,
+    @Query('branchId') branchId?: string,
   ) {
     const lpDevices = await probeCharDevices();
     const libusbPrinter = findPrinterDescriptor();
@@ -555,7 +555,7 @@ export class OrdersController {
   @Post('print/test')
   async printTest(
     @CurrentUser() user: SessionUser,
-    @Query('branchId', RequiredBranchIdPipe) branchId?: string,
+    @Query('branchId') branchId?: string,
     @Query('kind') kind?: string,
     @Query('via') via?: string,
   ) {
@@ -588,7 +588,7 @@ export class OrdersController {
   async printLabels(
     @CurrentUser() user: SessionUser,
     @Body(new ZodValidationPipe(labelPrintSchema)) dto: LabelPrintDto,
-    @Query('branchId', RequiredBranchIdPipe) branchId?: string,
+    @Query('branchId') branchId?: string,
     @Query('via') via?: string,
   ) {
     const buffer = dto.language === 'TSPL' ? buildTspl(dto) : buildZpl(dto);
@@ -617,7 +617,7 @@ export class OrdersController {
   @Post('print/drawer')
   async openDrawer(
     @CurrentUser() user: SessionUser,
-    @Query('branchId', RequiredBranchIdPipe) branchId?: string,
+    @Query('branchId') branchId?: string,
     @Query('via') via?: string,
   ) {
     let target: BranchPrinterTarget = {
