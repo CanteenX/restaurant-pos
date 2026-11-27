@@ -16,6 +16,7 @@ import { ModifierPickerDialog } from "@/components/pos/modifier-picker-dialog";
 import { ScaleDialog } from "@/components/pos/scale-dialog";
 import { PosTablePicker } from "@/components/pos/pos-table-picker";
 import { ProductGrid } from "@/components/pos/product-grid";
+import { BarcodeScanner } from "@/components/pos/barcode-scanner";
 import { Card } from "@/components/ui/card";
 import { useBranch } from "@/hooks/use-branch";
 import { useMenuItems, type MenuItem } from "@/hooks/use-menu";
@@ -310,8 +311,9 @@ function PosPageInner() {
         </Card>
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-hidden lg:grid-cols-[1fr_360px]">
-          <Card className="min-h-0 overflow-hidden p-3 sm:p-5">
-            <ProductGrid branchId={branchId} onSelect={handleSelect} />
+          <Card className="flex min-h-0 flex-col overflow-hidden p-3 sm:p-5">
+            <BarcodeScanner key={branchId ?? "no-branch"} branchId={branchId} disabled={!!activeOrder || !!pickerItem} onSelect={handleSelect} />
+            <div className="min-h-0 flex-1"><ProductGrid branchId={branchId} onSelect={handleSelect} /></div>
           </Card>
 
           <Card
