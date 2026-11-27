@@ -23,6 +23,7 @@ import {
 } from '@nventra/types';
 import { Auth } from '../../common/decorators/auth.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RequiredBranchIdPipe } from '../../common/pipes/required-branch-id.pipe';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { BranchAccessService } from '../../common/services/branch-access.service';
 import {
@@ -53,7 +54,7 @@ export class MenuController {
   @Get('categories')
   async listCategories(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
     return this.menuService.listCategories(branchId);
@@ -64,7 +65,7 @@ export class MenuController {
   @UsePipes(new ZodValidationPipe(menuCategorySchema))
   async createCategory(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -75,7 +76,7 @@ export class MenuController {
   @Patch('categories/:id')
   async updateCategory(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
@@ -87,7 +88,7 @@ export class MenuController {
   @Delete('categories/:id')
   async deleteCategory(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -100,7 +101,7 @@ export class MenuController {
   @Get('stations')
   async listStations(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
     return this.menuService.listStations(branchId);
@@ -110,7 +111,7 @@ export class MenuController {
   @Post('stations')
   async createStation(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Body() body: { name: string; printerName?: string },
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -127,7 +128,7 @@ export class MenuController {
   @Get('items')
   async listItems(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Query('categoryId') categoryId?: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -138,7 +139,7 @@ export class MenuController {
   @Get('items/:id')
   async getItem(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -150,7 +151,7 @@ export class MenuController {
   @UsePipes(new ZodValidationPipe(menuItemSchema))
   async createItem(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -162,7 +163,7 @@ export class MenuController {
   @UsePipes(new ZodValidationPipe(bulkPriceSchema))
   async bulkPrice(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -188,7 +189,7 @@ export class MenuController {
   @Patch('items/:id')
   async updateItem(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
@@ -200,7 +201,7 @@ export class MenuController {
   @Delete('items/:id')
   async deleteItem(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -213,7 +214,7 @@ export class MenuController {
   @Get('modifier-groups')
   async listModifierGroups(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
     return this.menuService.listModifierGroups(branchId);
@@ -224,7 +225,7 @@ export class MenuController {
   @UsePipes(new ZodValidationPipe(modifierGroupSchema))
   async createModifierGroup(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -235,7 +236,7 @@ export class MenuController {
   @Patch('modifier-groups/:id')
   async updateModifierGroup(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
@@ -247,7 +248,7 @@ export class MenuController {
   @Delete('modifier-groups/:id')
   async deleteModifierGroup(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -260,7 +261,7 @@ export class MenuController {
   @Get('items/:id/combo-components')
   async getComboComponents(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -272,7 +273,7 @@ export class MenuController {
   @UsePipes(new ZodValidationPipe(setComboComponentsSchema))
   async setComboComponents(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Body() body: unknown,
   ) {

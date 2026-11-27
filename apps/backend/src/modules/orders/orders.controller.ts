@@ -38,6 +38,7 @@ import {
 } from '@nventra/types';
 import { Auth } from '../../common/decorators/auth.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RequiredBranchIdPipe } from '../../common/pipes/required-branch-id.pipe';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { BranchAccessService } from '../../common/services/branch-access.service';
 import {
@@ -158,7 +159,7 @@ export class OrdersController {
   @Get()
   async listOpen(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Query('tableId') tableId?: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -169,7 +170,7 @@ export class OrdersController {
   @Get('manage')
   async listForManagement(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Query('tab') tab?: 'pending' | 'active' | 'history',
     @Query('channel') channel?: 'STAFF' | 'ONLINE',
     @Query('type') type?: string,
@@ -186,7 +187,7 @@ export class OrdersController {
   @Get(':id')
   async getOrder(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -198,7 +199,7 @@ export class OrdersController {
   @UsePipes(new ZodValidationPipe(createOrderSchema))
   async createOrder(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -210,7 +211,7 @@ export class OrdersController {
   @UsePipes(new ZodValidationPipe(addOrderItemsSchema))
   async addItems(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
@@ -223,7 +224,7 @@ export class OrdersController {
   @Post(':id/accept')
   async accept(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -235,7 +236,7 @@ export class OrdersController {
   @UsePipes(new ZodValidationPipe(rejectOrderSchema))
   async reject(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
@@ -248,7 +249,7 @@ export class OrdersController {
   @Post(':id/cancel')
   async cancel(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Body() body?: unknown,
   ) {
@@ -271,7 +272,7 @@ export class OrdersController {
   @UsePipes(new ZodValidationPipe(updateOrderSchema))
   async update(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
@@ -289,7 +290,7 @@ export class OrdersController {
   @UsePipes(new ZodValidationPipe(updateOrderItemSchema))
   async updateItem(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Param('itemId') itemId: string,
     @Body() body: unknown,
@@ -309,7 +310,7 @@ export class OrdersController {
   @UsePipes(new ZodValidationPipe(removeOrderItemSchema))
   async removeItem(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Param('itemId') itemId: string,
     @Body() body: unknown,
@@ -330,7 +331,7 @@ export class OrdersController {
   @Post(':id/discount-preview')
   async discountPreview(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Body() body: { couponCode?: string },
   ) {
@@ -347,7 +348,7 @@ export class OrdersController {
   @UsePipes(new ZodValidationPipe(billPreviewSchema))
   async billPreview(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
@@ -362,7 +363,7 @@ export class OrdersController {
   @UsePipes(new ZodValidationPipe(checkoutSchema))
   async checkout(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
@@ -404,7 +405,7 @@ export class OrdersController {
   @Get(':id/receipt')
   async receipt(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Query() query: Record<string, string>,
     @Res() res: Response,
@@ -449,7 +450,7 @@ export class OrdersController {
   @Get(':id/receipt-email')
   async receiptEmailStatus(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -463,7 +464,7 @@ export class OrdersController {
   @HttpCode(200)
   async resendReceiptEmail(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -474,7 +475,7 @@ export class OrdersController {
   @Get(':id/kot')
   async kot(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Res() res: Response,
   ) {
@@ -641,7 +642,7 @@ export class OrdersController {
   @Post(':id/print/usb')
   async printUsb(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Query('width') width?: string,
     @Query('drawer') drawer?: string,
@@ -705,7 +706,7 @@ export class OrdersController {
   @Post(':id/print/kot')
   async printKot(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Query('reprint') reprint?: string,
     @Query('via') via?: string,
@@ -724,7 +725,7 @@ export class OrdersController {
   @Post(':id/print/kot/usb')
   async printKotUsb(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Query('reprint') reprint?: string,
   ) {
@@ -765,7 +766,7 @@ export class OrdersController {
   @UsePipes(new ZodValidationPipe(refundSchema))
   async refund(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
@@ -778,7 +779,7 @@ export class OrdersController {
   @UsePipes(new ZodValidationPipe(deleteOrdersSchema))
   async deleteBulk(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Body() body: unknown,
   ) {
     await this.branchAccess.assertAccess(user.restaurantId, branchId);
@@ -799,7 +800,7 @@ export class OrdersController {
   @UsePipes(new ZodValidationPipe(mergeOrdersSchema))
   async merge(
     @CurrentUser() user: SessionUser,
-    @Query('branchId') branchId: string,
+    @Query('branchId', RequiredBranchIdPipe) branchId: string,
     @Param('id') id: string,
     @Body() body: unknown,
   ) {

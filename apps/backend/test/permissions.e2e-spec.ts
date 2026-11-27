@@ -94,6 +94,18 @@ run('Role permissions (e2e)', () => {
     body?: object,
   ) => (await agents[role][method](`/api/v1${path}`).send(body)).status;
 
+  it('validates branchId on authenticated menu and order requests', async () => {
+    for (const path of ['/menu/categories', '/orders']) {
+      for (const suffix of ['', '?branchId=', '?branchId=%20%20']) {
+        const res = await agents.OWNER.get(`/api/v1${path}${suffix}`).expect(400);
+        expect(res.body.message).toBe('branchId is required');
+      }
+      await agents.OWNER.get(`/api/v1${path}?branchId=nonexistent`).expect(403);
+      await agents.OWNER.get(`/api/v1${path}${q}`).expect(200);
+      await request(app.getHttpServer()).get(`/api/v1${path}`).expect(401);
+    }
+  });
+
   it('only owner/admin/accountant/cashier can read dashboard revenue and trends', async () => {
     for (const role of ['OWNER', 'ACCOUNTANT', 'CASHIER']) {
       expect(await status(role, 'get', `/dashboard/summary${q}`)).toBe(200);
