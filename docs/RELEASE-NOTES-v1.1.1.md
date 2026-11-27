@@ -11,15 +11,17 @@ This patch is a proposal for the owner's approval.
   permission, with branch boundaries enforced (#385).
 - The updater rejects requests to downgrade from a numeric release to an older
   numeric release. Automatic rollback after a failed forward update remains
-  available (#392).
+  available (#392). Rollback was tested with fake Docker, not a real registry.
 
 ## Known limitations
 
 - A backup used to restore its own snapshot can appear as `PENDING` afterward.
   Status reconciliation remains open in #370; do not interpret that status as
   proof that a backup is valid or invalid.
-- CasaOS retains its legacy application identity and path for compatibility.
-  An identity or data-path migration has not been implemented (#371).
+- CasaOS retains its legacy application identity and path for compatibility;
+  an identity or data-path migration has not been implemented.
+- Loyalty points can be over-debited when the requested redemption exceeds the
+  bill. Issue #394 is open and blocked by an automated security review.
 - Downgrade protection cannot determine the version of unversioned or mutable
   tags. Use an immutable numeric release tag when this protection is needed.
 - The v1.1.0 release notes document additional open limitations, including
