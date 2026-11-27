@@ -391,6 +391,30 @@ docker compose up -d --build
 docker compose exec backend ./container-entrypoint.sh node dist/prisma/seed.js   # optional demo data
 ```
 
+### Use published images
+
+With the repository checked out and `.env` configured as above, use a POSIX
+shell to select the published version for every Compose command:
+
+```bash
+export APP_VERSION=1.1.0
+docker compose pull postgres db-setup backend web
+docker compose build updater
+docker compose up -d --no-build
+```
+
+The backend and web images are published on GHCR. The updater sidecar is built
+locally from `updater/`, so a bare `docker compose pull` also attempts to pull an
+updater image that the release workflow does not publish. Without an explicit
+`APP_VERSION`, Compose uses `:dev`, which is intended for local builds and is
+not a published release tag. Replace `1.1.0` with the intended published version
+when upgrading; see [UPGRADING.md](docs/UPGRADING.md) and back up first.
+
+The stock Compose file uses fixed `container_name` values. It supports one
+stock stack per host; a second project on the same host conflicts with those
+names. Do not change an existing installation's volume or container identity
+without a tested migration.
+
 ### Client IPs (reverse proxy, Cloudflare)
 
 Login is rate-limited per client address. The web container (port 1995) is
