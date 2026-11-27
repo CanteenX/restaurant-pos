@@ -12,6 +12,10 @@ This patch is a proposal for the owner's approval.
 - The updater rejects requests to downgrade from a numeric release to an older
   numeric release. Automatic rollback after a failed forward update remains
   available (#392). Rollback was tested with fake Docker, not a real registry.
+- The installation guide now explains how to use published backend and web
+  images while building the locally sourced updater sidecar (#396).
+- Menu and order endpoints now reject missing or invalid branch identifiers
+  with a clear error before checking branch access (#397).
 
 ## Known limitations
 
