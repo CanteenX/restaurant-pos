@@ -122,6 +122,52 @@ function installWithSetup(result) {
   return { fd, up };
 }
 
+test('rejects a downgrade of any target before pulling or stopping containers', async () => {
+  const fd = fakeDocker({ images: [`${B}:1.1.0`, `${W}:1.1.0`] });
+  fd.add('app-backend', `${B}:1.0.0`);
+  fd.add('app-web', `${W}:1.2.0`);
+  const up = createUpdater({ docker: fd.docker, targets: ['app-backend', 'app-web'], ...fast });
+  await up.run('1.1.0');
+  assert.equal(up.status.state, 'error');
+  assert.match(up.status.error, /downgrade/i);
+  assert.ok(!fd.log.some(entry => entry.startsWith('POST /images/create') || entry.includes('/stop')));
+  assert.ok(fd.running('app-backend') && fd.running('app-web'));
+});
+
+test('rejects a downgrade from an immutable pinned image source', async () => {
+  const fd = fakeDocker({ images: [`${B}:1.2.0`, `${B}:1.1.0`] });
+  fd.add('app-backend', `${B}:1.2.0`);
+  const container = fd.containers.get('app-backend');
+  container.Config.Image = container.Image;
+  container.Config.Labels = { 'com.nventra.updater.source': `${B}:1.2.0` };
+  const up = createUpdater({ docker: fd.docker, targets: ['app-backend'], ...fast });
+  await up.run('1.1.0');
+  assert.equal(up.status.state, 'error');
+  assert.match(up.status.error, /downgrade/i);
+  assert.ok(!fd.log.some(entry => entry.startsWith('POST /images/create') || entry.includes('/stop')));
+});
+
+test('compares release components numerically and accepts development tags', async () => {
+  const fd = fakeDocker({ images: [`${B}:1.10.0`, `${W}:1.10.0`] });
+  fd.add('app-backend', `${B}:1.9.0`);
+  fd.add('app-web', `${W}:dev`);
+  const up = createUpdater({ docker: fd.docker, targets: ['app-backend', 'app-web'], ...fast });
+  await up.run('1.10.0');
+  assert.equal(up.status.state, 'done', up.status.error);
+});
+
+test('compares large numeric components without rounding and handles equal releases', async () => {
+  const fd = fakeDocker();
+  fd.add('app-backend', `${B}:1.9007199254740993.0`);
+  const up = createUpdater({ docker: fd.docker, targets: ['app-backend'], ...fast });
+  await up.run('1.9007199254740992.0');
+  assert.equal(up.status.state, 'error');
+  assert.match(up.status.error, /downgrade/i);
+  assert.ok(!fd.log.some(entry => entry.startsWith('POST /images/create') || entry.includes('/stop')));
+  await up.run('1.9007199254740993.0');
+  assert.equal(up.status.state, 'done', up.status.error);
+});
+
 test('managed update runs the target image setup between stopping and replacing the backend', async () => {
   const { fd, up } = installWithSetup('completed');
   await up.run('1.0.1');
