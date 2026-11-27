@@ -2,6 +2,29 @@
 
 Release notes for changes that affect existing installs. Newest first.
 
+## Starting with published POS images
+
+Back up and follow the installation-specific instructions below before an
+upgrade. On a configured stock clone, a POSIX shell can select the published
+release for all commands as follows:
+
+```bash
+export APP_VERSION=1.1.0
+docker compose pull postgres db-setup backend web
+docker compose build updater
+docker compose up -d --no-build
+```
+
+The updater sidecar is built locally from `updater/`; the release workflow
+publishes backend and web images, not an updater image. A bare `docker compose
+pull` also tries to pull that sidecar and can fail. If `APP_VERSION` is unset,
+Compose uses `:dev` for local builds; it is not a published release tag. Use
+the version you intend to install rather than assuming a newer tag exists.
+
+Stock Compose uses fixed `container_name` values and only one stock stack can
+run on a host without name conflicts. Preserve existing volume and container
+identity; a second stack requires a separately planned, tested configuration.
+
 ## Image names from 1.1.0
 
 The v1.0.0 and v1.0.1 tag builds published images under
