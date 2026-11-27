@@ -194,6 +194,17 @@ const ov = (
 const soon = () => new Date(Date.now() + 60_000);
 
 describe('grantableKeys (#236)', () => {
+  it('does not delegate a denied view permission through manage', () => {
+    const permissions = grantableKeys(
+      user('m', role('M', ['menu.manage']), [ov('DENY', 'menu.view')]),
+    );
+    expect(
+      canGrant({ id: 'm', roleName: 'M', permissions }, ['menu.view']),
+    ).toBe(false);
+    expect(
+      canGrant({ id: 'm', roleName: 'M', permissions }, ['menu.manage']),
+    ).toBe(true);
+  });
   it('drops permissions held only through a time-limited GRANT', () => {
     const keys = grantableKeys(
       user('m', STAFF_MGR, [

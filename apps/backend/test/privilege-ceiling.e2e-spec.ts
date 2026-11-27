@@ -186,6 +186,84 @@ describe('Privilege ceiling (e2e)', () => {
     branchIds: [branchId],
   });
 
+  it('enforces a DENY on implied menu viewing and delegation for live sessions', async () => {
+    const menu = await prisma.permission.findMany({
+      where: { key: { in: ['menu.manage', 'menu.view'] } },
+    });
+    const role = await prisma.role.create({
+      data: {
+        restaurantId,
+        name: `DENY_MENU_${tag}`,
+        label: 'Deny menu view',
+        permissions: {
+          create: [
+            ...menu
+              .filter((p) => p.key === 'menu.manage')
+              .map((p) => ({ permissionId: p.id })),
+            ...(
+              await prisma.permission.findMany({
+                where: {
+                  key: {
+                    in: ['users.manage', 'roles.manage', 'orders.create'],
+                  },
+                },
+              })
+            ).map((p) => ({ permissionId: p.id })),
+          ],
+        },
+      },
+    });
+    const member = await prisma.user.create({
+      data: {
+        restaurantId,
+        roleId: role.id,
+        name: 'deny-menu',
+        email: email('deny-menu'),
+        passwordHash: await bcrypt.hash(password, 4),
+        branches: { create: [{ branchId }] },
+        permissionOverrides: {
+          create: [
+            {
+              effect: 'DENY',
+              permissionId: menu.find((p) => p.key === 'menu.view')!.id,
+            },
+          ],
+        },
+      },
+    });
+    const actor = await login('deny-menu');
+    const identity = await actor.get('/api/v1/auth/me').expect(200);
+    expect(
+      (identity.body as { user: { permissions: string[] } }).user.permissions,
+    ).toContain('menu.manage');
+    await actor.get(`/api/v1/menu/categories?branchId=${branchId}`).expect(403);
+    await actor
+      .post(`/api/v1/menu/categories?branchId=${branchId}`)
+      .send({})
+      .expect(400);
+    await actor
+      .put(`/api/v1/users/${userId.waiter}/permission-overrides`)
+      .send({ overrides: [{ permissionKey: 'menu.view', effect: 'GRANT' }] })
+      .expect(400);
+    await prisma.userPermissionOverride.deleteMany({
+      where: { userId: member.id },
+    });
+    await actor.get(`/api/v1/menu/categories?branchId=${branchId}`).expect(200);
+    const otherRestaurant = await prisma.restaurant.create({
+      data: { name: `Other ${tag}` },
+    });
+    try {
+      const otherBranch = await prisma.branch.create({
+        data: { restaurantId: otherRestaurant.id, name: 'Other' },
+      });
+      await actor
+        .get(`/api/v1/menu/categories?branchId=${otherBranch.id}`)
+        .expect(403);
+    } finally {
+      await prisma.restaurant.delete({ where: { id: otherRestaurant.id } });
+    }
+  });
+
   describe('(a) promotion / assignment', () => {
     it('a staff manager cannot promote themselves to OWNER', async () => {
       await as.staffmgr

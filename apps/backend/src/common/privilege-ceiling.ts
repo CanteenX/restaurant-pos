@@ -100,6 +100,15 @@ export function grantableKeys(user: CeilingUser, now = Date.now()): string[] {
     if (o.effect === 'GRANT' && !o.expiresAt) keys.add(o.permission.key);
   }
   for (const o of live) if (o.effect === 'DENY') keys.delete(o.permission.key);
+  // A denied implied permission must not be delegated via its parent grant.
+  for (const o of live) {
+    if (
+      o.effect === 'DENY' &&
+      permissionSatisfied([...keys], o.permission.key)
+    ) {
+      keys.add(`!${o.permission.key}`);
+    }
+  }
   return [...keys];
 }
 
