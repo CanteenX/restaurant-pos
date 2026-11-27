@@ -73,6 +73,18 @@ function sourceImage(info) {
   return splitImage(source);
 }
 
+// Development tags have no reliable release order; keep their existing update
+// behavior. Published numeric versions can be compared without precision loss.
+function isDowngrade(current, target) {
+  if (!VERSION_RE.test(current) || !VERSION_RE.test(target)) return false;
+  const from = current.split('.').map(BigInt);
+  const to = target.split('.').map(BigInt);
+  for (let i = 0; i < from.length; i++) {
+    if (to[i] !== from[i]) return to[i] < from[i];
+  }
+  return false;
+}
+
 // Docker Engine API X-Registry-Auth value for a GHCR image, or null when no
 // token is configured or the image lives on another registry (the token must
 // never be sent anywhere but ghcr.io).
@@ -298,6 +310,9 @@ function createUpdater({
       for (const name of targets) {
         const info = await json('GET', `/containers/${enc(name)}/json`);
         const { repo, tag } = sourceImage(info);
+        if (isDowngrade(tag, version)) {
+          throw new Error(`Refusing downgrade of ${name} from ${tag} to ${version}`);
+        }
         if (tag !== version) plan.push({ name, repo, from: tag, to: version });
       }
       for (const p of plan) {
