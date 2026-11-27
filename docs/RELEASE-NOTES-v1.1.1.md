@@ -1,12 +1,11 @@
 # Proposed release notes: v1.1.1
 
-This patch is a proposal for the owner's approval. Its contents depend on the
-changes being merged into staging and verified before release.
+This patch is a proposal for the owner's approval.
 
-## Proposed change
+## Change
 
-- If #379 merges, the CasaOS manifest's visible release notes will describe
-  Nventra rather than unrelated upstream releases. Existing CasaOS app
+- The CasaOS manifest's visible release notes describe Nventra rather than
+  unrelated upstream releases. Existing CasaOS app
   identity and AppData paths remain unchanged.
 
 ## Known limitations
