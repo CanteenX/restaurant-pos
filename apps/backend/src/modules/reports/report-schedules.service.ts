@@ -108,7 +108,7 @@ export class ReportSchedulesService {
     return { ok: true };
   }
 
-  private async get(branchId: string, id: string) {
+  async get(branchId: string, id: string) {
     const s = await this.prisma.reportSchedule.findFirst({
       where: { id, branchId },
     });

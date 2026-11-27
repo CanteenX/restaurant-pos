@@ -18,7 +18,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { BranchAccessService } from '../../common/services/branch-access.service';
 import { EmailService } from '../email/email.service';
-import { assertCanViewReport } from './reports.service';
+import { assertCanViewReport, canViewReport } from './reports.service';
 import { ReportSchedulesService } from './report-schedules.service';
 
 const createSchema = z.object({
@@ -47,7 +47,9 @@ export class ReportSchedulesController {
     await this.branchAccess.assertAccess(u.restaurantId, branchId);
     return {
       emailConfigured: this.email.isConfigured(),
-      schedules: await this.schedules.list(branchId),
+      schedules: (await this.schedules.list(branchId)).filter((schedule) =>
+        canViewReport(u.permissions, schedule.reportKey),
+      ),
     };
   }
 
@@ -75,6 +77,10 @@ export class ReportSchedulesController {
     @Body() body: z.infer<typeof activeSchema>,
   ) {
     await this.branchAccess.assertAccess(u.restaurantId, branchId);
+    assertCanViewReport(
+      u.permissions,
+      (await this.schedules.get(branchId, id)).reportKey,
+    );
     return this.schedules.setActive(branchId, id, body.isActive);
   }
 
@@ -86,6 +92,10 @@ export class ReportSchedulesController {
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(u.restaurantId, branchId);
+    assertCanViewReport(
+      u.permissions,
+      (await this.schedules.get(branchId, id)).reportKey,
+    );
     return this.schedules.sendNow(branchId, id);
   }
 
@@ -98,6 +108,10 @@ export class ReportSchedulesController {
     @Param('id') id: string,
   ) {
     await this.branchAccess.assertAccess(u.restaurantId, branchId);
+    assertCanViewReport(
+      u.permissions,
+      (await this.schedules.get(branchId, id)).reportKey,
+    );
     return this.schedules.remove(branchId, id);
   }
 }
