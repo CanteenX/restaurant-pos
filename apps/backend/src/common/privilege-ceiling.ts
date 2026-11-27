@@ -1,5 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
-import { permissionSatisfied } from '@nventra/types';
+import { PERMISSION_IMPLIES, permissionSatisfied } from '@nventra/types';
 import type { PrismaClient } from '@prisma/client';
 import { permissionInclude } from '../auth/effective-permissions';
 
@@ -100,6 +100,15 @@ export function grantableKeys(user: CeilingUser, now = Date.now()): string[] {
     if (o.effect === 'GRANT' && !o.expiresAt) keys.add(o.permission.key);
   }
   for (const o of live) if (o.effect === 'DENY') keys.delete(o.permission.key);
+  // A denied implied permission must not be delegated via its parent grant.
+  for (const o of live) {
+    if (
+      o.effect === 'DENY' &&
+      permissionSatisfied([...keys], o.permission.key)
+    ) {
+      keys.add(`!${o.permission.key}`);
+    }
+  }
   return [...keys];
 }
 
@@ -125,7 +134,17 @@ export async function loadCeilingActor(
 }
 
 function missingKeys(actor: CeilingActor, keys: Iterable<string>): string[] {
-  return [...new Set(keys)].filter(
+  const required = new Set(keys);
+  // Granting or managing a parent also confers every implied permission.
+  for (const key of required) {
+    if (!Object.hasOwn(PERMISSION_IMPLIES, key)) continue;
+    for (const implied of PERMISSION_IMPLIES[
+      key as keyof typeof PERMISSION_IMPLIES
+    ] ?? []) {
+      required.add(implied);
+    }
+  }
+  return [...required].filter(
     (k) => !permissionSatisfied(actor.permissions, k),
   );
 }
@@ -210,7 +229,7 @@ export function assertCanResetCredentials(
   assertCanManage(actor, target);
   const targetKeys = [...ceilingKeys(target)];
   const above = actor.permissions.some(
-    (k) => !permissionSatisfied(targetKeys, k),
+    (k) => !k.startsWith('!') && !permissionSatisfied(targetKeys, k),
   );
   if (!above) throw new ForbiddenException(RESET_DENIED);
 }

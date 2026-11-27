@@ -81,6 +81,21 @@ describe('ceilingKeys', () => {
 });
 
 describe('canGrant / assertCanGrant', () => {
+  it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])(
+    'rejects inherited property key %s with a forbidden error',
+    (key) => {
+      const roleManager: CeilingActor = {
+        id: 'role-manager',
+        roleName: 'MANAGER',
+        permissions: ['roles.manage'],
+      };
+      expect(canGrant(roleManager, [key])).toBe(false);
+      expect(() => assertCanGrant(roleManager, [key])).toThrow(
+        ForbiddenException,
+      );
+    },
+  );
+
   it('allows only keys the actor holds (directly or by implication)', () => {
     expect(canGrant(fullMgr, ['orders.create'])).toBe(true);
     expect(canGrant(fullMgr, ['menu.view'])).toBe(true); // implied by menu.manage
@@ -194,6 +209,17 @@ const ov = (
 const soon = () => new Date(Date.now() + 60_000);
 
 describe('grantableKeys (#236)', () => {
+  it('does not delegate a denied view permission through manage', () => {
+    const permissions = grantableKeys(
+      user('m', role('M', ['menu.manage']), [ov('DENY', 'menu.view')]),
+    );
+    expect(
+      canGrant({ id: 'm', roleName: 'M', permissions }, ['menu.view']),
+    ).toBe(false);
+    expect(
+      canGrant({ id: 'm', roleName: 'M', permissions }, ['menu.manage']),
+    ).toBe(false);
+  });
   it('drops permissions held only through a time-limited GRANT', () => {
     const keys = grantableKeys(
       user('m', STAFF_MGR, [
@@ -259,6 +285,64 @@ describe('loadCeilingActor (#236)', () => {
 });
 
 describe('assertCanResetCredentials (#236)', () => {
+  it('never treats a denial marker itself as a permission above the target', () => {
+    const actor: CeilingActor = {
+      id: 'a',
+      roleName: 'MANAGER',
+      permissions: ['users.manage', '!menu.view'],
+    };
+    expect(() =>
+      assertCanResetCredentials(actor, user('peer', STAFF_MGR)),
+    ).toThrow(ForbiddenException);
+  });
+  it('still allows a truly higher actor with a DENY to reset a lower target', () => {
+    const higher = user(
+      'higher',
+      role('HIGHER', ['users.manage', 'menu.manage']),
+      [ov('DENY', 'menu.view')],
+    );
+    const actor: CeilingActor = {
+      id: higher.id,
+      roleName: higher.role.name,
+      permissions: grantableKeys(higher),
+    };
+    expect(() =>
+      assertCanResetCredentials(actor, user('lower', STAFF_MGR)),
+    ).not.toThrow();
+  });
+  it('does not count a DENY marker as superior access over a peer', () => {
+    const peerRole = role('MENU_PEER', [
+      'users.manage',
+      'roles.manage',
+      'menu.manage',
+    ]);
+    const denied = user('denied', peerRole, [ov('DENY', 'menu.view')]);
+    const actor: CeilingActor = {
+      id: denied.id,
+      roleName: peerRole.name,
+      permissions: grantableKeys(denied),
+    };
+    expect(() =>
+      assertCanResetCredentials(actor, user('peer', peerRole)),
+    ).toThrow(ForbiddenException);
+  });
+
+  it('does not permit management or delegation of an implied permission denied to actor', () => {
+    const peerRole = role('MENU_PEER', ['users.manage', 'menu.manage']);
+    const denied = user('denied', peerRole, [ov('DENY', 'menu.view')]);
+    const actor: CeilingActor = {
+      id: denied.id,
+      roleName: peerRole.name,
+      permissions: grantableKeys(denied),
+    };
+    expect(() => assertCanManage(actor, user('peer', peerRole))).toThrow(
+      ForbiddenException,
+    );
+    expect(() => assertCanManageRole(actor, peerRole)).toThrow(
+      ForbiddenException,
+    );
+    expect(canGrant(actor, ['menu.manage'])).toBe(false);
+  });
   it('refuses a same-level peer', () => {
     expect(() =>
       assertCanResetCredentials(staffMgr, user('p', STAFF_MGR)),

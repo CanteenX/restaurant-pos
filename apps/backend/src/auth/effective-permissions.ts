@@ -1,3 +1,5 @@
+import { permissionSatisfied } from '@nventra/types';
+
 // A user's real permission set = role permissions + live GRANT overrides
 // - live DENY overrides. DENY wins over both the role and a GRANT, and an
 // expired override is ignored (so temporary access revokes itself without a
@@ -27,5 +29,14 @@ export function effectivePermissions(
   );
   for (const o of live) if (o.effect === 'GRANT') keys.add(o.permission.key);
   for (const o of live) if (o.effect === 'DENY') keys.delete(o.permission.key);
+  // Retain a denial when another held permission would otherwise imply it.
+  for (const o of live) {
+    if (
+      o.effect === 'DENY' &&
+      permissionSatisfied([...keys], o.permission.key)
+    ) {
+      keys.add(`!${o.permission.key}`);
+    }
+  }
   return [...keys];
 }
