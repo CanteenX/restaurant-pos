@@ -1,0 +1,19 @@
+# Design: production stock journal (#383)
+
+Status: discovery proposal, awaiting an independent security-focused design review. No upstream code or migration is included.
+
+## Existing behaviour and gap
+
+Nventra already stores recipe lines and calculates recipe cost (`apps/backend/src/modules/inventory/inventory.service.ts:213`), deducts recipe or direct ingredients at checkout (`inventory.service.ts:353`; `apps/backend/src/modules/orders/orders.service.ts:1755`), and records receipts, consumption, adjustments, waste and reversals in branch-scoped `StockMovement` (`apps/backend/prisma/schema.prisma:1208`). The inventory API exposes ingredient movement history and waste (`inventory.controller.ts:171`, `:440`), and the web app has recipe/stock-tracking controls. This is not a greenfield recipe feature. The candidate gap is a first-class production voucher: recording a batch of prepared stock produced from inputs, its yield and actual cost, before subsequent consumption or sale. Upstream's stock-journal idea motivates discovery; its schema is not assumed compatible.
+
+## Proposed model and workflow
+
+After product review confirms prepared-stock semantics, introduce branch-scoped `ProductionVoucher` (id, branch, status, idempotency key, creator, timestamps and reversal reference) and immutable input/output lines (ingredient/batch, signed base-unit quantity and cost snapshot). Link existing `StockMovement` entries to the voucher; retain `StockMovement` as the stock ledger, not a parallel balance authority. Drafts move no stock. Posting locks all affected branch ingredient/batch rows in deterministic order, validates ownership, units, yield, available quantities and cost precision, and atomically writes input consumption, output receipts and audit data. Retries use a unique branch/idempotency key. Posted entries cannot be edited or deleted: correction uses an idempotent compensating voucher, with any downstream-consumption restrictions explicitly designed before implementation. Persist actual cost snapshots to explain food cost and waste; never retroactively reprice history. Do not deduct the same recipe again at sale: define a separate prepared-stock tracking mode and transition rules before coding.
+
+## Permissions and migration
+
+Use permission checks rather than role-name checks. Reuse `inventory.manage` for the first design or add separately grantable `inventory.production.read` and `inventory.production.post` keys after review; roles remain data, Admin remains locked, and grant ceilings and live DENY overrides apply. Every request validates Zod input and restaurant/branch access. Add nullable links and new tables/indexes using additive, reversible migrations; historical movement and recipe rows remain unchanged, with no backfill that invents production events. Back up before migration; test upgrading populated installations and rollback before dependencies use new rows. New journal links must not allow cross-branch references even under concurrent requests.
+
+## Tests and review decisions
+
+Unit tests cover unit conversion, costing/rounding, yield and validation; PostgreSQL integration covers transaction rollback, concurrent posting, duplicate idempotency keys, branch isolation, immutable/reversal rules and stock reconciliation. API tests cover permission, live DENY and branch access; browser tests cover a draft/post/reversal and permission-limited views. Security review must examine double deduction, cross-tenant IDs, negative stock, lock ordering, replay and audit integrity. Before implementation an independent reviewer should assess whether menu outputs become `Ingredient` stock or need a distinct entity, rounding/lot-cost policy, negative-stock policy and reversal after downstream consumption. Do not implement until those decisions are resolved.
