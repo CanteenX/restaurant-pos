@@ -23,7 +23,7 @@ services:
       - nodedr-restaurant-pos
 
   db-setup:
-    image: ghcr.io/canteenx/nventra-pos-backend:1.1.0
+    image: ghcr.io/canteenx/nventra-pos-backend:1.1.1
     container_name: nventra-pos-db-setup
     command: ["setup"]
     environment:
@@ -46,7 +46,7 @@ services:
             en_US: Must match the bootstrap password in the postgres service.
 
   backend:
-    image: ghcr.io/canteenx/nventra-pos-backend:1.1.0
+    image: ghcr.io/canteenx/nventra-pos-backend:1.1.1
     container_name: nventra-pos-backend
     # Lets the updater (updater/server.js) tell a good update from a broken
     # one: a new version that never reports healthy is rolled back. The long
@@ -125,7 +125,7 @@ services:
             en_US: Auto-generated login security key. Created automatically on first launch — leave it alone.
 
   web:
-    image: ghcr.io/canteenx/nventra-pos-web:1.1.0
+    image: ghcr.io/canteenx/nventra-pos-web:1.1.1
     container_name: nventra-pos-web
     # Next binds to $HOSTNAME (the container's own address), not 127.0.0.1.
     healthcheck:
@@ -155,7 +155,7 @@ services:
   # images above. It runs database setup before replacing the API. This
   # separate container runs the updater command and holds the Docker socket.
   updater:
-    image: ghcr.io/canteenx/nventra-pos-backend:1.1.0
+    image: ghcr.io/canteenx/nventra-pos-backend:1.1.1
     container_name: nventra-pos-updater
     command: ["node", "/repo/updater/server.js"]
     hostname: nventra-pos-updater
@@ -241,12 +241,12 @@ x-casaos:
   index: /
   scheme: http
   port_map: "1995"
-  version: "1.1.0"
+  version: "1.1.1"
   update_at: "2026-11-24"
   release_notes:
     en_US: |-
-      1.1.0: adds Hindi coverage, safer email and restore handling, and restricted
-      database logins. Back up first and apply the new CasaOS definition to upgrade.
+      1.1.1: improves scheduled report access checks, numeric downgrade protection,
+      and installation guidance. Back up before upgrading.
 
   website: "https://github.com/CanteenX/restaurant-pos"
   repo: "https://github.com/CanteenX/restaurant-pos"

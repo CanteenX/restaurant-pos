@@ -1,6 +1,4 @@
-# Proposed release notes: v1.1.1
-
-This patch is a proposal for the owner's approval.
+# Release notes: v1.1.1
 
 ## Change
 
@@ -14,7 +12,7 @@ This patch is a proposal for the owner's approval.
   available (#392). Rollback was tested with fake Docker, not a real registry.
 - The installation guide now explains how to use published backend and web
   images while building the locally sourced updater sidecar (#396).
-- Menu and order endpoints now reject missing or invalid branch identifiers
+- Menu and order endpoints now reject missing or blank branch identifiers
   with a clear error before checking branch access (#397).
 
 ## Known limitations
@@ -29,6 +27,7 @@ This patch is a proposal for the owner's approval.
 - Downgrade protection cannot determine the version of unversioned or mutable
   tags. Use an immutable numeric release tag when this protection is needed.
 - The v1.1.0 release notes document additional open limitations, including
-  untranslated order and customer details and untested recovery paths.
-
-This proposal does not itself publish a release or deploy an update.
+  untranslated order and customer details. Recovery paths not tested end to end
+  include non-stock database configuration, `rollback_failed`, same-host
+  recovery, and CasaOS/Debian. The v1.1.1 GHCR images are published only after
+  the release tag is pushed.
