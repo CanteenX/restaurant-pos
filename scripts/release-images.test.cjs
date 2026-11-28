@@ -56,3 +56,12 @@ test('version bump updates the four tags, manifest and release-note heading', ()
 test('version bump rejects invalid versions without writing', () => {
   assert.throws(() => execFileSync(process.execPath, ['scripts/bump-casaos-version.cjs', 'latest'], { stdio: 'pipe' }));
 });
+
+test('CasaOS metadata and all four release images target v1.1.1', () => {
+  const compose = fs.readFileSync('casaos/docker-compose.yml', 'utf8');
+  assert.equal(compose.match(/^  version: "([^"\r\n]+)"/m)?.[1], '1.1.1');
+  assert.match(compose, /^\s+1\.1\.1:/m);
+  const images = [...compose.matchAll(/image: ghcr\.io\/canteenx\/nventra-pos-(?:backend|web):([^\s]+)/g)];
+  assert.equal(images.length, 4);
+  assert.deepEqual(images.map((image) => image[1]), Array(4).fill('1.1.1'));
+});
